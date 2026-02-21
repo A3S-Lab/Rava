@@ -25,7 +25,6 @@ use rava_aot::CodegenBackend;
 
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_codegen::isa;
-use cranelift_module::{Linkage, Module as ClifModule};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use target_lexicon::Triple;
 
@@ -69,6 +68,10 @@ impl CraneliftBackend {
         flag_builder.set("preserve_frame_pointers", "true").map_err(|e| {
             RavaError::Codegen(format!("cranelift flag error: {e}"))
         })?;
+        // Enable PIC for macOS compatibility (required for linking).
+        flag_builder.set("is_pic", "true").map_err(|e| {
+            RavaError::Codegen(format!("cranelift flag error: {e}"))
+        })?;
 
         let flags = settings::Flags::new(flag_builder);
         let isa = isa::lookup(self.target.clone())
@@ -109,12 +112,16 @@ impl CraneliftBackend {
 
     /// Invoke the system linker to produce the final native binary.
     fn invoke_linker(&self, obj_path: &Path, output: &Path) -> Result<()> {
+        // Find the runtime C file
+        let rt_path = self.find_runtime()?;
+
         // Use `cc` as the linker driver — it handles platform differences
-        // (macOS uses clang, Linux uses gcc/ld, Windows uses link.exe).
         let status = std::process::Command::new("cc")
             .arg(obj_path)
+            .arg(&rt_path)
             .arg("-o")
             .arg(output)
+            .arg("-lm") // math library
             .status()
             .map_err(|e| RavaError::Codegen(format!("failed to invoke linker: {e}")))?;
 
@@ -124,6 +131,21 @@ impl CraneliftBackend {
             )));
         }
         Ok(())
+    }
+
+    /// Find the rava runtime C file.
+    fn find_runtime(&self) -> Result<std::path::PathBuf> {
+        // Try relative to the executable
+        let exe = std::env::current_exe().unwrap_or_default();
+        let candidates = [
+            exe.parent().unwrap_or(Path::new(".")).join("../../runtime/rava_rt.c"),
+            std::path::PathBuf::from("runtime/rava_rt.c"),
+            exe.parent().unwrap_or(Path::new(".")).join("../share/rava/rava_rt.c"),
+        ];
+        for c in &candidates {
+            if c.exists() { return Ok(c.clone()); }
+        }
+        Err(RavaError::Codegen("cannot find runtime/rava_rt.c".into()))
     }
 }
 
@@ -141,19 +163,8 @@ impl CodegenBackend for CraneliftBackend {
     fn emit(&self, module: &Module, output: &Path) -> Result<()> {
         let mut obj_module = self.make_object_module()?;
 
-        // Translate each RIR function to Cranelift IR and compile it.
-        for func in &module.functions {
-            // TODO(phase-1): implement RIR → CLIF translation in `translator.rs`
-            // For now, declare each function as an external symbol so the object
-            // file is structurally valid and the linker pipeline can be tested.
-            let _ = obj_module.declare_function(
-                &func.name,
-                Linkage::Export,
-                &cranelift_codegen::ir::Signature::new(
-                    cranelift_codegen::isa::CallConv::SystemV,
-                ),
-            ).map_err(|e| RavaError::Codegen(format!("declare_function failed: {e}")))?;
-        }
+        // Translate RIR → Cranelift IR → machine code
+        crate::translator::translate_module(module, &mut obj_module)?;
 
         self.link(obj_module, output)
     }

@@ -62,3 +62,29 @@ run *ARGS:
 # Clean
 clean:
     cargo clean
+
+# Test AOT build: compile a simple program to native binary and run it
+build-test: build
+    #!/usr/bin/env bash
+    set -e
+    tmpdir=$(mktemp -d)
+    cat > "$tmpdir/Main.java" << 'JAVA'
+    class Main {
+        static int fib(int n) {
+            if (n <= 1) { return n; }
+            return fib(n - 1) + fib(n - 2);
+        }
+        public static void main(String[] args) {
+            System.out.println(fib(10));
+        }
+    }
+    JAVA
+    ./target/debug/rava build "$tmpdir/Main.java" -o "$tmpdir/main" 2>/dev/null
+    actual=$("$tmpdir/main")
+    rm -rf "$tmpdir"
+    if [ "$actual" = "55" ]; then
+        echo "  ✓ AOT build test passed (fib(10) = 55)"
+    else
+        echo "  ✗ AOT build test failed: expected 55, got $actual"
+        exit 1
+    fi

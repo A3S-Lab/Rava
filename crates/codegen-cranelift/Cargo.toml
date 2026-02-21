@@ -8,10 +8,11 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-rava-common = { workspace = true }
-rava-rir    = { workspace = true }
-rava-aot    = { workspace = true }
-thiserror   = { workspace = true }
+rava-common   = { workspace = true }
+rava-rir      = { workspace = true }
+rava-aot      = { workspace = true }
+rava-frontend = { workspace = true }
+thiserror     = { workspace = true }
 
 # Cranelift code generation
 cranelift-codegen  = { version = "0.113", features = ["x86"] }

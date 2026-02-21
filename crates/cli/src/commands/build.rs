@@ -1,10 +1,14 @@
 //! `rava build` — AOT-compile to a native binary.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Args;
+use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct BuildArgs {
+    /// Java source file to compile (omit to use main class from rava.hcl)
+    pub file: Option<PathBuf>,
+
     /// Output target: native | jar | jlink | docker
     #[arg(long, default_value = "native")]
     pub target: String,
@@ -16,11 +20,43 @@ pub struct BuildArgs {
     /// Target platform for cross-compilation (e.g. linux-amd64)
     #[arg(long)]
     pub platform: Option<String>,
+
+    /// Output binary path
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
 }
 
 pub async fn build(args: BuildArgs) -> Result<()> {
-    // TODO(phase-1): frontend → RIR → opt passes → codegen backend → link
-    eprintln!("rava build: not yet implemented");
-    eprintln!("  target: {}, optimize: {}", args.target, args.optimize);
+    let file = args.file.ok_or_else(|| anyhow::anyhow!(
+        "no file specified — pass a .java file or run from a project directory"
+    ))?;
+
+    let source = std::fs::read_to_string(&file)
+        .with_context(|| format!("cannot read {}", file.display()))?;
+
+    // Frontend: .java → RIR
+    let compiler = rava_frontend::Compiler::new();
+    let mut module = compiler.compile(&source, &file)
+        .map_err(|e| anyhow::anyhow!("compile error: {}", e))?;
+
+    // Determine output path
+    let output = args.output.unwrap_or_else(|| {
+        let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+        PathBuf::from(format!("target/{}", stem.to_lowercase()))
+    });
+
+    // Ensure output directory exists
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("cannot create output directory {}", parent.display()))?;
+    }
+
+    // AOT: optimize + codegen → native binary
+    let backend = Box::new(rava_codegen_cranelift::CraneliftBackend::new());
+    let aot = rava_aot::AotCompiler::with_default_passes(backend);
+    aot.compile(&mut module, &output)
+        .map_err(|e| anyhow::anyhow!("build error: {}", e))?;
+
+    eprintln!("  → {}", output.display());
     Ok(())
 }

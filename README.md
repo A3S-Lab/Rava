@@ -430,7 +430,7 @@ common    → (none)
 | Phase | Deliverable | Status |
 |-------|------------|--------|
 | Framework | Workspace skeleton: 10 crates, all traits defined, Cranelift wired up | ✅ |
-| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add`, static Java | 🚧 |
+| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add`, static Java | 🚧 (`rava run` ✅, `rava build` ✅ basic, `rava add` 🚧) |
 | Phase 2 (3-6mo) | Reflection: AOT metadata table + dual-path dispatch | ⬜ |
 | Phase 3 (6-12mo) | MicroRT v1: bytecode interpreter + class loader + unified object model | ⬜ |
 | Phase 4 (2-3mo) | Dynamic proxy AOT: pre-generated proxy classes | ⬜ |
