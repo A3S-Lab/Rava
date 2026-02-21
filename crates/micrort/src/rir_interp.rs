@@ -533,17 +533,20 @@ impl RirInterpreter {
                         }
                     }
                     // User-defined instance method (with overload resolution by param count)
+                    // `this` is now in params, so effective count = method_args + 1
                     let full_name = format!("{}.{}", class_name, method_name);
-                    let arg_count = method_args.len();
+                    let effective_count = method_args.len() + 1; // +1 for `this`
                     let func_idx = self.module.functions.iter()
-                        .position(|f| f.name == full_name && f.params.len() == arg_count)
+                        .position(|f| f.name == full_name && f.params.len() == effective_count)
                         .or_else(|| self.module.functions.iter()
                             .position(|f| f.name == full_name));
                     if let Some(idx) = func_idx {
                         let func = &self.module.functions[idx];
                         let mut call_env: HashMap<String, RVal> = HashMap::new();
-                        call_env.insert("this".into(), receiver.clone());
-                        for ((param_name, _), val) in func.params.iter().zip(method_args.iter()) {
+                        // Prepend receiver as `this`, then method_args
+                        let mut all_args = vec![receiver.clone()];
+                        all_args.extend(method_args.iter().cloned());
+                        for ((param_name, _), val) in func.params.iter().zip(all_args.iter()) {
                             call_env.insert(param_name.0.clone(), val.clone());
                         }
                         return self.exec_function_idx(idx, call_env);
@@ -568,12 +571,8 @@ impl RirInterpreter {
                     .map(|s| encode_builtin(s) == func_id)
                     .unwrap_or(false);
             if !name_match { return false; }
-            // For constructors, args include implicit `this`, params don't
-            if f.flags.is_constructor {
-                f.params.len() + 1 == effective_arg_count
-            } else {
-                f.params.len() == effective_arg_count
-            }
+            // `this` is now included in params for constructors and instance methods
+            f.params.len() == effective_arg_count
         })
         // Fallback: if no exact param count match, try any name match
         .or_else(|| self.module.functions.iter().position(|f| {
@@ -587,14 +586,8 @@ impl RirInterpreter {
         if let Some(idx) = func_idx {
             let func = &self.module.functions[idx];
             let mut call_env: HashMap<String, RVal> = HashMap::new();
-            // For constructors, first arg is `this` (implicit, not in params list)
-            let effective_args = if func.flags.is_constructor && !args.is_empty() {
-                call_env.insert("this".into(), args[0].clone());
-                &args[1..]
-            } else {
-                &args[..]
-            };
-            for ((param_name, _), val) in func.params.iter().zip(effective_args.iter()) {
+            // `this` is now a regular param — map all params directly
+            for ((param_name, _), val) in func.params.iter().zip(args.iter()) {
                 call_env.insert(param_name.0.clone(), val.clone());
             }
             return self.exec_function_idx(idx, call_env);
@@ -622,20 +615,23 @@ impl RirInterpreter {
                 }
             }
             // Try to find a method in the module (with overload resolution)
+            // `this` is now in params, so effective param count = args.len() + 1 (for receiver)
             let prefix = format!("{}.", class_name);
-            let arg_count = args.len();
+            let effective_count = args.len() + 1; // +1 for `this`
             let func_idx = self.module.functions.iter()
                 .position(|f| f.name.starts_with(&prefix)
                     && !f.flags.is_constructor && !f.flags.is_clinit
-                    && f.params.len() == arg_count)
+                    && f.params.len() == effective_count)
                 .or_else(|| self.module.functions.iter()
                     .position(|f| f.name.starts_with(&prefix)
                         && !f.flags.is_constructor && !f.flags.is_clinit));
             if let Some(idx) = func_idx {
                 let func = &self.module.functions[idx];
                 let mut call_env: HashMap<String, RVal> = HashMap::new();
-                call_env.insert("this".into(), receiver.clone());
-                for ((param_name, _), val) in func.params.iter().zip(args.iter()) {
+                // Prepend receiver as `this`, then map remaining params to args
+                let mut all_args = vec![receiver.clone()];
+                all_args.extend(args.iter().cloned());
+                for ((param_name, _), val) in func.params.iter().zip(all_args.iter()) {
                     call_env.insert(param_name.0.clone(), val.clone());
                 }
                 return self.exec_function_idx(idx, call_env);

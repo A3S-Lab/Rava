@@ -141,10 +141,18 @@ impl Lowerer {
             is_synchronized: method.modifiers.contains(&Modifier::Synchronized),
         };
         let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id);
-        // Make `this` available in instance methods
-        if !method.modifiers.contains(&Modifier::Static) {
+        // Make `this` available in instance methods — prepend to params
+        let is_instance = !method.modifiers.contains(&Modifier::Static);
+        let params = if is_instance {
+            let mut p = vec![
+                (Value("this".into()), RirType::Ref(ClassId(encode_builtin(class)))),
+            ];
+            p.extend(params);
             ctx.vars.insert("this".into(), Value("this".into()));
-        }
+            p
+        } else {
+            params
+        };
         for p in &method.params {
             ctx.vars.insert(p.name.clone(), Value(p.name.clone()));
         }
@@ -163,12 +171,15 @@ impl Lowerer {
     fn lower_constructor(&mut self, class: &str, ctor: &ConstructorDecl, field_inits: &[(String, Expr)]) -> Result<()> {
         let func_id = self.next_func_id();
         let name = format!("{}.<init>", class);
-        let params: Vec<(Value, RirType)> = ctor.params.iter()
-            .map(|p| (Value(p.name.clone()), lower_type(&p.ty)))
-            .collect();
+        // "this" is the first implicit parameter
+        let mut params: Vec<(Value, RirType)> = vec![
+            (Value("this".into()), RirType::Ref(ClassId(encode_builtin(class)))),
+        ];
+        params.extend(ctor.params.iter()
+            .map(|p| (Value(p.name.clone()), lower_type(&p.ty))));
         let flags = FuncFlags { is_constructor: true, ..Default::default() };
         let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id);
-        // "this" is the first implicit argument
+        // "this" is already in params, register in vars
         ctx.vars.insert("this".into(), Value("this".into()));
         for p in &ctor.params {
             ctx.vars.insert(p.name.clone(), Value(p.name.clone()));

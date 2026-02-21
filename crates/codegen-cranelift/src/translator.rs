@@ -42,8 +42,19 @@ struct TranslationCtx<'a> {
     rt_str_concat: ClifFuncId,
     rt_int_to_str: ClifFuncId,
     rt_float_to_str: ClifFuncId,
+    // Object runtime
+    rt_obj_alloc: ClifFuncId,
+    rt_obj_get_field: ClifFuncId,
+    rt_obj_set_field: ClifFuncId,
+    // Array runtime
+    rt_arr_alloc: ClifFuncId,
+    rt_arr_load: ClifFuncId,
+    rt_arr_store: ClifFuncId,
+    rt_arr_len: ClifFuncId,
     /// String constant data IDs
     str_constants: HashMap<String, cranelift_module::DataId>,
+    /// Maps FieldId hash → sequential slot index (per class, but flattened for Phase 1)
+    field_slots: HashMap<u32, u32>,
 }
 
 impl<'a> TranslationCtx<'a> {
@@ -59,6 +70,23 @@ impl<'a> TranslationCtx<'a> {
         let rt_str_concat = Self::declare_rt_func(obj, "rava_str_concat", &[types::I64, types::I64], Some(types::I64))?;
         let rt_int_to_str = Self::declare_rt_func(obj, "rava_int_to_str", &[types::I64], Some(types::I64))?;
         let rt_float_to_str = Self::declare_rt_func(obj, "rava_float_to_str", &[types::F64], Some(types::I64))?;
+        // Object runtime
+        let rt_obj_alloc = Self::declare_rt_func(obj, "rava_obj_alloc", &[types::I64], Some(types::I64))?;
+        let rt_obj_get_field = Self::declare_rt_func(obj, "rava_obj_get_field", &[types::I64, types::I64], Some(types::I64))?;
+        let rt_obj_set_field = Self::declare_rt_func(obj, "rava_obj_set_field", &[types::I64, types::I64, types::I64], None)?;
+        // Array runtime
+        let rt_arr_alloc = Self::declare_rt_func(obj, "rava_arr_alloc", &[types::I64], Some(types::I64))?;
+        let rt_arr_load = Self::declare_rt_func(obj, "rava_arr_load", &[types::I64, types::I64], Some(types::I64))?;
+        let rt_arr_store = Self::declare_rt_func(obj, "rava_arr_store", &[types::I64, types::I64, types::I64], None)?;
+        let rt_arr_len = Self::declare_rt_func(obj, "rava_arr_len", &[types::I64], Some(types::I64))?;
+
+        // Build field hash → sequential slot index from module's field_names
+        let mut field_slots = HashMap::new();
+        let mut slot = 0u32;
+        for &hash in rir.field_names.keys() {
+            field_slots.insert(hash, slot);
+            slot += 1;
+        }
 
         // Declare all RIR functions first (forward declaration)
         let mut func_ids = HashMap::new();
@@ -76,7 +104,10 @@ impl<'a> TranslationCtx<'a> {
             rt_println_bool, rt_println_void,
             rt_print_int, rt_print_str,
             rt_str_concat, rt_int_to_str, rt_float_to_str,
+            rt_obj_alloc, rt_obj_get_field, rt_obj_set_field,
+            rt_arr_alloc, rt_arr_load, rt_arr_store, rt_arr_len,
             str_constants: HashMap::new(),
+            field_slots,
         })
     }
 
@@ -328,26 +359,76 @@ impl<'a> TranslationCtx<'a> {
                 };
                 self.def_val(builder, var_map, var_counter, &ret.0, result);
             }
-            // Instructions that are no-ops or stubs in AOT Phase 1
+            // ── Object operations ──
             RirInstr::New { ret, .. } => {
+                let num_fields = self.field_slots.len() as i64;
+                let nf = builder.ins().iconst(types::I64, num_fields);
+                let func_ref = self.obj.declare_func_in_func(self.rt_obj_alloc, builder.func);
+                let inst = builder.ins().call(func_ref, &[nf]);
+                let result = builder.inst_results(inst)[0];
+                self.def_val(builder, var_map, var_counter, &ret.0, result);
+            }
+            RirInstr::GetField { obj: obj_val, field, ret } => {
+                use rava_frontend::lowerer::encode_builtin;
+                let ptr = self.use_val(builder, var_map, var_counter, &obj_val.0);
+                // Special case: .length on arrays → rava_arr_len
+                let length_hash = encode_builtin("length");
+                if field.0 == length_hash {
+                    let func_ref = self.obj.declare_func_in_func(self.rt_arr_len, builder.func);
+                    let inst = builder.ins().call(func_ref, &[ptr]);
+                    let result = builder.inst_results(inst)[0];
+                    self.def_val(builder, var_map, var_counter, &ret.0, result);
+                } else {
+                    let slot = self.field_slots.get(&field.0).copied().unwrap_or(0) as i64;
+                    let slot_val = builder.ins().iconst(types::I64, slot);
+                    let func_ref = self.obj.declare_func_in_func(self.rt_obj_get_field, builder.func);
+                    let inst = builder.ins().call(func_ref, &[ptr, slot_val]);
+                    let result = builder.inst_results(inst)[0];
+                    self.def_val(builder, var_map, var_counter, &ret.0, result);
+                }
+            }
+            RirInstr::GetStatic { ret, .. } => {
                 let v = builder.ins().iconst(types::I64, 0);
                 self.def_val(builder, var_map, var_counter, &ret.0, v);
             }
-            RirInstr::GetField { ret, .. } | RirInstr::GetStatic { ret, .. } => {
-                let v = builder.ins().iconst(types::I64, 0);
-                self.def_val(builder, var_map, var_counter, &ret.0, v);
+            RirInstr::SetField { obj: obj_val, field, val } => {
+                let ptr = self.use_val(builder, var_map, var_counter, &obj_val.0);
+                let slot = self.field_slots.get(&field.0).copied().unwrap_or(0) as i64;
+                let slot_val = builder.ins().iconst(types::I64, slot);
+                let value = self.use_val(builder, var_map, var_counter, &val.0);
+                let func_ref = self.obj.declare_func_in_func(self.rt_obj_set_field, builder.func);
+                builder.ins().call(func_ref, &[ptr, slot_val, value]);
             }
-            RirInstr::SetField { .. } | RirInstr::SetStatic { .. } => {}
-            RirInstr::NewArray { ret, .. } => {
-                let v = builder.ins().iconst(types::I64, 0);
-                self.def_val(builder, var_map, var_counter, &ret.0, v);
+            RirInstr::SetStatic { .. } => {}
+            // ── Array operations ──
+            RirInstr::NewArray { len, ret, .. } => {
+                let length = self.use_val(builder, var_map, var_counter, &len.0);
+                let func_ref = self.obj.declare_func_in_func(self.rt_arr_alloc, builder.func);
+                let inst = builder.ins().call(func_ref, &[length]);
+                let result = builder.inst_results(inst)[0];
+                self.def_val(builder, var_map, var_counter, &ret.0, result);
             }
-            RirInstr::ArrayLoad { ret, .. } => {
-                let v = builder.ins().iconst(types::I64, 0);
-                self.def_val(builder, var_map, var_counter, &ret.0, v);
+            RirInstr::ArrayLoad { arr, idx, ret } => {
+                let arr_ptr = self.use_val(builder, var_map, var_counter, &arr.0);
+                let index = self.use_val(builder, var_map, var_counter, &idx.0);
+                let func_ref = self.obj.declare_func_in_func(self.rt_arr_load, builder.func);
+                let inst = builder.ins().call(func_ref, &[arr_ptr, index]);
+                let result = builder.inst_results(inst)[0];
+                self.def_val(builder, var_map, var_counter, &ret.0, result);
             }
-            RirInstr::ArrayStore { .. } | RirInstr::ArrayLen { .. } => {
-                // ArrayLen needs a ret
+            RirInstr::ArrayStore { arr, idx, val } => {
+                let arr_ptr = self.use_val(builder, var_map, var_counter, &arr.0);
+                let index = self.use_val(builder, var_map, var_counter, &idx.0);
+                let value = self.use_val(builder, var_map, var_counter, &val.0);
+                let func_ref = self.obj.declare_func_in_func(self.rt_arr_store, builder.func);
+                builder.ins().call(func_ref, &[arr_ptr, index, value]);
+            }
+            RirInstr::ArrayLen { arr, ret } => {
+                let arr_ptr = self.use_val(builder, var_map, var_counter, &arr.0);
+                let func_ref = self.obj.declare_func_in_func(self.rt_arr_len, builder.func);
+                let inst = builder.ins().call(func_ref, &[arr_ptr]);
+                let result = builder.inst_results(inst)[0];
+                self.def_val(builder, var_map, var_counter, &ret.0, result);
             }
             RirInstr::Instanceof { ret, .. } => {
                 let v = builder.ins().iconst(types::I64, 0);
@@ -361,10 +442,50 @@ impl<'a> TranslationCtx<'a> {
                 builder.ins().trap(ir::TrapCode::unwrap_user(1));
             }
             RirInstr::MonitorEnter(_) | RirInstr::MonitorExit(_) => {}
-            RirInstr::CallVirtual { ret, .. } | RirInstr::CallInterface { ret, .. } => {
-                if let Some(r) = ret {
-                    let v = builder.ins().iconst(types::I64, 0);
-                    self.def_val(builder, var_map, var_counter, &r.0, v);
+            RirInstr::CallVirtual { receiver, method, args, ret } |
+            RirInstr::CallInterface { receiver, method, args, ret } => {
+                // Phase 1: static dispatch — resolve method by hash against known functions
+                let recv = self.use_val(builder, var_map, var_counter, &receiver.0);
+                let mut arg_vals = vec![recv];
+                for a in args {
+                    arg_vals.push(self.use_val(builder, var_map, var_counter, &a.0));
+                }
+                // Try to find a matching function by method hash
+                let mut found = false;
+                for (name, &clif_id) in &self.func_ids {
+                    use rava_frontend::lowerer::encode_builtin;
+                    let name_hash = encode_builtin(name);
+                    let short_hash = name.rsplit('.').next()
+                        .map(|s| encode_builtin(s))
+                        .unwrap_or(0);
+                    if name_hash == method.0 || short_hash == method.0 {
+                        let func_ref = self.obj.declare_func_in_func(clif_id, builder.func);
+                        let sig = builder.func.dfg.ext_funcs[func_ref].signature;
+                        let expected = builder.func.dfg.signatures[sig].params.len();
+                        let call_args = if arg_vals.len() > expected {
+                            &arg_vals[..expected]
+                        } else {
+                            &arg_vals
+                        };
+                        let inst = builder.ins().call(func_ref, call_args);
+                        if let Some(r) = ret {
+                            let results = builder.inst_results(inst);
+                            if !results.is_empty() {
+                                self.def_val(builder, var_map, var_counter, &r.0, results[0]);
+                            } else {
+                                let v = builder.ins().iconst(types::I64, 0);
+                                self.def_val(builder, var_map, var_counter, &r.0, v);
+                            }
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    if let Some(r) = ret {
+                        let v = builder.ins().iconst(types::I64, 0);
+                        self.def_val(builder, var_map, var_counter, &r.0, v);
+                    }
                 }
             }
             RirInstr::MicroRtReflect { ret, .. } |
@@ -494,6 +615,10 @@ impl<'a> TranslationCtx<'a> {
             let name_match = encode_builtin(name) == func_id
                 || name.rsplit('.').next()
                     .map(|s| encode_builtin(s) == func_id)
+                    .unwrap_or(false)
+                // Instance method: __method__<short_name>
+                || name.rsplit('.').next()
+                    .map(|s| encode_builtin(&format!("__method__{s}")) == func_id)
                     .unwrap_or(false);
             if name_match {
                 let func_ref = self.obj.declare_func_in_func(clif_id, builder.func);
