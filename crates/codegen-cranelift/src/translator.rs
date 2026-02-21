@@ -7,7 +7,7 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use cranelift_codegen::ir::{
     self, types, AbiParam, InstBuilder, MemFlags, Signature,
 };
@@ -120,6 +120,8 @@ impl<'a> TranslationCtx<'a> {
         // Variable counter for SSA values
         let mut var_map: HashMap<String, Variable> = HashMap::new();
         let mut var_counter = 0u32;
+        // Track which SSA names hold string pointers
+        let mut string_vals: HashSet<String> = HashSet::new();
 
         // Helper to get or create a variable
         let get_var = |name: &str, var_map: &mut HashMap<String, Variable>, var_counter: &mut u32| -> Variable {
@@ -179,6 +181,7 @@ impl<'a> TranslationCtx<'a> {
             for instr in &bb.instrs {
                 self.translate_instr(
                     instr, &mut builder, &block_map, &mut var_map, &mut var_counter,
+                    &mut string_vals,
                 )?;
             }
 
@@ -208,6 +211,7 @@ impl<'a> TranslationCtx<'a> {
         block_map: &HashMap<u32, ir::Block>,
         var_map: &mut HashMap<String, Variable>,
         var_counter: &mut u32,
+        string_vals: &mut HashSet<String>,
     ) -> Result<()> {
         match instr {
             RirInstr::ConstInt { ret, value } => {
@@ -225,9 +229,14 @@ impl<'a> TranslationCtx<'a> {
                 if let Some(src) = value.strip_prefix("__copy__") {
                     let src_val = self.use_val(builder, var_map, var_counter, src);
                     self.def_val(builder, var_map, var_counter, &ret.0, src_val);
+                    // Propagate string type
+                    if string_vals.contains(src) {
+                        string_vals.insert(ret.0.clone());
+                    }
                 } else {
                     let ptr = self.get_string_ptr(builder, value)?;
                     self.def_val(builder, var_map, var_counter, &ret.0, ptr);
+                    string_vals.insert(ret.0.clone());
                 }
             }
             RirInstr::ConstNull { ret } => {
@@ -235,10 +244,38 @@ impl<'a> TranslationCtx<'a> {
                 self.def_val(builder, var_map, var_counter, &ret.0, v);
             }
             RirInstr::BinOp { op, lhs, rhs, ret } => {
-                let l = self.use_val(builder, var_map, var_counter, &lhs.0);
-                let r = self.use_val(builder, var_map, var_counter, &rhs.0);
-                let result = self.translate_binop(builder, op, l, r);
-                self.def_val(builder, var_map, var_counter, &ret.0, result);
+                let l_is_str = string_vals.contains(&lhs.0);
+                let r_is_str = string_vals.contains(&rhs.0);
+                if *op == BinOp::Add && (l_is_str || r_is_str) {
+                    // String concatenation
+                    let l = self.use_val(builder, var_map, var_counter, &lhs.0);
+                    let r = self.use_val(builder, var_map, var_counter, &rhs.0);
+                    // Convert non-string operand to string
+                    let l_str = if l_is_str {
+                        l
+                    } else {
+                        let func_ref = self.obj.declare_func_in_func(self.rt_int_to_str, builder.func);
+                        let inst = builder.ins().call(func_ref, &[l]);
+                        builder.inst_results(inst)[0]
+                    };
+                    let r_str = if r_is_str {
+                        r
+                    } else {
+                        let func_ref = self.obj.declare_func_in_func(self.rt_int_to_str, builder.func);
+                        let inst = builder.ins().call(func_ref, &[r]);
+                        builder.inst_results(inst)[0]
+                    };
+                    let concat_ref = self.obj.declare_func_in_func(self.rt_str_concat, builder.func);
+                    let inst = builder.ins().call(concat_ref, &[l_str, r_str]);
+                    let result = builder.inst_results(inst)[0];
+                    self.def_val(builder, var_map, var_counter, &ret.0, result);
+                    string_vals.insert(ret.0.clone());
+                } else {
+                    let l = self.use_val(builder, var_map, var_counter, &lhs.0);
+                    let r = self.use_val(builder, var_map, var_counter, &rhs.0);
+                    let result = self.translate_binop(builder, op, l, r);
+                    self.def_val(builder, var_map, var_counter, &ret.0, result);
+                }
             }
             RirInstr::UnaryOp { op, operand, ret } => {
                 let v = self.use_val(builder, var_map, var_counter, &operand.0);
@@ -275,7 +312,12 @@ impl<'a> TranslationCtx<'a> {
                 let arg_vals: Vec<ir::Value> = args.iter()
                     .map(|a| self.use_val(builder, var_map, var_counter, &a.0))
                     .collect();
-                self.translate_call(builder, func_id.0, &arg_vals, ret.as_ref(), var_map, var_counter)?;
+                // Check if first arg is a string
+                let first_arg_is_str = args.first()
+                    .map(|a| string_vals.contains(&a.0))
+                    .unwrap_or(false);
+                self.translate_call(builder, func_id.0, &arg_vals, ret.as_ref(),
+                    var_map, var_counter, first_arg_is_str, string_vals)?;
             }
             RirInstr::Convert { val, to, ret, .. } => {
                 let v = self.use_val(builder, var_map, var_counter, &val.0);
@@ -383,16 +425,21 @@ impl<'a> TranslationCtx<'a> {
         ret: Option<&rava_rir::Value>,
         var_map: &mut HashMap<String, Variable>,
         var_counter: &mut u32,
+        first_arg_is_str: bool,
+        string_vals: &mut HashSet<String>,
     ) -> Result<()> {
         use rava_frontend::lowerer::encode_builtin;
 
         // System.out.println dispatch
         if func_id == encode_builtin("System.out.println") {
-            let func_ref = self.obj.declare_func_in_func(self.rt_println_int, builder.func);
             if args.is_empty() {
                 let void_ref = self.obj.declare_func_in_func(self.rt_println_void, builder.func);
                 builder.ins().call(void_ref, &[]);
+            } else if first_arg_is_str {
+                let func_ref = self.obj.declare_func_in_func(self.rt_println_str, builder.func);
+                builder.ins().call(func_ref, &[args[0]]);
             } else {
+                let func_ref = self.obj.declare_func_in_func(self.rt_println_int, builder.func);
                 builder.ins().call(func_ref, &[args[0]]);
             }
             if let Some(r) = ret {
@@ -403,12 +450,41 @@ impl<'a> TranslationCtx<'a> {
         }
         if func_id == encode_builtin("System.out.print") {
             if !args.is_empty() {
-                let func_ref = self.obj.declare_func_in_func(self.rt_print_int, builder.func);
-                builder.ins().call(func_ref, &[args[0]]);
+                if first_arg_is_str {
+                    let func_ref = self.obj.declare_func_in_func(self.rt_print_str, builder.func);
+                    builder.ins().call(func_ref, &[args[0]]);
+                } else {
+                    let func_ref = self.obj.declare_func_in_func(self.rt_print_int, builder.func);
+                    builder.ins().call(func_ref, &[args[0]]);
+                }
             }
             if let Some(r) = ret {
                 let v = builder.ins().iconst(types::I64, 0);
                 self.def_val(builder, var_map, var_counter, &r.0, v);
+            }
+            return Ok(());
+        }
+
+        // String concatenation via runtime
+        if func_id == encode_builtin("__str_concat__") {
+            let func_ref = self.obj.declare_func_in_func(self.rt_str_concat, builder.func);
+            let inst = builder.ins().call(func_ref, &[args[0], args[1]]);
+            if let Some(r) = ret {
+                let results = builder.inst_results(inst);
+                self.def_val(builder, var_map, var_counter, &r.0, results[0]);
+                string_vals.insert(r.0.clone());
+            }
+            return Ok(());
+        }
+
+        // int-to-string conversion
+        if func_id == encode_builtin("__int_to_str__") {
+            let func_ref = self.obj.declare_func_in_func(self.rt_int_to_str, builder.func);
+            let inst = builder.ins().call(func_ref, &[args[0]]);
+            if let Some(r) = ret {
+                let results = builder.inst_results(inst);
+                self.def_val(builder, var_map, var_counter, &r.0, results[0]);
+                string_vals.insert(r.0.clone());
             }
             return Ok(());
         }
@@ -493,10 +569,34 @@ impl<'a> TranslationCtx<'a> {
     }
 
     fn get_string_ptr(&mut self, builder: &mut FunctionBuilder, s: &str) -> Result<ir::Value> {
-        // For now, string constants are stored as their hash (pointer to data section)
-        // A real implementation would store the string in a data section
-        let hash = rava_frontend::lowerer::encode_builtin(s) as i64;
-        Ok(builder.ins().iconst(types::I64, hash))
+        // Get or create a data section entry for this string constant
+        let data_id = if let Some(&id) = self.str_constants.get(s) {
+            id
+        } else {
+            // Create a null-terminated string in the data section
+            let mut data_bytes = s.as_bytes().to_vec();
+            data_bytes.push(0); // null terminator
+
+            let data_id = self.obj.declare_data(
+                &format!(".str.{}", self.str_constants.len()),
+                Linkage::Local,
+                false, // not writable
+                false, // not TLS
+            ).map_err(|e| RavaError::Codegen(format!("declare string data failed: {e}")))?;
+
+            let mut data_desc = cranelift_module::DataDescription::new();
+            data_desc.define(data_bytes.into_boxed_slice());
+            self.obj.define_data(data_id, &data_desc)
+                .map_err(|e| RavaError::Codegen(format!("define string data failed: {e}")))?;
+
+            self.str_constants.insert(s.to_string(), data_id);
+            data_id
+        };
+
+        // Get a pointer to the data
+        let gv = self.obj.declare_data_in_func(data_id, builder.func);
+        let ptr = builder.ins().global_value(types::I64, gv);
+        Ok(ptr)
     }
 }
 

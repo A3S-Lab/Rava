@@ -66,7 +66,7 @@ pub enum RirInstr {
 }
 
 /// Binary operation kind.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BinOp {
     Add, Sub, Mul, Div, Rem,
     And, Or, Xor,
