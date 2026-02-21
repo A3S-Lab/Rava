@@ -1,0 +1,16 @@
+[package]
+name        = "rava-pkg"
+description = "Package manager: Maven Central integration, dependency resolution, rava.lock"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+
+[dependencies]
+rava-common = { workspace = true }
+rava-hcl    = { workspace = true }
+thiserror   = { workspace = true }
+tokio       = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }

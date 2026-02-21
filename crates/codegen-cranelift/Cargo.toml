@@ -1,0 +1,21 @@
+[package]
+name        = "rava-codegen-cranelift"
+description = "Cranelift AOT codegen backend — default implementation of CodegenBackend"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+
+[dependencies]
+rava-common = { workspace = true }
+rava-rir    = { workspace = true }
+rava-aot    = { workspace = true }
+thiserror   = { workspace = true }
+
+# Cranelift code generation
+cranelift-codegen  = { version = "0.113", features = ["x86"] }
+cranelift-frontend = "0.113"
+cranelift-module   = "0.113"
+cranelift-object   = "0.113"
+target-lexicon     = "0.12"

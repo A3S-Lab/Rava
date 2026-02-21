@@ -1,0 +1,14 @@
+[package]
+name        = "rava-micrort"
+description = "MicroRT: bytecode interpreter, class loader, verifier, reflection engine, JNI layer"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+
+[dependencies]
+rava-common = { workspace = true }
+rava-rir    = { workspace = true }
+rava-heap   = { workspace = true }
+thiserror   = { workspace = true }

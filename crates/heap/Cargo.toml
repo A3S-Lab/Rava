@@ -1,0 +1,12 @@
+[package]
+name        = "rava-heap"
+description = "Unified heap + GC — shared memory for AOT-compiled and MicroRT-interpreted objects"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+
+[dependencies]
+rava-common = { workspace = true }
+thiserror   = { workspace = true }

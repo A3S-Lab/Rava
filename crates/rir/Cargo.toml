@@ -1,0 +1,12 @@
+[package]
+name        = "rava-rir"
+description = "Rava Intermediate Representation (SSA form)"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+
+[dependencies]
+rava-common = { workspace = true }
+serde       = { workspace = true }

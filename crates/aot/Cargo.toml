@@ -1,0 +1,13 @@
+[package]
+name        = "rava-aot"
+description = "AOT optimization passes and native code generation (Cranelift backend)"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+
+[dependencies]
+rava-common = { workspace = true }
+rava-rir    = { workspace = true }
+thiserror   = { workspace = true }

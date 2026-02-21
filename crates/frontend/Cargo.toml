@@ -1,0 +1,13 @@
+[package]
+name        = "rava-frontend"
+description = "Java lexer, parser, type checker, semantic analyzer → RIR"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+
+[dependencies]
+rava-common = { workspace = true }
+rava-rir    = { workspace = true }
+thiserror   = { workspace = true }

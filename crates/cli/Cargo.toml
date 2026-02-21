@@ -1,0 +1,25 @@
+[package]
+name        = "rava"
+description = "Rava CLI — Java AOT compiler and all-in-one toolchain"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+
+[[bin]]
+name = "rava"
+path = "src/main.rs"
+
+[dependencies]
+rava-common            = { workspace = true }
+rava-frontend          = { workspace = true }
+rava-aot               = { workspace = true }
+rava-codegen-cranelift = { workspace = true }
+rava-pkg               = { workspace = true }
+rava-hcl               = { workspace = true }
+clap                   = { workspace = true }
+tokio                  = { workspace = true }
+anyhow                 = { workspace = true }
+tracing                = { workspace = true }
+tracing-subscriber     = { workspace = true }

@@ -1,0 +1,12 @@
+[package]
+name        = "rava-common"
+description = "Shared types: diagnostics, errors, Java type system, source spans"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+
+[dependencies]
+thiserror = { workspace = true }
+serde     = { workspace = true }
