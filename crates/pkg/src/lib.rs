@@ -13,8 +13,8 @@ pub mod registry;
 pub mod resolver;
 pub mod shortname;
 
-pub use config::ProjectConfig;
+pub use config::{BuildConfig, ProjectConfig, ProjectMeta};
 pub use lockfile::{LockedPackage, Lockfile};
 pub use registry::ClassResolver;
-pub use resolver::DependencyGraph;
+pub use resolver::{latest_version, parse_coordinate, DependencyGraph};
 pub use shortname::ShortNameRegistry;

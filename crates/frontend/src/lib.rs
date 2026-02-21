@@ -1,4 +1,4 @@
-//! Java frontend: lexer → parser → type checker → semantic analyzer → RIR.
+//! Java frontend: lexer → parser → lowerer → RIR.
 //!
 //! # Architecture (Minimal Core + Extension Points)
 //!
@@ -10,8 +10,12 @@
 //!   - [`TypeChecker`]  — AST → typed AST
 //!   - [`Lowerer`]      — typed AST → RIR
 
+pub mod ast;
 pub mod compiler;
+pub mod lexer;
+pub mod lowerer;
+pub mod parser;
 pub mod traits;
 
 pub use compiler::Compiler;
-pub use traits::{Lowerer, Parser, TypeChecker};
+pub use traits::{Lowerer as LowererTrait, Parser as ParserTrait, TypeChecker};

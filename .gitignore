@@ -1,6 +1,58 @@
+# ── Rust ──────────────────────────────────────────────────────────────────────
 /target/
+**/*.rs.bk
+
+# Cargo.lock is intentionally excluded for libraries; keep for binaries.
+# Rava is a binary crate — uncomment the next line to commit Cargo.lock.
 Cargo.lock
+
+# ── Java build artifacts ───────────────────────────────────────────────────────
+*.class
+*.jar
+*.war
+*.ear
+*.jmod
+hs_err_pid*.log
+replay_pid*.log
+
+# ── Rava output ───────────────────────────────────────────────────────────────
+# AOT-compiled native binaries produced by `rava build`
+*.rava-out
+rava.lock
+
+# ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+# ── IDE / editors ─────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+*.swp
+*.swo
+*~
+
+# ── Native / linker artifacts ─────────────────────────────────────────────────
 *.o
 *.a
+*.so
+*.dylib
+*.dll
+*.pdb
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+.env
+.env.local
+*.log
+/tmp/
 .claude/

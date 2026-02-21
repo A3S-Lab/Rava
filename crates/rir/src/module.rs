@@ -1,13 +1,16 @@
 //! RIR module, function, and basic block structures (SSA form).
 
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use crate::{BlockId, FuncId, RirInstr, RirType, Value};
 
 /// A compiled Java source file or class — the top-level RIR unit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RirModule {
-    pub name:      String,
-    pub functions: Vec<RirFunction>,
+    pub name:        String,
+    pub functions:   Vec<RirFunction>,
+    /// Maps FieldId hash → field name string, so the interpreter can reverse-lookup.
+    pub field_names: HashMap<u32, String>,
 }
 
 /// A single Java method in SSA form.
@@ -42,6 +45,6 @@ pub struct FuncFlags {
 
 impl RirModule {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), functions: Vec::new() }
+        Self { name: name.into(), functions: Vec::new(), field_names: HashMap::new() }
     }
 }

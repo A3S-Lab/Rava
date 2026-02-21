@@ -1,14 +1,15 @@
-//! `rava add` — add a dependency.
+//! `rava add` — add a dependency to the current project.
 
 use anyhow::Result;
 use clap::Args;
+use rava_pkg::{ProjectConfig, ShortNameRegistry, latest_version, parse_coordinate};
 
 #[derive(Args)]
 pub struct AddArgs {
-    /// Package to add (e.g. "org.springframework.boot:spring-boot-starter-web")
+    /// Package to add — short name (e.g. "junit") or full coordinate (e.g. "org.junit.jupiter:junit-jupiter")
     pub package: String,
 
-    /// Version constraint (defaults to latest)
+    /// Pin to a specific version (default: fetch latest from Maven Central)
     pub version: Option<String>,
 
     /// Add as a dev dependency
@@ -17,8 +18,50 @@ pub struct AddArgs {
 }
 
 pub async fn add(args: AddArgs) -> Result<()> {
-    // TODO(phase-1): resolve via Maven Central, update rava.hcl + rava.lock
-    eprintln!("rava add: not yet implemented");
-    eprintln!("  package: {}, version: {:?}", args.package, args.version);
+    let cwd = std::env::current_dir()?;
+    let hcl_path = cwd.join("rava.hcl");
+
+    if !hcl_path.exists() {
+        anyhow::bail!("no rava.hcl found — run `rava init` first");
+    }
+
+    // Resolve short name → full coordinate
+    let registry = ShortNameRegistry::builtin();
+    let coordinate = registry.resolve(&args.package).to_string();
+
+    // Validate coordinate format
+    parse_coordinate(&coordinate)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // Resolve version
+    let version = match args.version {
+        Some(v) => v,
+        None => {
+            print!("  fetching latest version of {coordinate} ... ");
+            let v = latest_version(&coordinate).await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            println!("{v}");
+            v
+        }
+    };
+
+    // Load config, add dep, write back
+    let mut config = ProjectConfig::from_file(&hcl_path)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let display_key = args.package.clone();
+
+    if args.dev {
+        config.dev_dependencies.insert(display_key.clone(), version.clone());
+    } else {
+        config.dependencies.insert(display_key.clone(), version.clone());
+    }
+
+    config.to_file(&hcl_path)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let dep_type = if args.dev { "dev dependency" } else { "dependency" };
+    println!("  added {dep_type}: {display_key} = \"{version}\"");
+
     Ok(())
 }

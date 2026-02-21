@@ -70,6 +70,7 @@ pub enum RirInstr {
 pub enum BinOp {
     Add, Sub, Mul, Div, Rem,
     And, Or, Xor,
+    BitAnd, BitOr,
     Shl, Shr, UShr,
     Eq, Ne, Lt, Le, Gt, Ge,
 }

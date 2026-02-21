@@ -440,15 +440,16 @@ common    → (none)
 
 ## Test Coverage
 
-21 tests passing (`cargo test --workspace`):
+42 tests passing (`cargo test --workspace`), 29 examples passing (`just examples`):
 
 | Crate | Tests |
 |-------|-------|
 | `rava-heap` | 6 — mark word bit layout, alloc alignment, write barrier, OOM |
 | `rava-aot` | 2 — 7 passes registered in correct order |
 | `rava-codegen-cranelift` | 2 — Cranelift ISA init for host target |
-| `rava-frontend` | 1 — compiler stub returns not-implemented |
-| `rava-pkg` | 2 — short name resolution, full coordinate passthrough |
+| `rava-frontend` | 27 — lexer (hex, binary, char, operators, keywords), parser (hello world, local var, do-while, for-each, break/continue, try/catch, lambda, enum, instanceof pattern, method ref), lowerer (hello world, arithmetic, do-while, break/continue, ternary, for-each), compiler |
+| `rava-pkg` | 4 — short name resolution, full coordinate passthrough, HCL roundtrip |
+| `rava` (cli) | 1 — PascalCase conversion |
 
 ---
 

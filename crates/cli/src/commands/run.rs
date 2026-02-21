@@ -1,6 +1,6 @@
 //! `rava run` — run a Java source file directly.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Args;
 use std::path::PathBuf;
 
@@ -19,8 +19,20 @@ pub struct RunArgs {
 }
 
 pub async fn run(args: RunArgs) -> Result<()> {
-    // TODO(phase-1): compile source → RIR → AOT → exec
-    eprintln!("rava run: not yet implemented");
-    eprintln!("  file: {:?}", args.file);
+    let file = args.file.ok_or_else(|| anyhow::anyhow!(
+        "no file specified — pass a .java file or run from a project directory"
+    ))?;
+
+    let source = std::fs::read_to_string(&file)
+        .with_context(|| format!("cannot read {}", file.display()))?;
+
+    let compiler = rava_frontend::Compiler::new();
+    let module = compiler.compile(&source, &file)
+        .map_err(|e| anyhow::anyhow!("compile error: {}", e))?;
+
+    let interp = rava_micrort::RirInterpreter::new(module);
+    interp.run_main()
+        .map_err(|e| anyhow::anyhow!("runtime error: {}", e))?;
+
     Ok(())
 }

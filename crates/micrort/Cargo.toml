@@ -8,7 +8,8 @@ license.workspace     = true
 repository.workspace  = true
 
 [dependencies]
-rava-common = { workspace = true }
-rava-rir    = { workspace = true }
-rava-heap   = { workspace = true }
-thiserror   = { workspace = true }
+rava-common    = { workspace = true }
+rava-rir       = { workspace = true }
+rava-heap      = { workspace = true }
+rava-frontend  = { workspace = true }
+thiserror      = { workspace = true }

@@ -14,10 +14,12 @@ path = "src/main.rs"
 [dependencies]
 rava-common            = { workspace = true }
 rava-frontend          = { workspace = true }
+rava-micrort           = { workspace = true }
 rava-aot               = { workspace = true }
 rava-codegen-cranelift = { workspace = true }
 rava-pkg               = { workspace = true }
 rava-hcl               = { workspace = true }
+reqwest                = { workspace = true }
 clap                   = { workspace = true }
 tokio                  = { workspace = true }
 anyhow                 = { workspace = true }
