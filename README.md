@@ -496,3 +496,11 @@ common    → (none)
 ---
 
 > Rava's goal: give Java developers the same experience Bun/Deno users have — one binary, zero-config execution, fast compilation, human-readable project config. Java programs that start in 10ms, use 20MB of memory, and deploy as a single file.
+
+---
+
+## License
+
+MIT © [A3S Lab](https://github.com/A3S-Lab)
+
+See [LICENSE](LICENSE) for the full text.
