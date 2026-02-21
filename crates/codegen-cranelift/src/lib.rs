@@ -7,3 +7,4 @@ pub mod backend;
 pub mod translator;
 
 pub use backend::CraneliftBackend;
+pub use target_lexicon::Triple;
