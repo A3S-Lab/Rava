@@ -14,7 +14,7 @@ pub struct InitArgs {
     pub template: String,
 }
 
-pub async fn init(args: InitArgs) -> Result<()> {
+pub fn init(args: InitArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
 
     // Refuse to overwrite an existing project

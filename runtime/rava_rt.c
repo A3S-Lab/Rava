@@ -7,9 +7,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
-/* Forward declaration — the AOT compiler exports Main_main (mangled from Main.main) */
-extern void Main_main(long args);
+/* Forward declaration — the AOT compiler always exports rava_entry as the entry point */
+extern void rava_entry(long args);
 
 /* ── System.out.println variants ──────────────────────────────────────────── */
 
@@ -108,8 +109,22 @@ long rava_obj_alloc(long num_fields) {
     size_t size = (1 + num_fields) * sizeof(long);
     long* obj = (long*)calloc(1, size);
     if (!obj) return 0;
-    obj[0] = num_fields;
+    obj[0] = 0; /* class tag — set later via rava_obj_set_tag */
     return (long)obj;
+}
+
+/* Set the class tag (stored in header slot 0). */
+void rava_obj_set_tag(long obj_ptr, long tag) {
+    if (obj_ptr == 0) return;
+    long* obj = (long*)obj_ptr;
+    obj[0] = tag;
+}
+
+/* Get the class tag (stored in header slot 0). */
+long rava_obj_get_tag(long obj_ptr) {
+    if (obj_ptr == 0) return 0;
+    long* obj = (long*)obj_ptr;
+    return obj[0];
 }
 
 /* Get field at slot index (0-based). */
@@ -172,9 +187,44 @@ long rava_arr_len(long arr_ptr) {
     return arr[0];
 }
 
+/* ── System operations ───────────────────────────────────────────────────── */
+
+void rava_system_exit(long code) {
+    exit((int)code);
+}
+
+long rava_system_currenttimemillis(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (long)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
+long rava_system_nanotime(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (long)tv.tv_sec * 1000000000L + (long)tv.tv_usec * 1000;
+}
+
+/* ── Math operations ─────────────────────────────────────────────────────── */
+
+/* Returns a pseudo-random double between 0.0 and 1.0 as I64 bits. */
+long rava_math_random(void) {
+    static int seeded = 0;
+    if (!seeded) {
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        srand((unsigned)(tv.tv_sec ^ tv.tv_usec));
+        seeded = 1;
+    }
+    double r = (double)rand() / (double)RAND_MAX;
+    long bits;
+    memcpy(&bits, &r, sizeof(bits));
+    return bits;
+}
+
 /* ── Entry point ──────────────────────────────────────────────────────────── */
 
 int main(int argc, char** argv) {
-    Main_main(0);
+    rava_entry(0);
     return 0;
 }

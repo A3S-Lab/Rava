@@ -1,0 +1,7 @@
+before
+caught
+after
+try
+finally
+inner caught
+outer ok

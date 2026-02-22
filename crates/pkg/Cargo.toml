@@ -11,7 +11,6 @@ repository.workspace  = true
 rava-common = { workspace = true }
 rava-hcl    = { workspace = true }
 thiserror   = { workspace = true }
-tokio       = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 hcl-rs      = { workspace = true }

@@ -5,7 +5,7 @@ use rava_common::error::{RavaError, Result};
 /// Query Maven Central for the latest version of a `groupId:artifactId`.
 ///
 /// Uses repo1.maven.org maven-metadata.xml (no auth, no rate limit).
-pub async fn latest_version(coordinate: &str) -> Result<String> {
+pub fn latest_version(coordinate: &str) -> Result<String> {
     let (group_id, artifact_id) = parse_coordinate(coordinate)?;
     let group_path = group_id.replace('.', "/");
 
@@ -13,7 +13,7 @@ pub async fn latest_version(coordinate: &str) -> Result<String> {
         "https://repo1.maven.org/maven2/{group_path}/{artifact_id}/maven-metadata.xml"
     );
 
-    let resp = reqwest::get(&url).await.map_err(|e| {
+    let resp = reqwest::blocking::get(&url).map_err(|e| {
         RavaError::Package(format!("Maven Central request failed: {e}"))
     })?;
 
@@ -23,7 +23,7 @@ pub async fn latest_version(coordinate: &str) -> Result<String> {
         )));
     }
 
-    let xml = resp.text().await.map_err(|e| {
+    let xml = resp.text().map_err(|e| {
         RavaError::Package(format!("failed to read Maven Central response: {e}"))
     })?;
 

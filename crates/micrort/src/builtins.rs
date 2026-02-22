@@ -2,7 +2,8 @@
 
 use rava_common::error::Result;
 use crate::rir_interp::RVal;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::cmp::Ordering;
 use std::rc::Rc;
 
 fn fnv(name: &str) -> u32 {
@@ -40,6 +41,17 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
     // String.format
     if func_id == fnv("String.format") {
         return Some(Ok(RVal::Str(format_java_string(args))));
+    }
+    // String.join(delimiter, elements...)
+    if func_id == fnv("String.join") {
+        let delim = args.first().map(|v| v.to_display()).unwrap_or_default();
+        // Second arg can be an array or individual strings
+        if let Some(RVal::Array(arr)) = args.get(1) {
+            let s = arr.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>().join(&delim);
+            return Some(Ok(RVal::Str(s)));
+        }
+        let parts: Vec<String> = args[1..].iter().map(|v| v.to_display()).collect();
+        return Some(Ok(RVal::Str(parts.join(&delim))));
     }
 
     // Integer / Long / Double parsing
@@ -95,11 +107,142 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         let a = args.first().map(|v| v.as_float()).unwrap_or(0.0);
         return Some(Ok(RVal::Float(a.ceil())));
     }
+    if func_id == fnv("Math.random") {
+        let r: f64 = rand_f64();
+        return Some(Ok(RVal::Float(r)));
+    }
+    if func_id == fnv("Math.round") {
+        let a = args.first().map(|v| v.as_float()).unwrap_or(0.0);
+        return Some(Ok(RVal::Int(a.round() as i64)));
+    }
+    if func_id == fnv("Math.log") {
+        let a = args.first().map(|v| v.as_float()).unwrap_or(0.0);
+        return Some(Ok(RVal::Float(a.ln())));
+    }
+    if func_id == fnv("Math.sin") {
+        let a = args.first().map(|v| v.as_float()).unwrap_or(0.0);
+        return Some(Ok(RVal::Float(a.sin())));
+    }
+    if func_id == fnv("Math.cos") {
+        let a = args.first().map(|v| v.as_float()).unwrap_or(0.0);
+        return Some(Ok(RVal::Float(a.cos())));
+    }
+
+    // System utilities
+    if func_id == fnv("System.exit") {
+        let code = args.first().map(|v| v.as_int()).unwrap_or(0);
+        std::process::exit(code as i32);
+    }
+    if func_id == fnv("System.currentTimeMillis") {
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        return Some(Ok(RVal::Int(ms)));
+    }
+    if func_id == fnv("System.nanoTime") {
+        // Monotonic clock approximation
+        let ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+        return Some(Ok(RVal::Int(ns)));
+    }
 
     // ArrayList constructor
     if func_id == fnv("ArrayList") || func_id == fnv("ArrayList.<init>") {
         let arr = Rc::new(RefCell::new(Vec::<RVal>::new()));
         return Some(Ok(RVal::Array(arr)));
+    }
+
+    // List.of / Arrays.asList — create an immutable-ish list from args
+    if func_id == fnv("List.of") || func_id == fnv("Arrays.asList") {
+        let arr = Rc::new(RefCell::new(args.to_vec()));
+        return Some(Ok(RVal::Array(arr)));
+    }
+    // Arrays.sort — sort an array in-place
+    if func_id == fnv("Arrays.sort") {
+        if let Some(RVal::Array(arr)) = args.first() {
+            arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+        }
+        return Some(Ok(RVal::Void));
+    }
+    // Arrays.toString — "[1, 2, 3]"
+    if func_id == fnv("Arrays.toString") {
+        if let Some(RVal::Array(arr)) = args.first() {
+            let s = arr.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>().join(", ");
+            return Some(Ok(RVal::Str(format!("[{}]", s))));
+        }
+        return Some(Ok(RVal::Str("[]".into())));
+    }
+    // Arrays.copyOf
+    if func_id == fnv("Arrays.copyOf") {
+        if let Some(RVal::Array(arr)) = args.first() {
+            let len = args.get(1).map(|v| v.as_int()).unwrap_or(0) as usize;
+            let v = arr.borrow();
+            let mut copy: Vec<RVal> = v.iter().take(len).cloned().collect();
+            while copy.len() < len { copy.push(RVal::Int(0)); }
+            return Some(Ok(RVal::Array(Rc::new(RefCell::new(copy)))));
+        }
+        return Some(Ok(RVal::Null));
+    }
+    // Arrays.fill
+    if func_id == fnv("Arrays.fill") {
+        if let Some(RVal::Array(arr)) = args.first() {
+            let val = args.get(1).cloned().unwrap_or(RVal::Null);
+            let mut v = arr.borrow_mut();
+            for elem in v.iter_mut() { *elem = val.clone(); }
+        }
+        return Some(Ok(RVal::Void));
+    }
+    // Arrays.equals
+    if func_id == fnv("Arrays.equals") {
+        if let (Some(RVal::Array(a)), Some(RVal::Array(b))) = (args.first(), args.get(1)) {
+            let eq = a.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>()
+                == b.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>();
+            return Some(Ok(RVal::Bool(eq)));
+        }
+        return Some(Ok(RVal::Bool(false)));
+    }
+
+    // Collections.sort — sort an array in-place (natural order)
+    if func_id == fnv("Collections.sort") {
+        if let Some(RVal::Array(arr)) = args.first() {
+            arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+            return Some(Ok(RVal::Void));
+        }
+        return Some(Ok(RVal::Void));
+    }
+    // Collections.reverse
+    if func_id == fnv("Collections.reverse") {
+        if let Some(RVal::Array(arr)) = args.first() {
+            arr.borrow_mut().reverse();
+        }
+        return Some(Ok(RVal::Void));
+    }
+    // Collections.min / Collections.max
+    if func_id == fnv("Collections.min") {
+        if let Some(RVal::Array(arr)) = args.first() {
+            let v = arr.borrow();
+            let min = v.iter().min_by(|a, b| rval_cmp(a, b)).cloned().unwrap_or(RVal::Null);
+            return Some(Ok(min));
+        }
+        return Some(Ok(RVal::Null));
+    }
+    if func_id == fnv("Collections.max") {
+        if let Some(RVal::Array(arr)) = args.first() {
+            let v = arr.borrow();
+            let max = v.iter().max_by(|a, b| rval_cmp(a, b)).cloned().unwrap_or(RVal::Null);
+            return Some(Ok(max));
+        }
+        return Some(Ok(RVal::Null));
+    }
+    // Collections.unmodifiableList / Collections.emptyList
+    if func_id == fnv("Collections.unmodifiableList") {
+        return Some(Ok(args.first().cloned().unwrap_or(RVal::Null)));
+    }
+    if func_id == fnv("Collections.emptyList") {
+        return Some(Ok(RVal::Array(Rc::new(RefCell::new(Vec::new())))));
     }
 
     // HashMap constructor — represented as Object with special class
@@ -133,6 +276,7 @@ pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Op
     match receiver {
         RVal::Str(s) => dispatch_string_named(s, method, args),
         RVal::Array(arr) => dispatch_array_named(arr, method, args),
+        RVal::ArrayIter(arr, idx) => dispatch_array_iter(arr, idx, method),
         _ => None,
     }
 }
@@ -202,6 +346,35 @@ fn dispatch_string_named(s: &str, method: &str, args: &[RVal]) -> Option<Result<
             Some(Ok(RVal::Array(Rc::new(RefCell::new(parts)))))
         }
         "toString" => Some(Ok(RVal::Str(s.to_string()))),
+        "compareTo" => {
+            let other = args.first().map(|v| v.to_display()).unwrap_or_default();
+            Some(Ok(RVal::Int(s.cmp(&other.as_str()) as i64)))
+        }
+        "hashCode" => {
+            let mut h: i32 = 0;
+            for c in s.chars() { h = h.wrapping_mul(31).wrapping_add(c as i32); }
+            Some(Ok(RVal::Int(h as i64)))
+        }
+        "toCharArray" => {
+            let chars: Vec<RVal> = s.chars().map(|c| RVal::Int(c as i64)).collect();
+            Some(Ok(RVal::Array(Rc::new(RefCell::new(chars)))))
+        }
+        "matches" => {
+            let pat = args.first().map(|v| v.to_display()).unwrap_or_default();
+            let matched = regex_lite_match(&pat, s);
+            Some(Ok(RVal::Bool(matched)))
+        }
+        "replaceAll" => {
+            let pat = args.first().map(|v| v.to_display()).unwrap_or_default();
+            let to = args.get(1).map(|v| v.to_display()).unwrap_or_default();
+            // Simple: treat as literal replace for now
+            Some(Ok(RVal::Str(s.replace(pat.as_str(), to.as_str()))))
+        }
+        "lastIndexOf" => {
+            let pat = args.first().map(|v| v.to_display()).unwrap_or_default();
+            let idx = s.rfind(pat.as_str()).map(|i| i as i64).unwrap_or(-1);
+            Some(Ok(RVal::Int(idx)))
+        }
         _ => None,
     }
 }
@@ -258,6 +431,44 @@ fn dispatch_array_named(arr: &Rc<RefCell<Vec<RVal>>>, method: &str, args: &[RVal
             let s = arr.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>().join(", ");
             Some(Ok(RVal::Str(format!("[{s}]"))))
         }
+        "iterator" => {
+            Some(Ok(RVal::ArrayIter(arr.clone(), Rc::new(Cell::new(0)))))
+        }
+        "sort" => {
+            arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+            Some(Ok(RVal::Void))
+        }
+        _ => None,
+    }
+}
+
+// ── Comparison helper ─────────────────────────────────────────────────────────
+
+/// Natural ordering for RVal (used by Collections.sort, Arrays.sort, etc.)
+pub fn rval_cmp(a: &RVal, b: &RVal) -> Ordering {
+    match (a, b) {
+        (RVal::Int(x), RVal::Int(y)) => x.cmp(y),
+        (RVal::Float(x), RVal::Float(y)) => x.partial_cmp(y).unwrap_or(Ordering::Equal),
+        (RVal::Int(x), RVal::Float(y)) => (*x as f64).partial_cmp(y).unwrap_or(Ordering::Equal),
+        (RVal::Float(x), RVal::Int(y)) => x.partial_cmp(&(*y as f64)).unwrap_or(Ordering::Equal),
+        _ => a.to_display().cmp(&b.to_display()),
+    }
+}
+
+// ── ArrayIterator methods ────────────────────────────────────────────────────
+
+fn dispatch_array_iter(arr: &Rc<RefCell<Vec<RVal>>>, idx: &Rc<Cell<usize>>, method: &str) -> Option<Result<RVal>> {
+    match method {
+        "hasNext" => {
+            let has = idx.get() < arr.borrow().len();
+            Some(Ok(RVal::Bool(has)))
+        }
+        "next" => {
+            let i = idx.get();
+            let val = arr.borrow().get(i).cloned().unwrap_or(RVal::Null);
+            idx.set(i + 1);
+            Some(Ok(val))
+        }
         _ => None,
     }
 }
@@ -277,35 +488,58 @@ pub fn format_java_string(args: &[RVal]) -> String {
         if chars[i] == '%' && i + 1 < chars.len() {
             i += 1;
             // Skip flags
+            let mut flags = String::new();
             while i < chars.len() && matches!(chars[i], '-' | '+' | ' ' | '0' | '#') {
+                flags.push(chars[i]);
                 i += 1;
             }
-            // Skip width
-            while i < chars.len() && chars[i].is_ascii_digit() {
-                i += 1;
+            // Parse width
+            let mut width: Option<usize> = None;
+            let w_start = i;
+            while i < chars.len() && chars[i].is_ascii_digit() { i += 1; }
+            if i > w_start {
+                width = chars[w_start..i].iter().collect::<String>().parse().ok();
             }
-            // Skip precision
+            // Parse precision
+            let mut precision: Option<usize> = None;
             if i < chars.len() && chars[i] == '.' {
                 i += 1;
-                while i < chars.len() && chars[i].is_ascii_digit() {
-                    i += 1;
-                }
+                let p_start = i;
+                while i < chars.len() && chars[i].is_ascii_digit() { i += 1; }
+                precision = Some(chars[p_start..i].iter().collect::<String>().parse().unwrap_or(6));
             }
             if i >= chars.len() { break; }
             match chars[i] {
                 's' => {
                     let val = args.get(arg_idx).map(|v| v.to_display()).unwrap_or_default();
-                    result.push_str(&val);
+                    if let Some(w) = width {
+                        if flags.contains('-') {
+                            result.push_str(&format!("{:<width$}", val, width = w));
+                        } else {
+                            result.push_str(&format!("{:>width$}", val, width = w));
+                        }
+                    } else {
+                        result.push_str(&val);
+                    }
                     arg_idx += 1;
                 }
                 'd' => {
                     let val = args.get(arg_idx).map(|v| v.as_int()).unwrap_or(0);
-                    result.push_str(&val.to_string());
+                    if let Some(w) = width {
+                        if flags.contains('0') {
+                            result.push_str(&format!("{:0>width$}", val, width = w));
+                        } else {
+                            result.push_str(&format!("{:width$}", val, width = w));
+                        }
+                    } else {
+                        result.push_str(&val.to_string());
+                    }
                     arg_idx += 1;
                 }
                 'f' => {
                     let val = args.get(arg_idx).map(|v| v.as_float()).unwrap_or(0.0);
-                    result.push_str(&format!("{:.6}", val));
+                    let prec = precision.unwrap_or(6);
+                    result.push_str(&format!("{:.prec$}", val, prec = prec));
                     arg_idx += 1;
                 }
                 'b' => {
@@ -338,4 +572,41 @@ pub fn format_java_string(args: &[RVal]) -> String {
         i += 1;
     }
     result
+}
+
+/// Simple pseudo-random f64 in [0.0, 1.0).
+fn rand_f64() -> f64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use std::cell::Cell;
+    thread_local! {
+        static SEED: Cell<u64> = Cell::new(0);
+    }
+    SEED.with(|s| {
+        let mut val = s.get();
+        if val == 0 {
+            let mut h = DefaultHasher::new();
+            std::time::SystemTime::now().hash(&mut h);
+            val = h.finish();
+        }
+        // xorshift64
+        val ^= val << 13;
+        val ^= val >> 7;
+        val ^= val << 17;
+        s.set(val);
+        (val as f64) / (u64::MAX as f64)
+    })
+}
+
+/// Simple regex-like match for String.matches().
+/// Supports basic patterns; falls back to exact match for complex regex.
+fn regex_lite_match(pattern: &str, s: &str) -> bool {
+    // Very basic: if pattern is a simple literal, do exact match
+    // For common patterns like ".*", "[a-z]+", etc. — approximate
+    if pattern == ".*" { return true; }
+    if pattern.starts_with("^") && pattern.ends_with("$") {
+        let inner = &pattern[1..pattern.len()-1];
+        return s == inner;
+    }
+    s == pattern
 }

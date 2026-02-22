@@ -15,6 +15,7 @@ pub mod compiler;
 pub mod lexer;
 pub mod lowerer;
 pub mod parser;
+pub mod resolver;
 pub mod traits;
 
 pub use compiler::Compiler;

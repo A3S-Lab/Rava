@@ -5,7 +5,7 @@
 //! ternary (via branching), type conversion, instanceof, try/catch (simplified).
 
 use std::collections::HashMap;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use rava_common::error::{RavaError, Result};
 use rava_rir::{RirInstr, RirModule, Value};
@@ -30,7 +30,15 @@ const KNOWN_METHODS: &[&str] = &[
     // StringBuilder
     "append", "insert", "reverse", "deleteCharAt",
     // Object
-    "getClass", "notify", "wait",
+    "getClass", "notify", "wait", "getMessage",
+    // Map.Entry
+    "getKey", "getValue",
+    // Stream
+    "stream", "map", "filter", "forEach", "collect", "reduce",
+    "sorted", "count", "toList", "distinct", "limit", "skip",
+    "findFirst", "anyMatch", "allMatch", "noneMatch",
+    // Iterable / Iterator
+    "of", "iterator", "hasNext", "next",
 ];
 
 // ── Runtime values ────────────────────────────────────────────────────────────
@@ -53,6 +61,8 @@ pub enum RVal {
     Bool(bool),
     Object(ObjId),
     Array(Rc<RefCell<Vec<RVal>>>),
+    /// Array iterator: (backing array, current index)
+    ArrayIter(Rc<RefCell<Vec<RVal>>>, Rc<Cell<usize>>),
     Null,
     Void,
 }
@@ -88,6 +98,7 @@ impl RVal {
             RVal::Str(s)    => !s.is_empty(),
             RVal::Object(_) => true,
             RVal::Array(_)  => true,
+            RVal::ArrayIter(..) => true,
         }
     }
 
@@ -112,6 +123,7 @@ impl RVal {
                 let items: Vec<_> = v.iter().map(|x| x.to_display()).collect();
                 format!("[{}]", items.join(", "))
             }
+            RVal::ArrayIter(..) => "ArrayIterator".into(),
         }
     }
 }
@@ -185,6 +197,15 @@ impl RirInterpreter {
     }
 
     pub fn run_main(&self) -> Result<()> {
+        // Run all <clinit> functions first (static initializers)
+        let clinit_names: Vec<String> = self.module.functions.iter()
+            .filter(|f| f.flags.is_clinit)
+            .map(|f| f.name.clone())
+            .collect();
+        for name in clinit_names {
+            self.exec_function(&name, HashMap::new())?;
+        }
+
         let main_name = self.module.functions.iter()
             .find(|f| f.name.ends_with(".main"))
             .map(|f| f.name.clone())
@@ -208,6 +229,8 @@ impl RirInterpreter {
 
         let mut env = args;
         let mut block_idx = 0usize;
+        // Exception handler stack: (catch_block_id, exception_types)
+        let mut exception_handlers: Vec<(u32, Vec<String>)> = Vec::new();
 
         loop {
             let block = func.basic_blocks.get(block_idx)
@@ -215,21 +238,107 @@ impl RirInterpreter {
 
             let mut next_block: Option<usize> = None;
             let mut returned:   Option<RVal>  = None;
+            let mut thrown: Option<(String, String)> = None;
 
             for instr in &block.instrs {
-                match instr {
+                // Execute instruction, catching JavaExceptions from calls
+                let result = self.exec_instr(instr, &mut env, func, &mut next_block, &mut returned, &mut exception_handlers);
+                match result {
+                    Ok(()) => {}
+                    Err(RavaError::JavaException { exception_type, message }) => {
+                        thrown = Some((exception_type, message));
+                        break;
+                    }
+                    Err(e) => return Err(e),
+                }
+                if next_block.is_some() || returned.is_some() { break; }
+            }
+
+            // Handle thrown exception
+            if let Some((exc_type, exc_msg)) = thrown {
+                // Find a matching handler by walking the stack from top
+                let mut matched = None;
+                while let Some((block_id, types)) = exception_handlers.pop() {
+                    if types.is_empty() || types.iter().any(|t| self.exception_matches(&exc_type, t)) {
+                        matched = Some(block_id);
+                        break;
+                    }
+                }
+                if let Some(catch_block_id) = matched {
+                    // Create an exception object so catch variable can call getMessage() etc.
+                    let exc_obj_id = self.alloc_object(&exc_type);
+                    {
+                        let mut heap = self.heap.borrow_mut();
+                        if let Some(obj) = heap.get_mut(&exc_obj_id) {
+                            obj.fields.insert("message".into(), RVal::Str(exc_msg.clone()));
+                        }
+                    }
+                    env.insert("__exception__".into(), RVal::Object(exc_obj_id));
+                    env.insert("__exception_type__".into(), RVal::Str(exc_type));
+                    next_block = self.find_block_idx(func, catch_block_id);
+                } else {
+                    // No handler — propagate
+                    return Err(RavaError::JavaException {
+                        exception_type: exc_type,
+                        message: exc_msg,
+                    });
+                }
+            }
+
+            if let Some(val) = returned { return Ok(val); }
+            match next_block {
+                Some(idx) => block_idx = idx,
+                None      => block_idx += 1,
+            }
+        }
+    }
+
+    fn exec_instr(
+        &self,
+        instr: &RirInstr,
+        env: &mut HashMap<String, RVal>,
+        func: &rava_rir::RirFunction,
+        next_block: &mut Option<usize>,
+        returned: &mut Option<RVal>,
+        exception_handlers: &mut Vec<(u32, Vec<String>)>,
+    ) -> Result<()> {
+            match instr {
                     RirInstr::ConstInt { ret, value } => {
                         env.insert(ret.0.clone(), RVal::Int(*value));
                     }
                     RirInstr::ConstFloat { ret, value } => {
                         env.insert(ret.0.clone(), RVal::Float(*value));
                     }
+                    RirInstr::ConstBool { ret, value } => {
+                        env.insert(ret.0.clone(), RVal::Bool(*value));
+                    }
                     RirInstr::ConstStr { ret, value } => {
                         // Handle synthetic markers from the lowerer
-                        if let Some(src_name) = value.strip_prefix("__copy__") {
+                        if let Some(rest) = value.strip_prefix("__try_catch__") {
+                            // Format: __try_catch__<block_id>:<type1|type2>
+                            if let Some((id_str, types_str)) = rest.split_once(':') {
+                                if let Ok(id) = id_str.parse::<u32>() {
+                                    let types: Vec<String> = if types_str.is_empty() {
+                                        vec![]
+                                    } else {
+                                        types_str.split('|').map(|s| s.to_string()).collect()
+                                    };
+                                    exception_handlers.push((id, types));
+                                }
+                            } else if let Ok(id) = rest.parse::<u32>() {
+                                // Legacy format without types — catch all
+                                exception_handlers.push((id, vec![]));
+                            }
+                        } else if value == "__try_end__" {
+                            exception_handlers.pop();
+                        } else if value == "__exception__" {
+                            // Resolve to the current exception value
+                            let val = env.get("__exception__").cloned().unwrap_or(RVal::Null);
+                            env.insert(ret.0.clone(), val);
+                        } else if let Some(src_name) = value.strip_prefix("__copy__") {
                             let val = env.get(src_name).cloned().unwrap_or(RVal::Null);
                             env.insert(ret.0.clone(), val);
-                        } else if let Some(resolved) = self.resolve_synthetic(value, &env) {
+                        } else if let Some(resolved) = self.resolve_synthetic(value, env) {
                             env.insert(ret.0.clone(), resolved);
                         } else {
                             env.insert(ret.0.clone(), RVal::Str(value.clone()));
@@ -239,12 +348,12 @@ impl RirInterpreter {
                         env.insert(ret.0.clone(), RVal::Null);
                     }
                     RirInstr::BinOp { op, lhs, rhs, ret } => {
-                        let l = self.resolve(&env, lhs);
-                        let r = self.resolve(&env, rhs);
+                        let l = self.resolve(env, lhs);
+                        let r = self.resolve(env, rhs);
                         env.insert(ret.0.clone(), self.eval_binop(op, &l, &r));
                     }
                     RirInstr::UnaryOp { op, operand, ret } => {
-                        let v = self.resolve(&env, operand);
+                        let v = self.resolve(env, operand);
                         let result = match op {
                             rava_rir::UnaryOp::Neg => {
                                 if v.is_float() { RVal::Float(-v.as_float()) }
@@ -255,7 +364,7 @@ impl RirInterpreter {
                         env.insert(ret.0.clone(), result);
                     }
                     RirInstr::Call { func: func_id, args: arg_vals, ret } => {
-                        let result = self.dispatch_call(func_id.0, arg_vals, &env)?;
+                        let result = self.dispatch_call(func_id.0, arg_vals, env)?;
                         if let Some(r) = ret { env.insert(r.0.clone(), result); }
                     }
                     RirInstr::New { class, ret } => {
@@ -269,13 +378,13 @@ impl RirInterpreter {
                         }
                     }
                     RirInstr::GetField { obj, field, ret } => {
-                        let obj_val = self.resolve(&env, obj);
+                        let obj_val = self.resolve(env, obj);
                         let val = self.get_field(&obj_val, field.0);
                         env.insert(ret.0.clone(), val);
                     }
                     RirInstr::SetField { obj, field, val } => {
-                        let obj_val = self.resolve(&env, obj);
-                        let v = self.resolve(&env, val);
+                        let obj_val = self.resolve(env, obj);
+                        let v = self.resolve(env, val);
                         self.set_field(&obj_val, field.0, v);
                     }
                     RirInstr::GetStatic { field, ret } => {
@@ -286,17 +395,24 @@ impl RirInterpreter {
                     }
                     RirInstr::SetStatic { field, val } => {
                         let key = format!("static#{}", field.0);
-                        let v = self.resolve(&env, val);
+                        let v = self.resolve(env, val);
                         self.static_fields.borrow_mut().insert(key, v);
                     }
                     RirInstr::NewArray { len, ret, .. } => {
-                        let n = self.resolve(&env, len).as_int().max(0) as usize;
+                        let n = self.resolve(env, len).as_int().max(0) as usize;
                         let arr = Rc::new(RefCell::new(vec![RVal::Int(0); n]));
                         env.insert(ret.0.clone(), RVal::Array(arr));
                     }
+                    RirInstr::NewMultiArray { dims, ret, .. } => {
+                        let dim_sizes: Vec<usize> = dims.iter()
+                            .map(|d| self.resolve(env, d).as_int().max(0) as usize)
+                            .collect();
+                        let arr = self.create_multi_array(&dim_sizes, 0);
+                        env.insert(ret.0.clone(), arr);
+                    }
                     RirInstr::ArrayLoad { arr, idx, ret } => {
-                        let arr_val = self.resolve(&env, arr);
-                        let i = self.resolve(&env, idx).as_int() as usize;
+                        let arr_val = self.resolve(env, arr);
+                        let i = self.resolve(env, idx).as_int() as usize;
                         let val = match &arr_val {
                             RVal::Array(a) => a.borrow().get(i).cloned().unwrap_or(RVal::Null),
                             _ => RVal::Null,
@@ -304,9 +420,9 @@ impl RirInterpreter {
                         env.insert(ret.0.clone(), val);
                     }
                     RirInstr::ArrayStore { arr, idx, val } => {
-                        let arr_val = self.resolve(&env, arr);
-                        let i   = self.resolve(&env, idx).as_int() as usize;
-                        let v   = self.resolve(&env, val);
+                        let arr_val = self.resolve(env, arr);
+                        let i   = self.resolve(env, idx).as_int() as usize;
+                        let v   = self.resolve(env, val);
                         if let RVal::Array(a) = &arr_val {
                             let mut borrow = a.borrow_mut();
                             // Auto-grow for ArrayList-style usage
@@ -315,7 +431,7 @@ impl RirInterpreter {
                         }
                     }
                     RirInstr::ArrayLen { arr, ret } => {
-                        let arr_val = self.resolve(&env, arr);
+                        let arr_val = self.resolve(env, arr);
                         let len = match &arr_val {
                             RVal::Array(a) => a.borrow().len() as i64,
                             RVal::Str(s)   => s.len() as i64,
@@ -324,7 +440,7 @@ impl RirInterpreter {
                         env.insert(ret.0.clone(), RVal::Int(len));
                     }
                     RirInstr::Convert { val, to, ret, .. } => {
-                        let v = self.resolve(&env, val);
+                        let v = self.resolve(env, val);
                         let converted = match to {
                             rava_rir::RirType::I32 | rava_rir::RirType::I64 => RVal::Int(v.as_int()),
                             rava_rir::RirType::F32 | rava_rir::RirType::F64 => RVal::Float(v.as_float()),
@@ -334,7 +450,7 @@ impl RirInterpreter {
                         env.insert(ret.0.clone(), converted);
                     }
                     RirInstr::Checkcast { obj, class } => {
-                        let obj_val = self.resolve(&env, obj);
+                        let obj_val = self.resolve(env, obj);
                         let class_name = self.class_name_for(class.0);
                         if let RVal::Object(id) = &obj_val {
                             let ok = self.heap.borrow().get(id)
@@ -348,50 +464,70 @@ impl RirInterpreter {
                         }
                     }
                     RirInstr::Return(val) => {
-                        returned = Some(match val {
-                            Some(v) => self.resolve(&env, v),
+                        *returned = Some(match val {
+                            Some(v) => self.resolve(env, v),
                             None    => RVal::Void,
                         });
-                        break;
+                        return Ok(());
                     }
                     RirInstr::Jump(target) => {
-                        next_block = self.find_block_idx(func, target.0);
-                        break;
+                        *next_block = self.find_block_idx(func, target.0);
+                        return Ok(());
                     }
                     RirInstr::Branch { cond, then_bb, else_bb } => {
-                        let cv = self.resolve(&env, cond);
+                        let cv = self.resolve(env, cond);
                         let target = if cv.is_truthy() { then_bb.0 } else { else_bb.0 };
-                        next_block = self.find_block_idx(func, target);
-                        break;
+                        *next_block = self.find_block_idx(func, target);
+                        return Ok(());
                     }
                     RirInstr::Throw(val) => {
-                        let msg = self.resolve(&env, val).to_display();
-                        return Err(RavaError::Other(format!("Java exception: {msg}")));
+                        let thrown_val = self.resolve(env, val);
+                        let (exc_type, msg) = match &thrown_val {
+                            RVal::Object(id) => {
+                                let class_name = self.heap.borrow().get(id)
+                                    .map(|o| o.class_name.clone())
+                                    .unwrap_or_else(|| "Exception".into());
+                                // Try to get the message from the object's constructor arg
+                                // stored as field "message" or "__arg0__"
+                                let message = self.heap.borrow().get(id)
+                                    .and_then(|o| o.fields.get("__arg0__").or(o.fields.get("message")).cloned())
+                                    .map(|v| v.to_display())
+                                    .unwrap_or_default();
+                                (class_name, message)
+                            }
+                            RVal::Str(s) => ("Exception".into(), s.clone()),
+                            _ => ("Exception".into(), thrown_val.to_display()),
+                        };
+                        return Err(RavaError::JavaException {
+                            exception_type: exc_type,
+                            message: msg,
+                        });
                     }
                     RirInstr::Instanceof { obj, class, ret } => {
-                        let obj_val = self.resolve(&env, obj);
+                        let obj_val = self.resolve(env, obj);
                         let class_name = self.class_name_for(class.0);
                         let result = match &obj_val {
                             RVal::Object(id) => {
-                                self.heap.borrow().get(id)
-                                    .map(|o| o.class_name == class_name)
-                                    .unwrap_or(false)
+                                let obj_class = self.heap.borrow().get(id)
+                                    .map(|o| o.class_name.clone())
+                                    .unwrap_or_default();
+                                self.is_instance_of(&obj_class, &class_name)
                             }
-                            RVal::Str(_) => class_name == "String",
-                            RVal::Array(_) => class_name.ends_with("[]"),
+                            RVal::Str(_) => class_name == "String" || class_name == "Object",
+                            RVal::Array(_) => class_name.ends_with("[]") || class_name == "Object",
                             _ => false,
                         };
                         env.insert(ret.0.clone(), RVal::Bool(result));
                     }
                     RirInstr::CallVirtual { receiver, method: _, args: arg_vals, ret } => {
-                        let recv = self.resolve(&env, receiver);
-                        let result = self.dispatch_virtual(recv, arg_vals, &env)?;
+                        let recv = self.resolve(env, receiver);
+                        let result = self.dispatch_virtual(recv, arg_vals, env)?;
                         if let Some(r) = ret { env.insert(r.0.clone(), result); }
                     }
                     RirInstr::CallInterface { receiver, method: _, args: arg_vals, ret } => {
                         // Same as virtual dispatch for now
-                        let recv = self.resolve(&env, receiver);
-                        let result = self.dispatch_virtual(recv, arg_vals, &env)?;
+                        let recv = self.resolve(env, receiver);
+                        let result = self.dispatch_virtual(recv, arg_vals, env)?;
                         if let Some(r) = ret { env.insert(r.0.clone(), result); }
                     }
                     RirInstr::Unreachable => {
@@ -406,17 +542,101 @@ impl RirInterpreter {
                         env.insert(ret.0.clone(), RVal::Null);
                     }
                 }
-            }
-
-            if let Some(rv) = returned { return Ok(rv); }
-            match next_block {
-                Some(idx) => block_idx = idx,
-                None      => return Ok(RVal::Void),
-            }
-        }
+            Ok(())
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// Find a method by walking the superclass chain and checking interfaces.
+    fn find_method_in_chain(&self, class_name: &str, method_name: &str, effective_count: usize) -> Option<usize> {
+        let mut current = class_name.to_string();
+        loop {
+            let full_name = format!("{}.{}", current, method_name);
+            let idx = self.module.functions.iter()
+                .position(|f| f.name == full_name && f.params.len() == effective_count)
+                .or_else(|| self.module.functions.iter()
+                    .position(|f| f.name == full_name));
+            if idx.is_some() { return idx; }
+            // Check implemented interfaces for default methods
+            for (key, iface) in &self.module.class_hierarchy {
+                if key.starts_with(&format!("{}:", current)) {
+                    let iface_full = format!("{}.{}", iface, method_name);
+                    let idx = self.module.functions.iter()
+                        .position(|f| f.name == iface_full && f.params.len() == effective_count)
+                        .or_else(|| self.module.functions.iter()
+                            .position(|f| f.name == iface_full));
+                    if idx.is_some() { return idx; }
+                }
+            }
+            // Walk to superclass
+            if let Some(parent) = self.module.class_hierarchy.get(&current) {
+                current = parent.clone();
+            } else {
+                break;
+            }
+        }
+        None
+    }
+
+    /// Check if a thrown exception type matches a catch clause type.
+    fn exception_matches(&self, thrown: &str, catch_type: &str) -> bool {
+        if catch_type == "Exception" || catch_type == "Throwable" { return true; }
+        if thrown == catch_type { return true; }
+        // Walk exception hierarchy
+        // RuntimeException -> Exception -> Throwable
+        // NullPointerException -> RuntimeException
+        // IllegalArgumentException -> RuntimeException
+        // etc.
+        let builtin_parents: &[(&str, &str)] = &[
+            ("RuntimeException", "Exception"),
+            ("NullPointerException", "RuntimeException"),
+            ("IllegalArgumentException", "RuntimeException"),
+            ("IllegalStateException", "RuntimeException"),
+            ("IndexOutOfBoundsException", "RuntimeException"),
+            ("ArrayIndexOutOfBoundsException", "IndexOutOfBoundsException"),
+            ("ClassCastException", "RuntimeException"),
+            ("ArithmeticException", "RuntimeException"),
+            ("UnsupportedOperationException", "RuntimeException"),
+            ("IOException", "Exception"),
+            ("FileNotFoundException", "IOException"),
+            ("Error", "Throwable"),
+            ("StackOverflowError", "Error"),
+            ("OutOfMemoryError", "Error"),
+        ];
+        let mut current = thrown;
+        loop {
+            // Check user-defined hierarchy
+            if let Some(parent) = self.module.class_hierarchy.get(current) {
+                if parent == catch_type { return true; }
+                current = parent;
+                continue;
+            }
+            // Check builtin hierarchy
+            if let Some((_, parent)) = builtin_parents.iter().find(|(c, _)| *c == current) {
+                if *parent == catch_type { return true; }
+                current = parent;
+                continue;
+            }
+            break;
+        }
+        false
+    }
+
+    /// Check if `obj_class` is an instance of `target_class`, walking the inheritance chain.
+    fn is_instance_of(&self, obj_class: &str, target_class: &str) -> bool {
+        // Exact match
+        if obj_class == target_class { return true; }
+        // Everything is an Object
+        if target_class == "Object" { return true; }
+        // Check implemented interfaces: "ClassName:InterfaceName" entries
+        let iface_key = format!("{}:{}", obj_class, target_class);
+        if self.module.class_hierarchy.contains_key(&iface_key) { return true; }
+        // Walk superclass chain
+        if let Some(parent) = self.module.class_hierarchy.get(obj_class) {
+            return self.is_instance_of(parent, target_class);
+        }
+        false
+    }
 
     fn find_block_idx(&self, func: &rava_rir::RirFunction, block_id: u32) -> Option<usize> {
         func.basic_blocks.iter().position(|b| b.id.0 == block_id)
@@ -485,10 +705,19 @@ impl RirInterpreter {
     }
 
     fn class_name_for(&self, class_id: u32) -> String {
-        // Check common class names first
+        // Check the class_names registry first (populated by lowerer for all classes)
+        if let Some(name) = self.module.class_names.get(&class_id) {
+            return name.clone();
+        }
+        // Check common class names as fallback
         for name in &["String", "Integer", "Long", "Double", "Float", "Boolean",
                        "ArrayList", "HashMap", "Object", "Exception",
                        "RuntimeException", "NullPointerException",
+                       "IllegalArgumentException", "IllegalStateException",
+                       "IndexOutOfBoundsException", "ArrayIndexOutOfBoundsException",
+                       "ClassCastException", "UnsupportedOperationException",
+                       "ArithmeticException", "NumberFormatException",
+                       "IOException", "FileNotFoundException",
                        "StringBuilder", "System"] {
             if crate::lowerer_hash::encode_builtin(name) == class_id {
                 return name.to_string();
@@ -517,6 +746,10 @@ impl RirInterpreter {
                 if let Some(result) = builtins::dispatch_named_method(receiver, &method_name, method_args) {
                     return result;
                 }
+                // Stream operations on arrays
+                if let Some(result) = self.dispatch_stream(receiver, &method_name, method_args) {
+                    return result;
+                }
                 // Object-based builtins (StringBuilder, HashMap) and user-defined methods
                 if let RVal::Object(id) = receiver {
                     let class_name = self.heap.borrow().get(id)
@@ -533,17 +766,12 @@ impl RirInterpreter {
                         }
                     }
                     // User-defined instance method (with overload resolution by param count)
-                    // `this` is now in params, so effective count = method_args + 1
-                    let full_name = format!("{}.{}", class_name, method_name);
+                    // Walk superclass chain to find the method
                     let effective_count = method_args.len() + 1; // +1 for `this`
-                    let func_idx = self.module.functions.iter()
-                        .position(|f| f.name == full_name && f.params.len() == effective_count)
-                        .or_else(|| self.module.functions.iter()
-                            .position(|f| f.name == full_name));
+                    let func_idx = self.find_method_in_chain(&class_name, &method_name, effective_count);
                     if let Some(idx) = func_idx {
                         let func = &self.module.functions[idx];
                         let mut call_env: HashMap<String, RVal> = HashMap::new();
-                        // Prepend receiver as `this`, then method_args
                         let mut all_args = vec![receiver.clone()];
                         all_args.extend(method_args.iter().cloned());
                         for ((param_name, _), val) in func.params.iter().zip(all_args.iter()) {
@@ -551,9 +779,121 @@ impl RirInterpreter {
                         }
                         return self.exec_function_idx(idx, call_env);
                     }
+                    // Fallback: common object methods (getMessage, toString, getClass, getKey, getValue)
+                    match method_name.as_str() {
+                        "getMessage" => {
+                            let msg = self.heap.borrow().get(id)
+                                .and_then(|o| o.fields.get("message").cloned())
+                                .unwrap_or(RVal::Null);
+                            return Ok(msg);
+                        }
+                        "toString" => {
+                            let s = self.heap.borrow().get(id)
+                                .and_then(|o| o.fields.get("message").cloned())
+                                .map(|v| format!("{}: {}", class_name, v.to_display()))
+                                .unwrap_or_else(|| format!("{}@{}", class_name, id));
+                            return Ok(RVal::Str(s));
+                        }
+                        "getClass" => {
+                            return Ok(RVal::Str(class_name.clone()));
+                        }
+                        "getKey" => {
+                            let key = self.heap.borrow().get(id)
+                                .and_then(|o| o.fields.get("__key__").cloned())
+                                .unwrap_or(RVal::Null);
+                            return Ok(key);
+                        }
+                        "getValue" => {
+                            let val = self.heap.borrow().get(id)
+                                .and_then(|o| o.fields.get("__value__").cloned())
+                                .unwrap_or(RVal::Null);
+                            return Ok(val);
+                        }
+                        _ => {}
+                    }
+                }
+                // Lambda / functional interface dispatch:
+                // If receiver is a __lambda_N string, dispatch to that lambda function
+                if let RVal::Str(ref s) = receiver {
+                    if s.starts_with("__lambda_") {
+                        return self.call_lambda_by_name(s, method_args);
+                    }
+                    // Method reference: __methodref__Class::method
+                    if let Some(rest) = s.strip_prefix("__methodref__") {
+                        if let Some((_cls, meth)) = rest.split_once("::") {
+                            // Dispatch as a static call with method_args
+                            let full = rest.replace("::", ".");
+                            if let Some(idx) = self.module.functions.iter()
+                                .position(|f| f.name == full)
+                            {
+                                let func = &self.module.functions[idx];
+                                let mut call_env: HashMap<String, RVal> = HashMap::new();
+                                for ((param_name, _), val) in func.params.iter().zip(method_args.iter()) {
+                                    call_env.insert(param_name.0.clone(), val.clone());
+                                }
+                                return self.exec_function_idx(idx, call_env);
+                            }
+                            // Try as builtin
+                            let key = format!("__method__{}", meth);
+                            let hash = crate::lowerer_hash::encode_builtin(&key);
+                            return self.dispatch_call(hash, arg_vals, env);
+                        }
+                    }
                 }
             }
             return Ok(RVal::Void);
+        }
+
+        // Collections.sort with Comparator lambda (2 args: list, comparator)
+        {
+            use crate::lowerer_hash::encode_builtin;
+            if func_id == encode_builtin("Collections.sort") && args.len() == 2 {
+                if let RVal::Array(arr) = &args[0] {
+                    let comparator = args[1].clone();
+                    // Collect elements, sort with comparator, put back
+                    let mut elems: Vec<RVal> = arr.borrow().clone();
+                    // Use a simple insertion sort to avoid borrow issues with lambda calls
+                    for i in 1..elems.len() {
+                        let mut j = i;
+                        while j > 0 {
+                            let cmp_result = self.invoke_lambda(&comparator, &[elems[j-1].clone(), elems[j].clone()])?;
+                            if cmp_result.as_int() > 0 {
+                                elems.swap(j - 1, j);
+                                j -= 1;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    *arr.borrow_mut() = elems;
+                    return Ok(RVal::Void);
+                }
+            }
+        }
+
+        // this(...) constructor delegation — find same-class constructor by arg count
+        {
+            use crate::lowerer_hash::encode_builtin;
+            if func_id == encode_builtin("this.<init>") {
+                if let Some(RVal::Object(id)) = args.first() {
+                    let class_name = self.heap.borrow().get(id)
+                        .map(|o| o.class_name.clone())
+                        .unwrap_or_default();
+                    let ctor_name = format!("{}.<init>", class_name);
+                    let arg_count = args.len();
+                    if let Some(idx) = self.module.functions.iter()
+                        .position(|f| f.name == ctor_name && f.params.len() == arg_count)
+                    {
+                        let func = &self.module.functions[idx];
+                        let mut call_env: HashMap<String, RVal> = HashMap::new();
+                        for ((param_name, _), val) in func.params.iter().zip(args.iter()) {
+                            call_env.insert(param_name.0.clone(), val.clone());
+                        }
+                        return self.exec_function_idx(idx, call_env);
+                    }
+                }
+                return Ok(RVal::Void);
+            }
         }
 
         // Builtins (static)
@@ -593,11 +933,70 @@ impl RirInterpreter {
             return self.exec_function_idx(idx, call_env);
         }
 
+        // Lambda fallback: if first arg is a __lambda_N string, it's a functional
+        // interface call where the method name wasn't in KNOWN_METHODS
+        if let Some(first) = args.first() {
+            if let RVal::Str(ref s) = first {
+                if s.starts_with("__lambda_") {
+                    let method_args = &args[1..];
+                    return self.call_lambda_by_name(s, method_args);
+                }
+                if s.starts_with("__methodref__") {
+                    let method_args = &args[1..];
+                    if let Some(rest) = s.strip_prefix("__methodref__") {
+                        let full = rest.replace("::", ".");
+                        if let Some(idx) = self.module.functions.iter().position(|f| f.name == full) {
+                            let func = &self.module.functions[idx];
+                            let mut call_env: HashMap<String, RVal> = HashMap::new();
+                            for ((param_name, _), val) in func.params.iter().zip(method_args.iter()) {
+                                call_env.insert(param_name.0.clone(), val.clone());
+                            }
+                            return self.exec_function_idx(idx, call_env);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Exception/unknown constructor fallback: store args as fields on the object
+        // This handles `new RuntimeException("msg")` where no user-defined <init> exists
+        if let Some(first) = args.first() {
+            if let RVal::Object(id) = first {
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(id) {
+                    for (i, arg) in args.iter().skip(1).enumerate() {
+                        obj.fields.insert(format!("__arg{}__", i), arg.clone());
+                    }
+                    // Also store first string arg as "message" for exception getMessage()
+                    if let Some(msg_arg) = args.get(1) {
+                        obj.fields.insert("message".into(), msg_arg.clone());
+                    }
+                }
+            }
+        }
+
         Ok(RVal::Void)
     }
 
     fn dispatch_virtual(&self, receiver: RVal, arg_vals: &[Value], env: &HashMap<String, RVal>) -> Result<RVal> {
         let args: Vec<RVal> = arg_vals.iter().map(|v| self.resolve(env, v)).collect();
+        // Lambda / functional interface: receiver is a __lambda_N string
+        if let RVal::Str(ref s) = receiver {
+            if s.starts_with("__lambda_") {
+                return self.call_lambda_by_name(s, &args);
+            }
+            if let Some(rest) = s.strip_prefix("__methodref__") {
+                let full = rest.replace("::", ".");
+                if let Some(idx) = self.module.functions.iter().position(|f| f.name == full) {
+                    let func = &self.module.functions[idx];
+                    let mut call_env: HashMap<String, RVal> = HashMap::new();
+                    for ((param_name, _), val) in func.params.iter().zip(args.iter()) {
+                        call_env.insert(param_name.0.clone(), val.clone());
+                    }
+                    return self.exec_function_idx(idx, call_env);
+                }
+            }
+        }
         if let Some(result) = builtins::dispatch_method(&receiver, &args) {
             return result;
         }
@@ -614,17 +1013,43 @@ impl RirInterpreter {
                     return result;
                 }
             }
-            // Try to find a method in the module (with overload resolution)
-            // `this` is now in params, so effective param count = args.len() + 1 (for receiver)
-            let prefix = format!("{}.", class_name);
+            // Try to find a method in the module, walking superclass chain
             let effective_count = args.len() + 1; // +1 for `this`
-            let func_idx = self.module.functions.iter()
-                .position(|f| f.name.starts_with(&prefix)
-                    && !f.flags.is_constructor && !f.flags.is_clinit
-                    && f.params.len() == effective_count)
-                .or_else(|| self.module.functions.iter()
-                    .position(|f| f.name.starts_with(&prefix)
-                        && !f.flags.is_constructor && !f.flags.is_clinit));
+            // Virtual dispatch: try to find any non-constructor method on this class or parents
+            let func_idx = {
+                let mut found = None;
+                let mut cur = class_name.clone();
+                loop {
+                    let prefix = format!("{}.", cur);
+                    let idx = self.module.functions.iter()
+                        .position(|f| f.name.starts_with(&prefix)
+                            && !f.flags.is_constructor && !f.flags.is_clinit
+                            && f.params.len() == effective_count)
+                        .or_else(|| self.module.functions.iter()
+                            .position(|f| f.name.starts_with(&prefix)
+                                && !f.flags.is_constructor && !f.flags.is_clinit));
+                    if idx.is_some() { found = idx; break; }
+                    // Check interfaces
+                    for (key, iface) in &self.module.class_hierarchy {
+                        if key.starts_with(&format!("{}:", cur)) {
+                            let iface_prefix = format!("{}.", iface);
+                            let idx = self.module.functions.iter()
+                                .position(|f| f.name.starts_with(&iface_prefix)
+                                    && !f.flags.is_constructor && !f.flags.is_clinit
+                                    && f.params.len() == effective_count)
+                                .or_else(|| self.module.functions.iter()
+                                    .position(|f| f.name.starts_with(&iface_prefix)
+                                        && !f.flags.is_constructor && !f.flags.is_clinit));
+                            if idx.is_some() { found = idx; break; }
+                        }
+                    }
+                    if found.is_some() { break; }
+                    if let Some(parent) = self.module.class_hierarchy.get(&cur) {
+                        cur = parent.clone();
+                    } else { break; }
+                }
+                found
+            };
             if let Some(idx) = func_idx {
                 let func = &self.module.functions[idx];
                 let mut call_env: HashMap<String, RVal> = HashMap::new();
@@ -636,6 +1061,19 @@ impl RirInterpreter {
                 }
                 return self.exec_function_idx(idx, call_env);
             }
+        }
+        Ok(RVal::Void)
+    }
+
+    /// Dispatch a call to a lambda function by its `__lambda_N` name.
+    fn call_lambda_by_name(&self, name: &str, args: &[RVal]) -> Result<RVal> {
+        if let Some(idx) = self.module.functions.iter().position(|f| f.name == name) {
+            let func = &self.module.functions[idx];
+            let mut call_env: HashMap<String, RVal> = HashMap::new();
+            for ((param_name, _), val) in func.params.iter().zip(args.iter()) {
+                call_env.insert(param_name.0.clone(), val.clone());
+            }
+            return self.exec_function_idx(idx, call_env);
         }
         Ok(RVal::Void)
     }
@@ -794,7 +1232,31 @@ impl RirInterpreter {
                 Some(Ok(RVal::Void))
             }
             "keySet" | "values" | "entrySet" => {
-                // Return keys/values as an array for iteration
+                if method == "entrySet" {
+                    // Collect pairs first, then create entry objects
+                    let pairs: Vec<(String, RVal)> = {
+                        let heap = self.heap.borrow();
+                        if let Some(obj) = heap.get(&id) {
+                            obj.fields.iter()
+                                .filter(|(k, _)| !k.starts_with("__"))
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect()
+                        } else { vec![] }
+                    };
+                    let entries: Vec<RVal> = pairs.into_iter().map(|(k, v)| {
+                        let eid = self.alloc_object("Map.Entry");
+                        {
+                            let mut heap = self.heap.borrow_mut();
+                            if let Some(entry) = heap.get_mut(&eid) {
+                                entry.fields.insert("__key__".into(), RVal::Str(k));
+                                entry.fields.insert("__value__".into(), v);
+                            }
+                        }
+                        RVal::Object(eid)
+                    }).collect();
+                    return Some(Ok(RVal::Array(Rc::new(RefCell::new(entries)))));
+                }
+                // keySet / values
                 let heap = self.heap.borrow();
                 let items: Vec<RVal> = if let Some(obj) = heap.get(&id) {
                     match method {
@@ -826,13 +1288,240 @@ impl RirInterpreter {
         }
     }
 
+    /// Dispatch stream operations on arrays (and ArrayList which are arrays internally).
+    fn dispatch_stream(&self, receiver: &RVal, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
+        match method {
+            "stream" | "toList" => {
+                // stream() returns the array itself (eager evaluation)
+                // toList() also returns the array as-is
+                Some(Ok(receiver.clone()))
+            }
+            "of" => {
+                // List.of(a, b, c) — args are the elements
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(args.to_vec())))))
+            }
+            "map" => {
+                let arr = self.as_array(receiver)?;
+                let lambda = args.first()?;
+                let items = arr.borrow();
+                let mut result = Vec::with_capacity(items.len());
+                for item in items.iter() {
+                    match self.invoke_lambda(lambda, &[item.clone()]) {
+                        Ok(v) => result.push(v),
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(result)))))
+            }
+            "filter" => {
+                let arr = self.as_array(receiver)?;
+                let lambda = args.first()?;
+                let items = arr.borrow();
+                let mut result = Vec::new();
+                for item in items.iter() {
+                    match self.invoke_lambda(lambda, &[item.clone()]) {
+                        Ok(v) => { if v.is_truthy() { result.push(item.clone()); } }
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(result)))))
+            }
+            "forEach" => {
+                let arr = self.as_array(receiver)?;
+                let lambda = args.first()?;
+                let items = arr.borrow().clone();
+                for item in items.iter() {
+                    match self.invoke_lambda(lambda, &[item.clone()]) {
+                        Ok(_) => {}
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                Some(Ok(RVal::Void))
+            }
+            "collect" => {
+                // collect() just returns the array (already materialized)
+                Some(Ok(receiver.clone()))
+            }
+            "reduce" => {
+                let arr = self.as_array(receiver)?;
+                let items = arr.borrow();
+                if items.is_empty() { return Some(Ok(RVal::Null)); }
+                if args.len() >= 2 {
+                    // reduce(identity, accumulator)
+                    let mut acc = args[0].clone();
+                    let lambda = &args[1];
+                    for item in items.iter() {
+                        match self.invoke_lambda(lambda, &[acc.clone(), item.clone()]) {
+                            Ok(v) => acc = v,
+                            Err(e) => return Some(Err(e)),
+                        }
+                    }
+                    Some(Ok(acc))
+                } else {
+                    // reduce(accumulator) — no identity, use first element
+                    let lambda = &args[0];
+                    let mut acc = items[0].clone();
+                    for item in items.iter().skip(1) {
+                        match self.invoke_lambda(lambda, &[acc.clone(), item.clone()]) {
+                            Ok(v) => acc = v,
+                            Err(e) => return Some(Err(e)),
+                        }
+                    }
+                    Some(Ok(acc))
+                }
+            }
+            "sorted" => {
+                let arr = self.as_array(receiver)?;
+                let mut items = arr.borrow().clone();
+                items.sort_by(|a, b| a.as_int().cmp(&b.as_int()));
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(items)))))
+            }
+            "count" => {
+                let arr = self.as_array(receiver)?;
+                Some(Ok(RVal::Int(arr.borrow().len() as i64)))
+            }
+            "distinct" => {
+                let arr = self.as_array(receiver)?;
+                let items = arr.borrow();
+                let mut seen = Vec::new();
+                let mut result = Vec::new();
+                for item in items.iter() {
+                    let key = item.to_display();
+                    if !seen.contains(&key) {
+                        seen.push(key);
+                        result.push(item.clone());
+                    }
+                }
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(result)))))
+            }
+            "limit" => {
+                let arr = self.as_array(receiver)?;
+                let n = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
+                let items: Vec<RVal> = arr.borrow().iter().take(n).cloned().collect();
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(items)))))
+            }
+            "skip" => {
+                let arr = self.as_array(receiver)?;
+                let n = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
+                let items: Vec<RVal> = arr.borrow().iter().skip(n).cloned().collect();
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(items)))))
+            }
+            "findFirst" => {
+                let arr = self.as_array(receiver)?;
+                let items = arr.borrow();
+                Some(Ok(items.first().cloned().unwrap_or(RVal::Null)))
+            }
+            "anyMatch" => {
+                let arr = self.as_array(receiver)?;
+                let lambda = args.first()?;
+                let items = arr.borrow();
+                for item in items.iter() {
+                    match self.invoke_lambda(lambda, &[item.clone()]) {
+                        Ok(v) => { if v.is_truthy() { return Some(Ok(RVal::Bool(true))); } }
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                Some(Ok(RVal::Bool(false)))
+            }
+            "allMatch" => {
+                let arr = self.as_array(receiver)?;
+                let lambda = args.first()?;
+                let items = arr.borrow();
+                for item in items.iter() {
+                    match self.invoke_lambda(lambda, &[item.clone()]) {
+                        Ok(v) => { if !v.is_truthy() { return Some(Ok(RVal::Bool(false))); } }
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                Some(Ok(RVal::Bool(true)))
+            }
+            "noneMatch" => {
+                let arr = self.as_array(receiver)?;
+                let lambda = args.first()?;
+                let items = arr.borrow();
+                for item in items.iter() {
+                    match self.invoke_lambda(lambda, &[item.clone()]) {
+                        Ok(v) => { if v.is_truthy() { return Some(Ok(RVal::Bool(false))); } }
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                Some(Ok(RVal::Bool(true)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract the inner Rc<RefCell<Vec<RVal>>> from an Array value.
+    fn as_array<'b>(&self, val: &'b RVal) -> Option<&'b Rc<RefCell<Vec<RVal>>>> {
+        if let RVal::Array(arr) = val { Some(arr) } else { None }
+    }
+
+    /// Recursively create a multi-dimensional array.
+    fn create_multi_array(&self, dims: &[usize], depth: usize) -> RVal {
+        let size = dims[depth];
+        if depth == dims.len() - 1 {
+            // Innermost dimension: array of zeros
+            RVal::Array(Rc::new(RefCell::new(vec![RVal::Int(0); size])))
+        } else {
+            // Outer dimension: array of sub-arrays
+            let elements: Vec<RVal> = (0..size)
+                .map(|_| self.create_multi_array(dims, depth + 1))
+                .collect();
+            RVal::Array(Rc::new(RefCell::new(elements)))
+        }
+    }
+
+    /// Invoke a lambda or method reference with the given arguments.
+    fn invoke_lambda(&self, lambda: &RVal, args: &[RVal]) -> Result<RVal> {
+        match lambda {
+            RVal::Str(s) if s.starts_with("__lambda_") => {
+                self.call_lambda_by_name(s, args)
+            }
+            RVal::Str(s) if s.starts_with("__methodref__") => {
+                let rest = s.strip_prefix("__methodref__").unwrap();
+                let full = rest.replace("::", ".");
+                if let Some(idx) = self.module.functions.iter().position(|f| f.name == full) {
+                    let func = &self.module.functions[idx];
+                    let mut call_env: HashMap<String, RVal> = HashMap::new();
+                    for ((param_name, _), val) in func.params.iter().zip(args.iter()) {
+                        call_env.insert(param_name.0.clone(), val.clone());
+                    }
+                    self.exec_function_idx(idx, call_env)
+                } else {
+                    Ok(RVal::Null)
+                }
+            }
+            _ => Ok(RVal::Null),
+        }
+    }
+
+    /// Convert a value to string, using object's toString/message for Objects.
+    fn obj_to_string(&self, val: &RVal) -> String {
+        if let RVal::Object(id) = val {
+            let heap = self.heap.borrow();
+            if let Some(obj) = heap.get(id) {
+                // Try message field first (exceptions), then __name__ (enums)
+                if let Some(msg) = obj.fields.get("message") {
+                    return msg.to_display();
+                }
+                if let Some(name) = obj.fields.get("__name__") {
+                    return name.to_display();
+                }
+                return format!("{}@{}", obj.class_name, id);
+            }
+        }
+        val.to_display()
+    }
+
     fn eval_binop(&self, op: &rava_rir::BinOp, l: &RVal, r: &RVal) -> RVal {
         use rava_rir::BinOp::*;
 
         // String concatenation: if either side is a string and op is Add
         if matches!(op, Add) {
             if matches!(l, RVal::Str(_)) || matches!(r, RVal::Str(_)) {
-                return RVal::Str(format!("{}{}", l.to_display(), r.to_display()));
+                let ls = self.obj_to_string(&l);
+                let rs = self.obj_to_string(&r);
+                return RVal::Str(format!("{}{}", ls, rs));
             }
         }
 

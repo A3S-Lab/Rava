@@ -7,11 +7,12 @@
 
 #![allow(dead_code)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use cranelift_codegen::ir::{
     self, types, AbiParam, InstBuilder, MemFlags, Signature,
 };
 use cranelift_codegen::ir::condcodes::IntCC;
+use cranelift_codegen::ir::condcodes::FloatCC;
 use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::entity::EntityRef;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -19,6 +20,16 @@ use cranelift_module::{FuncId as ClifFuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 use rava_common::error::{RavaError, Result};
 use rava_rir::{BinOp, RirFunction, RirInstr, RirModule, RirType, UnaryOp};
+
+/// Tracked value type for AOT dispatch (println, concat, etc.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ValType {
+    Int,
+    Float,
+    Bool,
+    Str,
+    Obj,
+}
 
 /// Translate an entire RirModule into Cranelift IR and define functions in the ObjectModule.
 pub fn translate_module(module: &RirModule, obj: &mut ObjectModule) -> Result<()> {
@@ -51,10 +62,15 @@ struct TranslationCtx<'a> {
     rt_arr_load: ClifFuncId,
     rt_arr_store: ClifFuncId,
     rt_arr_len: ClifFuncId,
+    // Class tag runtime (instanceof)
+    rt_obj_set_tag: ClifFuncId,
+    rt_obj_get_tag: ClifFuncId,
     /// String constant data IDs
     str_constants: HashMap<String, cranelift_module::DataId>,
     /// Maps FieldId hash → sequential slot index (per class, but flattened for Phase 1)
     field_slots: HashMap<u32, u32>,
+    /// Maps ClassId hash → unique class tag integer
+    class_tags: HashMap<u32, i64>,
 }
 
 impl<'a> TranslationCtx<'a> {
@@ -79,6 +95,9 @@ impl<'a> TranslationCtx<'a> {
         let rt_arr_load = Self::declare_rt_func(obj, "rava_arr_load", &[types::I64, types::I64], Some(types::I64))?;
         let rt_arr_store = Self::declare_rt_func(obj, "rava_arr_store", &[types::I64, types::I64, types::I64], None)?;
         let rt_arr_len = Self::declare_rt_func(obj, "rava_arr_len", &[types::I64], Some(types::I64))?;
+        // Class tag runtime
+        let rt_obj_set_tag = Self::declare_rt_func(obj, "rava_obj_set_tag", &[types::I64, types::I64], None)?;
+        let rt_obj_get_tag = Self::declare_rt_func(obj, "rava_obj_get_tag", &[types::I64], Some(types::I64))?;
 
         // Build field hash → sequential slot index from module's field_names
         let mut field_slots = HashMap::new();
@@ -86,6 +105,19 @@ impl<'a> TranslationCtx<'a> {
         for &hash in rir.field_names.keys() {
             field_slots.insert(hash, slot);
             slot += 1;
+        }
+
+        // Build class tag map: assign each class a unique integer tag
+        let mut class_tags = HashMap::new();
+        let mut tag = 1i64;
+        for func in &rir.functions {
+            if let Some(class_name) = func.name.split('.').next() {
+                let hash = rava_frontend::lowerer::encode_builtin(class_name);
+                if !class_tags.contains_key(&hash) {
+                    class_tags.insert(hash, tag);
+                    tag += 1;
+                }
+            }
         }
 
         // Declare all RIR functions first (forward declaration)
@@ -106,8 +138,10 @@ impl<'a> TranslationCtx<'a> {
             rt_str_concat, rt_int_to_str, rt_float_to_str,
             rt_obj_alloc, rt_obj_get_field, rt_obj_set_field,
             rt_arr_alloc, rt_arr_load, rt_arr_store, rt_arr_len,
+            rt_obj_set_tag, rt_obj_get_tag,
             str_constants: HashMap::new(),
             field_slots,
+            class_tags,
         })
     }
 
@@ -126,6 +160,64 @@ impl<'a> TranslationCtx<'a> {
         for func in &self.rir.functions {
             self.translate_function(func)?;
         }
+        // Emit rava_entry → <ClassName>_main trampoline so the C runtime
+        // can call a fixed symbol regardless of the actual main class name.
+        self.emit_entry_trampoline()?;
+        Ok(())
+    }
+
+    /// Emit a `rava_entry(long)` function that calls the real `<Class>.main`.
+    fn emit_entry_trampoline(&mut self) -> Result<()> {
+        // Find the main function: look for "<Name>.main" with 1 param (args)
+        let main_func = self.rir.functions.iter().find(|f| {
+            f.name.ends_with(".main") && !f.flags.is_constructor && !f.flags.is_clinit
+        });
+        let main_name = match main_func {
+            Some(f) => f.name.clone(),
+            None => return Ok(()), // no main method — skip (library mode)
+        };
+        let main_clif_id = match self.func_ids.get(&main_name) {
+            Some(&id) => id,
+            None => return Ok(()),
+        };
+
+        // Declare rava_entry(i64) -> void
+        let mut entry_sig = Signature::new(CallConv::SystemV);
+        entry_sig.params.push(AbiParam::new(types::I64));
+        let entry_id = self.obj.declare_function("rava_entry", Linkage::Export, &entry_sig)
+            .map_err(|e| RavaError::Codegen(format!("declare rava_entry failed: {e}")))?;
+
+        let mut clif_func = ir::Function::with_name_signature(
+            ir::UserFuncName::user(0, entry_id.as_u32()),
+            entry_sig,
+        );
+
+        let mut fb_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut clif_func, &mut fb_ctx);
+        let block = builder.create_block();
+        builder.append_block_params_for_function_params(block);
+        builder.switch_to_block(block);
+        builder.seal_block(block);
+
+        // Call the real main function, passing through the args parameter
+        let args_val = builder.block_params(block)[0];
+        let main_ref = self.obj.declare_func_in_func(main_clif_id, builder.func);
+
+        // Check how many params the real main expects
+        let main_sig = builder.func.dfg.ext_funcs[main_ref].signature;
+        let expected = builder.func.dfg.signatures[main_sig].params.len();
+        if expected > 0 {
+            builder.ins().call(main_ref, &[args_val]);
+        } else {
+            builder.ins().call(main_ref, &[]);
+        }
+        builder.ins().return_(&[]);
+        builder.finalize();
+
+        let mut ctx = cranelift_codegen::Context::for_function(clif_func);
+        self.obj.define_function(entry_id, &mut ctx)
+            .map_err(|e| RavaError::Codegen(format!("define rava_entry failed: {e}")))?;
+
         Ok(())
     }
 
@@ -151,8 +243,8 @@ impl<'a> TranslationCtx<'a> {
         // Variable counter for SSA values
         let mut var_map: HashMap<String, Variable> = HashMap::new();
         let mut var_counter = 0u32;
-        // Track which SSA names hold string pointers
-        let mut string_vals: HashSet<String> = HashSet::new();
+        // Track value types for dispatch (println, concat, etc.)
+        let mut val_types: HashMap<String, ValType> = HashMap::new();
 
         // Helper to get or create a variable
         let get_var = |name: &str, var_map: &mut HashMap<String, Variable>, var_counter: &mut u32| -> Variable {
@@ -212,7 +304,7 @@ impl<'a> TranslationCtx<'a> {
             for instr in &bb.instrs {
                 self.translate_instr(
                     instr, &mut builder, &block_map, &mut var_map, &mut var_counter,
-                    &mut string_vals,
+                    &mut val_types,
                 )?;
             }
 
@@ -242,41 +334,48 @@ impl<'a> TranslationCtx<'a> {
         block_map: &HashMap<u32, ir::Block>,
         var_map: &mut HashMap<String, Variable>,
         var_counter: &mut u32,
-        string_vals: &mut HashSet<String>,
+        val_types: &mut HashMap<String, ValType>,
     ) -> Result<()> {
         match instr {
             RirInstr::ConstInt { ret, value } => {
                 let v = builder.ins().iconst(types::I64, *value);
                 self.def_val(builder, var_map, var_counter, &ret.0, v);
+                val_types.insert(ret.0.clone(), ValType::Int);
             }
             RirInstr::ConstFloat { ret, value } => {
                 let v = builder.ins().f64const(*value);
                 // Store as bits in I64 for uniform variable type
                 let bits = builder.ins().bitcast(types::I64, MemFlags::new(), v);
                 self.def_val(builder, var_map, var_counter, &ret.0, bits);
+                val_types.insert(ret.0.clone(), ValType::Float);
             }
             RirInstr::ConstStr { ret, value } => {
                 // Handle __copy__ markers
                 if let Some(src) = value.strip_prefix("__copy__") {
                     let src_val = self.use_val(builder, var_map, var_counter, src);
                     self.def_val(builder, var_map, var_counter, &ret.0, src_val);
-                    // Propagate string type
-                    if string_vals.contains(src) {
-                        string_vals.insert(ret.0.clone());
+                    // Propagate type
+                    if let Some(&ty) = val_types.get(src) {
+                        val_types.insert(ret.0.clone(), ty);
                     }
                 } else {
                     let ptr = self.get_string_ptr(builder, value)?;
                     self.def_val(builder, var_map, var_counter, &ret.0, ptr);
-                    string_vals.insert(ret.0.clone());
+                    val_types.insert(ret.0.clone(), ValType::Str);
                 }
+            }
+            RirInstr::ConstBool { ret, value } => {
+                let v = builder.ins().iconst(types::I64, if *value { 1 } else { 0 });
+                self.def_val(builder, var_map, var_counter, &ret.0, v);
+                val_types.insert(ret.0.clone(), ValType::Bool);
             }
             RirInstr::ConstNull { ret } => {
                 let v = builder.ins().iconst(types::I64, 0);
                 self.def_val(builder, var_map, var_counter, &ret.0, v);
             }
             RirInstr::BinOp { op, lhs, rhs, ret } => {
-                let l_is_str = string_vals.contains(&lhs.0);
-                let r_is_str = string_vals.contains(&rhs.0);
+                let l_is_str = val_types.get(&lhs.0) == Some(&ValType::Str);
+                let r_is_str = val_types.get(&rhs.0) == Some(&ValType::Str);
                 if *op == BinOp::Add && (l_is_str || r_is_str) {
                     // String concatenation
                     let l = self.use_val(builder, var_map, var_counter, &lhs.0);
@@ -300,18 +399,40 @@ impl<'a> TranslationCtx<'a> {
                     let inst = builder.ins().call(concat_ref, &[l_str, r_str]);
                     let result = builder.inst_results(inst)[0];
                     self.def_val(builder, var_map, var_counter, &ret.0, result);
-                    string_vals.insert(ret.0.clone());
+                    val_types.insert(ret.0.clone(), ValType::Str);
+                } else if matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+                    let l = self.use_val(builder, var_map, var_counter, &lhs.0);
+                    let r = self.use_val(builder, var_map, var_counter, &rhs.0);
+                    let is_float = matches!(val_types.get(&lhs.0), Some(ValType::Float))
+                        || matches!(val_types.get(&rhs.0), Some(ValType::Float));
+                    let result = self.translate_binop(builder, op, l, r, is_float);
+                    self.def_val(builder, var_map, var_counter, &ret.0, result);
+                    val_types.insert(ret.0.clone(), ValType::Bool);
                 } else {
                     let l = self.use_val(builder, var_map, var_counter, &lhs.0);
                     let r = self.use_val(builder, var_map, var_counter, &rhs.0);
-                    let result = self.translate_binop(builder, op, l, r);
+                    let is_float = matches!(val_types.get(&lhs.0), Some(ValType::Float))
+                        || matches!(val_types.get(&rhs.0), Some(ValType::Float));
+                    let result = self.translate_binop(builder, op, l, r, is_float);
                     self.def_val(builder, var_map, var_counter, &ret.0, result);
+                    if is_float {
+                        val_types.insert(ret.0.clone(), ValType::Float);
+                    }
                 }
             }
             RirInstr::UnaryOp { op, operand, ret } => {
                 let v = self.use_val(builder, var_map, var_counter, &operand.0);
+                let is_float = matches!(val_types.get(&operand.0), Some(ValType::Float));
                 let result = match op {
-                    UnaryOp::Neg => builder.ins().ineg(v),
+                    UnaryOp::Neg => {
+                        if is_float {
+                            let fv = builder.ins().bitcast(types::F64, MemFlags::new(), v);
+                            let neg = builder.ins().fneg(fv);
+                            builder.ins().bitcast(types::I64, MemFlags::new(), neg)
+                        } else {
+                            builder.ins().ineg(v)
+                        }
+                    }
                     UnaryOp::Not => {
                         let zero = builder.ins().iconst(types::I64, 0);
                         let cmp = builder.ins().icmp(IntCC::Equal, v, zero);
@@ -319,6 +440,9 @@ impl<'a> TranslationCtx<'a> {
                     }
                 };
                 self.def_val(builder, var_map, var_counter, &ret.0, result);
+                if is_float && matches!(op, UnaryOp::Neg) {
+                    val_types.insert(ret.0.clone(), ValType::Float);
+                }
             }
             RirInstr::Return(val) => {
                 match val {
@@ -343,12 +467,11 @@ impl<'a> TranslationCtx<'a> {
                 let arg_vals: Vec<ir::Value> = args.iter()
                     .map(|a| self.use_val(builder, var_map, var_counter, &a.0))
                     .collect();
-                // Check if first arg is a string
-                let first_arg_is_str = args.first()
-                    .map(|a| string_vals.contains(&a.0))
-                    .unwrap_or(false);
+                // Check first arg type for dispatch
+                let first_arg_type = args.first()
+                    .and_then(|a| val_types.get(&a.0).copied());
                 self.translate_call(builder, func_id.0, &arg_vals, ret.as_ref(),
-                    var_map, var_counter, first_arg_is_str, string_vals)?;
+                    var_map, var_counter, first_arg_type, val_types)?;
             }
             RirInstr::Convert { val, to, ret, .. } => {
                 let v = self.use_val(builder, var_map, var_counter, &val.0);
@@ -360,12 +483,17 @@ impl<'a> TranslationCtx<'a> {
                 self.def_val(builder, var_map, var_counter, &ret.0, result);
             }
             // ── Object operations ──
-            RirInstr::New { ret, .. } => {
+            RirInstr::New { class, ret } => {
                 let num_fields = self.field_slots.len() as i64;
                 let nf = builder.ins().iconst(types::I64, num_fields);
                 let func_ref = self.obj.declare_func_in_func(self.rt_obj_alloc, builder.func);
                 let inst = builder.ins().call(func_ref, &[nf]);
                 let result = builder.inst_results(inst)[0];
+                // Set class tag on the newly allocated object
+                let tag_val = self.class_tags.get(&class.0).copied().unwrap_or(0);
+                let tag = builder.ins().iconst(types::I64, tag_val);
+                let set_tag_ref = self.obj.declare_func_in_func(self.rt_obj_set_tag, builder.func);
+                builder.ins().call(set_tag_ref, &[result, tag]);
                 self.def_val(builder, var_map, var_counter, &ret.0, result);
             }
             RirInstr::GetField { obj: obj_val, field, ret } => {
@@ -408,6 +536,16 @@ impl<'a> TranslationCtx<'a> {
                 let result = builder.inst_results(inst)[0];
                 self.def_val(builder, var_map, var_counter, &ret.0, result);
             }
+            RirInstr::NewMultiArray { dims, ret, .. } => {
+                // AOT: allocate outer array only (multi-dim init is interpreter-only for now)
+                if let Some(first) = dims.first() {
+                    let length = self.use_val(builder, var_map, var_counter, &first.0);
+                    let func_ref = self.obj.declare_func_in_func(self.rt_arr_alloc, builder.func);
+                    let inst = builder.ins().call(func_ref, &[length]);
+                    let result = builder.inst_results(inst)[0];
+                    self.def_val(builder, var_map, var_counter, &ret.0, result);
+                }
+            }
             RirInstr::ArrayLoad { arr, idx, ret } => {
                 let arr_ptr = self.use_val(builder, var_map, var_counter, &arr.0);
                 let index = self.use_val(builder, var_map, var_counter, &idx.0);
@@ -430,9 +568,16 @@ impl<'a> TranslationCtx<'a> {
                 let result = builder.inst_results(inst)[0];
                 self.def_val(builder, var_map, var_counter, &ret.0, result);
             }
-            RirInstr::Instanceof { ret, .. } => {
-                let v = builder.ins().iconst(types::I64, 0);
-                self.def_val(builder, var_map, var_counter, &ret.0, v);
+            RirInstr::Instanceof { obj, class, ret } => {
+                let obj_val = self.use_val(builder, var_map, var_counter, &obj.0);
+                let get_tag_ref = self.obj.declare_func_in_func(self.rt_obj_get_tag, builder.func);
+                let inst = builder.ins().call(get_tag_ref, &[obj_val]);
+                let actual_tag = builder.inst_results(inst)[0];
+                let expected_tag = self.class_tags.get(&class.0).copied().unwrap_or(0);
+                let expected = builder.ins().iconst(types::I64, expected_tag);
+                let cmp = builder.ins().icmp(IntCC::Equal, actual_tag, expected);
+                let result = builder.ins().uextend(types::I64, cmp);
+                self.def_val(builder, var_map, var_counter, &ret.0, result);
             }
             RirInstr::Checkcast { .. } => {}
             RirInstr::Throw(_) => {
@@ -498,42 +643,100 @@ impl<'a> TranslationCtx<'a> {
         Ok(())
     }
 
-    fn translate_binop(&self, builder: &mut FunctionBuilder, op: &BinOp, l: ir::Value, r: ir::Value) -> ir::Value {
-        match op {
-            BinOp::Add => builder.ins().iadd(l, r),
-            BinOp::Sub => builder.ins().isub(l, r),
-            BinOp::Mul => builder.ins().imul(l, r),
-            BinOp::Div => builder.ins().sdiv(l, r),
-            BinOp::Rem => builder.ins().srem(l, r),
-            BinOp::And | BinOp::BitAnd => builder.ins().band(l, r),
-            BinOp::Or | BinOp::BitOr => builder.ins().bor(l, r),
-            BinOp::Xor => builder.ins().bxor(l, r),
-            BinOp::Shl => builder.ins().ishl(l, r),
-            BinOp::Shr => builder.ins().sshr(l, r),
-            BinOp::UShr => builder.ins().ushr(l, r),
-            BinOp::Eq => {
-                let cmp = builder.ins().icmp(IntCC::Equal, l, r);
-                builder.ins().uextend(types::I64, cmp)
+    fn translate_binop(&self, builder: &mut FunctionBuilder, op: &BinOp, l: ir::Value, r: ir::Value, is_float: bool) -> ir::Value {
+        if is_float {
+            // Bitcast I64 bits to F64 for float operations
+            let lf = builder.ins().bitcast(types::F64, MemFlags::new(), l);
+            let rf = builder.ins().bitcast(types::F64, MemFlags::new(), r);
+            match op {
+                BinOp::Add => {
+                    let res = builder.ins().fadd(lf, rf);
+                    builder.ins().bitcast(types::I64, MemFlags::new(), res)
+                }
+                BinOp::Sub => {
+                    let res = builder.ins().fsub(lf, rf);
+                    builder.ins().bitcast(types::I64, MemFlags::new(), res)
+                }
+                BinOp::Mul => {
+                    let res = builder.ins().fmul(lf, rf);
+                    builder.ins().bitcast(types::I64, MemFlags::new(), res)
+                }
+                BinOp::Div => {
+                    let res = builder.ins().fdiv(lf, rf);
+                    builder.ins().bitcast(types::I64, MemFlags::new(), res)
+                }
+                BinOp::Rem => {
+                    // No frem in Cranelift — use fmod pattern: a - trunc(a/b) * b
+                    let div = builder.ins().fdiv(lf, rf);
+                    let trunc = builder.ins().trunc(div);
+                    let prod = builder.ins().fmul(trunc, rf);
+                    let res = builder.ins().fsub(lf, prod);
+                    builder.ins().bitcast(types::I64, MemFlags::new(), res)
+                }
+                BinOp::Eq => {
+                    let cmp = builder.ins().fcmp(FloatCC::Equal, lf, rf);
+                    builder.ins().uextend(types::I64, cmp)
+                }
+                BinOp::Ne => {
+                    let cmp = builder.ins().fcmp(FloatCC::NotEqual, lf, rf);
+                    builder.ins().uextend(types::I64, cmp)
+                }
+                BinOp::Lt => {
+                    let cmp = builder.ins().fcmp(FloatCC::LessThan, lf, rf);
+                    builder.ins().uextend(types::I64, cmp)
+                }
+                BinOp::Le => {
+                    let cmp = builder.ins().fcmp(FloatCC::LessThanOrEqual, lf, rf);
+                    builder.ins().uextend(types::I64, cmp)
+                }
+                BinOp::Gt => {
+                    let cmp = builder.ins().fcmp(FloatCC::GreaterThan, lf, rf);
+                    builder.ins().uextend(types::I64, cmp)
+                }
+                BinOp::Ge => {
+                    let cmp = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, lf, rf);
+                    builder.ins().uextend(types::I64, cmp)
+                }
+                // Bitwise ops on floats don't make sense, fall through to int
+                _ => self.translate_binop(builder, op, l, r, false),
             }
-            BinOp::Ne => {
-                let cmp = builder.ins().icmp(IntCC::NotEqual, l, r);
-                builder.ins().uextend(types::I64, cmp)
-            }
-            BinOp::Lt => {
-                let cmp = builder.ins().icmp(IntCC::SignedLessThan, l, r);
-                builder.ins().uextend(types::I64, cmp)
-            }
-            BinOp::Le => {
-                let cmp = builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r);
-                builder.ins().uextend(types::I64, cmp)
-            }
-            BinOp::Gt => {
-                let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, l, r);
-                builder.ins().uextend(types::I64, cmp)
-            }
-            BinOp::Ge => {
-                let cmp = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, l, r);
-                builder.ins().uextend(types::I64, cmp)
+        } else {
+            match op {
+                BinOp::Add => builder.ins().iadd(l, r),
+                BinOp::Sub => builder.ins().isub(l, r),
+                BinOp::Mul => builder.ins().imul(l, r),
+                BinOp::Div => builder.ins().sdiv(l, r),
+                BinOp::Rem => builder.ins().srem(l, r),
+                BinOp::And | BinOp::BitAnd => builder.ins().band(l, r),
+                BinOp::Or | BinOp::BitOr => builder.ins().bor(l, r),
+                BinOp::Xor => builder.ins().bxor(l, r),
+                BinOp::Shl => builder.ins().ishl(l, r),
+                BinOp::Shr => builder.ins().sshr(l, r),
+                BinOp::UShr => builder.ins().ushr(l, r),
+                BinOp::Eq => {
+                    let cmp = builder.ins().icmp(IntCC::Equal, l, r);
+                    builder.ins().uextend(types::I64, cmp)
+                }
+                BinOp::Ne => {
+                    let cmp = builder.ins().icmp(IntCC::NotEqual, l, r);
+                    builder.ins().uextend(types::I64, cmp)
+                }
+                BinOp::Lt => {
+                    let cmp = builder.ins().icmp(IntCC::SignedLessThan, l, r);
+                    builder.ins().uextend(types::I64, cmp)
+                }
+                BinOp::Le => {
+                    let cmp = builder.ins().icmp(IntCC::SignedLessThanOrEqual, l, r);
+                    builder.ins().uextend(types::I64, cmp)
+                }
+                BinOp::Gt => {
+                    let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, l, r);
+                    builder.ins().uextend(types::I64, cmp)
+                }
+                BinOp::Ge => {
+                    let cmp = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, l, r);
+                    builder.ins().uextend(types::I64, cmp)
+                }
             }
         }
     }
@@ -546,21 +749,34 @@ impl<'a> TranslationCtx<'a> {
         ret: Option<&rava_rir::Value>,
         var_map: &mut HashMap<String, Variable>,
         var_counter: &mut u32,
-        first_arg_is_str: bool,
-        string_vals: &mut HashSet<String>,
+        first_arg_type: Option<ValType>,
+        val_types: &mut HashMap<String, ValType>,
     ) -> Result<()> {
         use rava_frontend::lowerer::encode_builtin;
 
-        // System.out.println dispatch
+        // System.out.println dispatch — type-aware
         if func_id == encode_builtin("System.out.println") {
             if args.is_empty() {
                 let void_ref = self.obj.declare_func_in_func(self.rt_println_void, builder.func);
                 builder.ins().call(void_ref, &[]);
-            } else if first_arg_is_str {
-                let func_ref = self.obj.declare_func_in_func(self.rt_println_str, builder.func);
-                builder.ins().call(func_ref, &[args[0]]);
             } else {
-                let func_ref = self.obj.declare_func_in_func(self.rt_println_int, builder.func);
+                let rt_func = match first_arg_type {
+                    Some(ValType::Str) => self.rt_println_str,
+                    Some(ValType::Bool) => self.rt_println_bool,
+                    Some(ValType::Float) => {
+                        // Convert I64 bits back to F64 for the float println
+                        let f = builder.ins().bitcast(types::F64, MemFlags::new(), args[0]);
+                        let func_ref = self.obj.declare_func_in_func(self.rt_println_float, builder.func);
+                        builder.ins().call(func_ref, &[f]);
+                        if let Some(r) = ret {
+                            let v = builder.ins().iconst(types::I64, 0);
+                            self.def_val(builder, var_map, var_counter, &r.0, v);
+                        }
+                        return Ok(());
+                    }
+                    _ => self.rt_println_int,
+                };
+                let func_ref = self.obj.declare_func_in_func(rt_func, builder.func);
                 builder.ins().call(func_ref, &[args[0]]);
             }
             if let Some(r) = ret {
@@ -571,13 +787,12 @@ impl<'a> TranslationCtx<'a> {
         }
         if func_id == encode_builtin("System.out.print") {
             if !args.is_empty() {
-                if first_arg_is_str {
-                    let func_ref = self.obj.declare_func_in_func(self.rt_print_str, builder.func);
-                    builder.ins().call(func_ref, &[args[0]]);
-                } else {
-                    let func_ref = self.obj.declare_func_in_func(self.rt_print_int, builder.func);
-                    builder.ins().call(func_ref, &[args[0]]);
-                }
+                let rt_func = match first_arg_type {
+                    Some(ValType::Str) => self.rt_print_str,
+                    _ => self.rt_print_int,
+                };
+                let func_ref = self.obj.declare_func_in_func(rt_func, builder.func);
+                builder.ins().call(func_ref, &[args[0]]);
             }
             if let Some(r) = ret {
                 let v = builder.ins().iconst(types::I64, 0);
@@ -593,7 +808,7 @@ impl<'a> TranslationCtx<'a> {
             if let Some(r) = ret {
                 let results = builder.inst_results(inst);
                 self.def_val(builder, var_map, var_counter, &r.0, results[0]);
-                string_vals.insert(r.0.clone());
+                val_types.insert(r.0.clone(), ValType::Str);
             }
             return Ok(());
         }
@@ -605,7 +820,7 @@ impl<'a> TranslationCtx<'a> {
             if let Some(r) = ret {
                 let results = builder.inst_results(inst);
                 self.def_val(builder, var_map, var_counter, &r.0, results[0]);
-                string_vals.insert(r.0.clone());
+                val_types.insert(r.0.clone(), ValType::Str);
             }
             return Ok(());
         }
@@ -762,6 +977,7 @@ fn collect_def_names(instr: &RirInstr, names: &mut Vec<String>) {
         RirInstr::ConstInt { ret, .. } |
         RirInstr::ConstFloat { ret, .. } |
         RirInstr::ConstStr { ret, .. } |
+        RirInstr::ConstBool { ret, .. } |
         RirInstr::ConstNull { ret } => { names.push(ret.0.clone()); }
         RirInstr::BinOp { ret, .. } |
         RirInstr::UnaryOp { ret, .. } => { names.push(ret.0.clone()); }
@@ -770,6 +986,7 @@ fn collect_def_names(instr: &RirInstr, names: &mut Vec<String>) {
         RirInstr::GetField { ret, .. } |
         RirInstr::GetStatic { ret, .. } => { names.push(ret.0.clone()); }
         RirInstr::NewArray { ret, .. } |
+        RirInstr::NewMultiArray { ret, .. } |
         RirInstr::ArrayLoad { ret, .. } |
         RirInstr::ArrayLen { ret, .. } => { names.push(ret.0.clone()); }
         RirInstr::Instanceof { ret, .. } => { names.push(ret.0.clone()); }

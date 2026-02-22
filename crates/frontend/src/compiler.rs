@@ -1,6 +1,6 @@
 //! Frontend compiler — orchestrates the lex → parse → lower pipeline.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use rava_common::error::Result;
 use rava_rir::Module;
 use crate::{lexer::Lexer, lowerer::Lowerer, parser::Parser};
@@ -19,6 +19,34 @@ impl Compiler {
         let tokens = Lexer::new(source).tokenize()?;
         let ast    = Parser::new(tokens).parse_file()?;
         Lowerer::new(module_name).lower_file(&ast)
+    }
+
+    /// Compile multiple Java source files into a single merged RIR module.
+    ///
+    /// Uses the import resolver to discover and compile transitive dependencies.
+    /// Source roots default to the parent directories of the input files + "src/".
+    pub fn compile_project(&self, files: &[PathBuf]) -> Result<Module> {
+        // Infer source roots from input files
+        let mut source_roots = Vec::new();
+        let src_dir = PathBuf::from("src");
+        if src_dir.exists() {
+            source_roots.push(src_dir);
+        }
+        // Also add parent dirs of input files as roots (for flat layouts)
+        for f in files {
+            if let Some(parent) = f.parent() {
+                let p = parent.to_path_buf();
+                if !source_roots.contains(&p) {
+                    source_roots.push(p);
+                }
+            }
+        }
+
+        let mut resolver = crate::resolver::ImportResolver::new(source_roots);
+        for file in files {
+            resolver.compile_file(file, self)?;
+        }
+        Ok(resolver.into_module())
     }
 }
 

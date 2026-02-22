@@ -11,17 +11,21 @@ repository.workspace  = true
 name = "rava"
 path = "src/main.rs"
 
+[features]
+default = ["aot", "pkg"]
+aot     = ["dep:rava-codegen-cranelift", "dep:rava-aot"]
+pkg     = ["dep:rava-pkg", "dep:reqwest"]
+
 [dependencies]
 rava-common            = { workspace = true }
 rava-frontend          = { workspace = true }
 rava-micrort           = { workspace = true }
-rava-aot               = { workspace = true }
-rava-codegen-cranelift = { workspace = true }
-rava-pkg               = { workspace = true }
+rava-aot               = { workspace = true, optional = true }
+rava-codegen-cranelift = { workspace = true, optional = true }
+rava-pkg               = { workspace = true, optional = true }
 rava-hcl               = { workspace = true }
-reqwest                = { workspace = true }
+reqwest                = { workspace = true, optional = true }
 clap                   = { workspace = true }
-tokio                  = { workspace = true }
 anyhow                 = { workspace = true }
 tracing                = { workspace = true }
 tracing-subscriber     = { workspace = true }

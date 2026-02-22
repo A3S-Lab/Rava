@@ -29,6 +29,7 @@ pub enum ClassKind {
     Class,
     Interface,
     Enum,
+    Record,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -168,6 +169,8 @@ pub enum Stmt {
     Synchronized { expr: Expr, body: Block },
     /// `assert expr;` or `assert expr : message;`
     Assert { expr: Expr, message: Option<Expr> },
+    /// `yield expr;` (in switch expressions)
+    Yield(Expr),
     /// empty `;`
     Empty,
 }
@@ -205,10 +208,12 @@ pub enum Expr {
     Field { obj: Box<Expr>, name: String },
     /// `expr.method(args)` or `method(args)`
     Call { callee: Box<Expr>, args: Vec<Expr> },
-    /// `new Type(args)`
-    New { ty: TypeExpr, args: Vec<Expr> },
+    /// `new Type(args)` or `new Type(args) { ... }` (anonymous class)
+    New { ty: TypeExpr, args: Vec<Expr>, body: Option<Vec<Member>> },
     /// `new Type[len]`
     NewArray { ty: TypeExpr, len: Box<Expr> },
+    /// `new Type[m][n]` — multi-dimensional array
+    NewMultiArray { ty: TypeExpr, dims: Vec<Expr> },
     /// `new Type[] { ... }` or `{ ... }` array initializer
     ArrayInit { ty: Option<TypeExpr>, elements: Vec<Expr> },
     /// `arr[idx]`
@@ -233,6 +238,8 @@ pub enum Expr {
     Lambda { params: Vec<LambdaParam>, body: Box<LambdaBody> },
     /// `expr::method` or `Type::method` or `Type::new`
     MethodRef { obj: Box<Expr>, name: String },
+    /// Switch expression: `switch (expr) { case X -> val; ... }`
+    SwitchExpr { expr: Box<Expr>, cases: Vec<SwitchCase> },
 }
 
 /// Lambda parameter (may or may not have explicit type).
@@ -252,8 +259,8 @@ pub enum LambdaBody {
 /// A switch case arm.
 #[derive(Debug, Clone)]
 pub struct SwitchCase {
-    /// `None` = default case.
-    pub label:  Option<Expr>,
+    /// `None` = default case. Multiple labels for `case 1, 2, 3 ->`.
+    pub labels: Option<Vec<Expr>>,
     pub body:   Vec<Stmt>,
 }
 

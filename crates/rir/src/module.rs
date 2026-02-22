@@ -11,6 +11,10 @@ pub struct RirModule {
     pub functions:   Vec<RirFunction>,
     /// Maps FieldId hash → field name string, so the interpreter can reverse-lookup.
     pub field_names: HashMap<u32, String>,
+    /// Maps ClassId hash → class name string, so the interpreter can reverse-lookup.
+    pub class_names: HashMap<u32, String>,
+    /// Maps class name → superclass name (for instanceof chain walking).
+    pub class_hierarchy: HashMap<String, String>,
 }
 
 /// A single Java method in SSA form.
@@ -45,6 +49,55 @@ pub struct FuncFlags {
 
 impl RirModule {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), functions: Vec::new(), field_names: HashMap::new() }
+        Self { name: name.into(), functions: Vec::new(), field_names: HashMap::new(), class_names: HashMap::new(), class_hierarchy: HashMap::new() }
+    }
+
+    /// Merge all functions and field names from `other` into this module.
+    ///
+    /// FuncId/BlockId values are local to each function's basic blocks (jumps
+    /// within the same function), so no remapping is needed — we just append.
+    pub fn merge(&mut self, other: RirModule) {
+        self.functions.extend(other.functions);
+        self.field_names.extend(other.field_names);
+        self.class_names.extend(other.class_names);
+        self.class_hierarchy.extend(other.class_hierarchy);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_combines_functions_and_fields() {
+        let mut a = RirModule::new("a");
+        a.functions.push(RirFunction {
+            id: FuncId(0),
+            name: "A.main".into(),
+            params: vec![],
+            return_type: RirType::Void,
+            basic_blocks: vec![],
+            flags: FuncFlags::default(),
+        });
+        a.field_names.insert(100, "x".into());
+
+        let mut b = RirModule::new("b");
+        b.functions.push(RirFunction {
+            id: FuncId(0),
+            name: "B.run".into(),
+            params: vec![],
+            return_type: RirType::Void,
+            basic_blocks: vec![],
+            flags: FuncFlags::default(),
+        });
+        b.field_names.insert(200, "y".into());
+
+        a.merge(b);
+        assert_eq!(a.functions.len(), 2);
+        assert_eq!(a.functions[0].name, "A.main");
+        assert_eq!(a.functions[1].name, "B.run");
+        assert_eq!(a.field_names.len(), 2);
+        assert!(a.field_names.contains_key(&100));
+        assert!(a.field_names.contains_key(&200));
     }
 }

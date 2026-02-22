@@ -430,7 +430,7 @@ common    → (none)
 | Phase | Deliverable | Status |
 |-------|------------|--------|
 | Framework | Workspace skeleton: 10 crates, all traits defined, Cranelift wired up | ✅ |
-| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add`, `rava init`, static Java | ✅ (`rava run` ✅, `rava build` ✅ strings + objects + arrays, `rava add` ✅, `rava init` ✅) |
+| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add`, `rava init`, static Java | 🚧 (frontend pipeline: lexer ✅, parser ✅, lowerer 🚧 `lower_for_each` failing; `rava init` ✅) |
 | Phase 2 (3-6mo) | Reflection: AOT metadata table + dual-path dispatch | ⬜ |
 | Phase 3 (6-12mo) | MicroRT v1: bytecode interpreter + class loader + unified object model | ⬜ |
 | Phase 4 (2-3mo) | Dynamic proxy AOT: pre-generated proxy classes | ⬜ |
@@ -440,15 +440,13 @@ common    → (none)
 
 ## Test Coverage
 
-42 tests passing (`cargo test --workspace`), 33 examples passing (`just examples`):
+33 tests passing, 1 failing (`cargo test --workspace`):
 
 | Crate | Tests |
 |-------|-------|
-| `rava-heap` | 6 — mark word bit layout, alloc alignment, write barrier, OOM |
 | `rava-aot` | 2 — 7 passes registered in correct order |
 | `rava-codegen-cranelift` | 2 — Cranelift ISA init for host target |
-| `rava-frontend` | 27 — lexer (hex, binary, char, operators, keywords), parser (hello world, local var, do-while, for-each, break/continue, try/catch, lambda, enum, instanceof pattern, method ref), lowerer (hello world, arithmetic, do-while, break/continue, ternary, for-each), compiler |
-| `rava-pkg` | 4 — short name resolution, full coordinate passthrough, HCL roundtrip |
+| `rava-frontend` | 28 — lexer (hex, binary, char, operators, keywords), parser (hello world, local var, do-while, for-each, break/continue, try/catch, lambda, enum, instanceof pattern, method ref, record, sealed class, text block, switch arrow, yield), lowerer (hello world, arithmetic, do-while, break/continue, ternary; `lower_for_each` failing), compiler, resolver |
 | `rava` (cli) | 1 — PascalCase conversion |
 
 ---

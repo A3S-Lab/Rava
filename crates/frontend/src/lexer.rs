@@ -59,6 +59,9 @@ pub enum Token {
     Instanceof,
     Assert,
     Yield,
+    Record,
+    Sealed,
+    Permits,
 
     // Primitive type keywords
     Int,
@@ -213,6 +216,64 @@ impl<'a> Lexer<'a> {
         Ok(Token::StrLit(s))
     }
 
+    /// Read a text block: everything between """ and """.
+    /// Skips the first newline after opening """, strips common leading whitespace.
+    fn read_text_block(&mut self) -> Result<Token> {
+        // Skip optional whitespace + mandatory newline after opening """
+        while self.peek() == Some(b' ') || self.peek() == Some(b'\t') {
+            self.advance();
+        }
+        if self.peek() == Some(b'\n') {
+            self.advance();
+        } else if self.peek() == Some(b'\r') {
+            self.advance();
+            if self.peek() == Some(b'\n') { self.advance(); }
+        }
+
+        // Read until closing """
+        let mut raw = String::new();
+        loop {
+            match self.peek() {
+                None => return Err(RavaError::Parse {
+                    location: format!("{}:{}", self.line, self.col),
+                    message: "unterminated text block".into(),
+                }),
+                Some(b'"') if self.peek2() == Some(b'"') && self.peek3() == Some(b'"') => {
+                    self.advance(); self.advance(); self.advance();
+                    break;
+                }
+                Some(b'\\') => {
+                    self.advance();
+                    raw.push(self.read_escape()?);
+                }
+                _ => {
+                    let c = self.advance().unwrap();
+                    raw.push(c as char);
+                }
+            }
+        }
+
+        // Strip trailing newline before closing """
+        if raw.ends_with('\n') {
+            raw.pop();
+            if raw.ends_with('\r') { raw.pop(); }
+        }
+
+        // Strip common leading whitespace (Java text block spec)
+        let lines: Vec<&str> = raw.split('\n').collect();
+        let min_indent = lines.iter()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| l.len() - l.trim_start().len())
+            .min()
+            .unwrap_or(0);
+
+        let stripped: Vec<&str> = lines.iter()
+            .map(|l| if l.len() >= min_indent { &l[min_indent..] } else { l.trim_start() })
+            .collect();
+
+        Ok(Token::StrLit(stripped.join("\n")))
+    }
+
     fn read_escape(&mut self) -> Result<char> {
         match self.advance() {
             Some(b'n')  => Ok('\n'),
@@ -345,13 +406,20 @@ impl<'a> Lexer<'a> {
                     self.advance();
                     num.push('.');
                 }
-            } else if matches!(c, b'e' | b'E') && !is_float {
+            } else if matches!(c, b'e' | b'E') {
                 is_float = true;
                 self.advance();
                 num.push('e');
                 if matches!(self.peek(), Some(b'+' | b'-')) {
                     let sign = self.advance().unwrap();
                     num.push(sign as char);
+                }
+                // consume exponent digits
+                while let Some(d) = self.peek() {
+                    if d.is_ascii_digit() {
+                        self.advance();
+                        num.push(d as char);
+                    } else { break; }
                 }
             } else if matches!(c, b'l' | b'L') {
                 self.advance();
@@ -425,6 +493,9 @@ impl<'a> Lexer<'a> {
             "instanceof"   => Token::Instanceof,
             "assert"       => Token::Assert,
             "yield"        => Token::Yield,
+            "record"       => Token::Record,
+            "sealed"       => Token::Sealed,
+            "permits"      => Token::Permits,
             "int"          => Token::Int,
             "long"         => Token::Long,
             "double"       => Token::Double,
@@ -523,7 +594,16 @@ impl<'a> Lexer<'a> {
             b'*' => if self.peek() == Some(b'=') { self.advance(); Token::StarAssign  } else { Token::Star    },
             b'/' => if self.peek() == Some(b'=') { self.advance(); Token::SlashAssign } else { Token::Slash   },
             b'%' => if self.peek() == Some(b'=') { self.advance(); Token::PercentAssign } else { Token::Percent },
-            b'"' => self.read_string()?,
+            b'"' => {
+                // Check for text block: """
+                if self.peek() == Some(b'"') && self.peek2() == Some(b'"') {
+                    self.advance(); // consume second "
+                    self.advance(); // consume third "
+                    self.read_text_block()?
+                } else {
+                    self.read_string()?
+                }
+            },
             b'\'' => self.read_char_literal()?,
             c if c.is_ascii_digit() => self.read_number(c),
             c if c.is_ascii_alphabetic() || c == b'_' || c == b'$' => self.read_ident(c),

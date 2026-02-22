@@ -109,6 +109,39 @@ impl Parser {
         Ok(name)
     }
 
+    /// Parse a case label expression — restricted to avoid lambda ambiguity with `->`.
+    fn parse_case_label(&mut self) -> Result<Expr> {
+        let mut expr = match self.peek().clone() {
+            Token::IntLit(n)   => { self.advance(); Expr::IntLit(n) }
+            Token::FloatLit(n) => { self.advance(); Expr::FloatLit(n) }
+            Token::StrLit(s)   => { self.advance(); Expr::StrLit(s) }
+            Token::CharLit(c)  => { self.advance(); Expr::CharLit(c) }
+            Token::BoolLit(b)  => { self.advance(); Expr::BoolLit(b) }
+            Token::Null        => { self.advance(); Expr::Null }
+            Token::Minus       => {
+                self.advance();
+                let inner = self.parse_case_label()?;
+                Expr::UnaryOp { op: UnaryOp::Neg, expr: Box::new(inner) }
+            }
+            Token::Ident(name) => {
+                self.advance();
+                let mut e = Expr::Ident(name);
+                // Allow dotted access: Color.RED
+                while self.peek() == &Token::Dot {
+                    self.advance();
+                    let field = self.expect_ident()?;
+                    e = Expr::Field { obj: Box::new(e), name: field };
+                }
+                e
+            }
+            _ => return self.parse_expr(), // fallback
+        };
+        // Handle comma-separated case labels (Java 14+): case 1, 2, 3 ->
+        // For now just return single label
+        let _ = &mut expr;
+        Ok(expr)
+    }
+
     // ── Class / Interface / Enum ──────────────────────────────────────────────
 
     fn parse_class(&mut self) -> Result<ClassDecl> {
@@ -118,13 +151,22 @@ impl Parser {
             Token::Class     => { self.advance(); ClassKind::Class }
             Token::Interface => { self.advance(); ClassKind::Interface }
             Token::Enum      => { self.advance(); ClassKind::Enum }
+            Token::Record    => { self.advance(); ClassKind::Record }
             got => return Err(RavaError::Parse {
                 location: format!("pos {}", self.pos),
-                message: format!("expected 'class', 'interface', or 'enum', got {:?}", got),
+                message: format!("expected 'class', 'interface', 'enum', or 'record', got {:?}", got),
             }),
         };
         let name = self.expect_ident()?;
         self.skip_type_params();
+
+        // Record components: record Point(int x, int y) { ... }
+        let record_components: Vec<(TypeExpr, String)> = if kind == ClassKind::Record && self.peek() == &Token::LParen {
+            let params = self.parse_params()?;
+            params.into_iter().map(|p| (p.ty, p.name)).collect()
+        } else {
+            Vec::new()
+        };
 
         let mut superclass = None;
         if self.eat(&Token::Extends) {
@@ -139,8 +181,63 @@ impl Parser {
             }
         }
 
+        // sealed classes: `permits SubA, SubB` — parse and discard for now
+        if self.eat(&Token::Permits) {
+            self.parse_type_name()?;
+            while self.eat(&Token::Comma) {
+                self.parse_type_name()?;
+            }
+        }
+
         self.expect(&Token::LBrace)?;
         let mut members = Vec::new();
+
+        // Desugar record components into fields + constructor + accessors
+        if kind == ClassKind::Record && !record_components.is_empty() {
+            // Final fields
+            for (ty, fname) in &record_components {
+                members.push(Member::Field(FieldDecl {
+                    name: fname.clone(),
+                    modifiers: vec![Modifier::Private, Modifier::Final],
+                    ty: ty.clone(),
+                    init: None,
+                }));
+            }
+            // Canonical constructor: assigns params to fields
+            let params: Vec<Param> = record_components.iter().map(|(ty, fname)| {
+                Param { name: fname.clone(), ty: ty.clone(), variadic: false }
+            }).collect();
+            let body_stmts: Vec<Stmt> = record_components.iter().map(|(_, fname)| {
+                Stmt::Expr(Expr::Assign {
+                    lhs: Box::new(Expr::Field {
+                        obj: Box::new(Expr::This),
+                        name: fname.clone(),
+                    }),
+                    rhs: Box::new(Expr::Ident(fname.clone())),
+                })
+            }).collect();
+            members.push(Member::Constructor(ConstructorDecl {
+                name: name.clone(),
+                modifiers: vec![Modifier::Public],
+                params,
+                body: Block(body_stmts),
+            }));
+            // Accessor methods (same name as field, no `get` prefix)
+            for (ty, fname) in &record_components {
+                members.push(Member::Method(MethodDecl {
+                    name: fname.clone(),
+                    modifiers: vec![Modifier::Public],
+                    return_ty: ty.clone(),
+                    params: vec![],
+                    body: Some(Block(vec![
+                        Stmt::Return(Some(Expr::Field {
+                            obj: Box::new(Expr::This),
+                            name: fname.clone(),
+                        })),
+                    ])),
+                }));
+            }
+        }
 
         if kind == ClassKind::Enum {
             // Parse enum constants
@@ -204,6 +301,7 @@ impl Parser {
                 Token::Transient    => { self.advance(); mods.push(Modifier::Transient); }
                 Token::Strictfp     => { self.advance(); mods.push(Modifier::Strictfp); }
                 Token::Default      => { self.advance(); mods.push(Modifier::Default); }
+                Token::Sealed       => { self.advance(); mods.push(Modifier::Abstract); } // treat sealed as modifier, map to abstract for now
                 _ => break,
             }
         }
@@ -225,8 +323,8 @@ impl Parser {
             return Ok(Some(Member::StaticInit(body)));
         }
 
-        // inner class/interface/enum
-        if matches!(self.peek(), Token::Class | Token::Interface | Token::Enum) {
+        // inner class/interface/enum/record
+        if matches!(self.peek(), Token::Class | Token::Interface | Token::Enum | Token::Record) {
             let inner = self.parse_class()?;
             return Ok(Some(Member::InnerClass(inner)));
         }
@@ -296,6 +394,7 @@ impl Parser {
             Token::Short    => "short".into(),
             Token::Char     => "char".into(),
             Token::Void     => "void".into(),
+            Token::Var      => "var".into(),
             got => return Err(RavaError::Parse {
                 location: format!("pos {}", self.pos),
                 message: format!("expected type, got {:?}", got),
@@ -481,13 +580,43 @@ impl Parser {
             }
             Token::Try => {
                 self.advance();
+                // Try-with-resources: try (Type name = expr; ...) { ... }
+                let mut resources: Vec<(String, Expr)> = Vec::new();
+                if self.peek() == &Token::LParen {
+                    // Could be try-with-resources or just try { ... }
+                    // Peek ahead: if next is a type/ident followed by ident and =, it's resources
+                    let saved = self.pos;
+                    self.advance(); // consume (
+                    if self.peek() != &Token::RParen && !matches!(self.peek(), Token::Catch | Token::LBrace) {
+                        // Try parsing as resource declarations
+                        let is_resource = matches!(self.peek(), Token::Ident(_) | Token::Final);
+                        if is_resource {
+                            self.pos = saved;
+                            self.advance(); // consume (
+                            while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
+                                self.eat(&Token::Final); // optional final
+                                let _ty = self.parse_type_expr()?;
+                                let name = self.expect_ident()?;
+                                self.expect(&Token::Assign)?;
+                                let init = self.parse_expr()?;
+                                resources.push((name, init));
+                                self.eat(&Token::Semi);
+                            }
+                            self.expect(&Token::RParen)?;
+                        } else {
+                            self.pos = saved;
+                        }
+                    } else {
+                        self.pos = saved;
+                    }
+                }
+
                 let try_body = self.parse_block()?;
                 let mut catches = Vec::new();
                 let mut finally_body = None;
                 while self.peek() == &Token::Catch {
                     self.advance();
                     self.expect(&Token::LParen)?;
-                    // Parse exception types (multi-catch: Type1 | Type2)
                     let mut exception_types = vec![self.parse_type_expr()?];
                     while self.eat(&Token::BitOr) {
                         exception_types.push(self.parse_type_expr()?);
@@ -500,7 +629,42 @@ impl Parser {
                 if self.eat(&Token::Finally) {
                     finally_body = Some(self.parse_block()?);
                 }
-                Ok(Stmt::TryCatch { try_body, catches, finally_body })
+
+                // Desugar try-with-resources: wrap body with resource decls,
+                // add close() calls to finally block
+                if !resources.is_empty() {
+                    let mut full_body = Vec::new();
+                    for (name, init) in &resources {
+                        full_body.push(Stmt::LocalVar {
+                            ty: TypeExpr::simple("var"),
+                            name: name.clone(),
+                            init: Some(init.clone()),
+                        });
+                    }
+                    full_body.extend(try_body.0);
+
+                    let mut close_stmts: Vec<Stmt> = resources.iter().rev().map(|(name, _)| {
+                        Stmt::Expr(Expr::Call {
+                            callee: Box::new(Expr::Field {
+                                obj: Box::new(Expr::Ident(name.clone())),
+                                name: "close".into(),
+                            }),
+                            args: vec![],
+                        })
+                    }).collect();
+
+                    if let Some(existing_finally) = finally_body {
+                        close_stmts.extend(existing_finally.0);
+                    }
+
+                    Ok(Stmt::TryCatch {
+                        try_body: Block(full_body),
+                        catches,
+                        finally_body: Some(Block(close_stmts)),
+                    })
+                } else {
+                    Ok(Stmt::TryCatch { try_body, catches, finally_body })
+                }
             }
             Token::Switch => {
                 self.advance();
@@ -512,30 +676,48 @@ impl Parser {
                 while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
                     let label = if self.peek() == &Token::Case {
                         self.advance();
-                        let e = self.parse_expr()?;
-                        self.expect(&Token::Colon)?;
-                        Some(e)
+                        let mut labels = vec![self.parse_case_label()?];
+                        while self.eat(&Token::Comma) {
+                            labels.push(self.parse_case_label()?);
+                        }
+                        Some(labels)
                     } else if self.peek() == &Token::Default {
                         self.advance();
-                        self.expect(&Token::Colon)?;
                         None
                     } else {
                         break;
                     };
-                    let mut body = Vec::new();
-                    loop {
-                        match self.peek() {
-                            Token::Case | Token::Default | Token::RBrace | Token::Eof => break,
-                            Token::Break => {
-                                self.advance();
-                                self.eat(&Token::Semi);
-                                body.push(Stmt::Break(None));
-                                break;
-                            }
-                            _ => body.push(self.parse_stmt()?),
+
+                    // Arrow syntax: case X -> expr; or case X -> { ... }
+                    if self.peek() == &Token::Arrow {
+                        self.advance();
+                        let mut body = Vec::new();
+                        if self.peek() == &Token::LBrace {
+                            body = self.parse_block()?.0;
+                        } else {
+                            body.push(self.parse_stmt()?);
                         }
+                        // Arrow cases have implicit break
+                        body.push(Stmt::Break(None));
+                        cases.push(SwitchCase { labels: label, body });
+                    } else {
+                        // Colon syntax: case X: ...
+                        self.expect(&Token::Colon)?;
+                        let mut body = Vec::new();
+                        loop {
+                            match self.peek() {
+                                Token::Case | Token::Default | Token::RBrace | Token::Eof => break,
+                                Token::Break => {
+                                    self.advance();
+                                    self.eat(&Token::Semi);
+                                    body.push(Stmt::Break(None));
+                                    break;
+                                }
+                                _ => body.push(self.parse_stmt()?),
+                            }
+                        }
+                        cases.push(SwitchCase { labels: label, body });
                     }
-                    cases.push(SwitchCase { label, body });
                 }
                 self.expect(&Token::RBrace)?;
                 Ok(Stmt::Switch { expr, cases })
@@ -557,6 +739,12 @@ impl Parser {
                 self.expect(&Token::Semi)?;
                 Ok(Stmt::Assert { expr, message })
             }
+            Token::Yield => {
+                self.advance();
+                let expr = self.parse_expr()?;
+                self.expect(&Token::Semi)?;
+                Ok(Stmt::Yield(expr))
+            }
             Token::Var => {
                 self.advance();
                 let name = self.expect_ident()?;
@@ -569,9 +757,27 @@ impl Parser {
             tok if self.is_type_start(&tok) && self.is_local_var_decl() => {
                 let ty = self.parse_type_expr()?;
                 let name = self.expect_ident()?;
-                let init = if self.eat(&Token::Assign) { Some(self.parse_expr()?) } else { None };
+                let init = if self.eat(&Token::Assign) {
+                    if self.peek() == &Token::LBrace {
+                        // Array initializer: int[] arr = {1, 2, 3}
+                        let elements = self.parse_array_init()?;
+                        Some(Expr::ArrayInit { ty: None, elements })
+                    } else {
+                        Some(self.parse_expr()?)
+                    }
+                } else { None };
                 self.expect(&Token::Semi)?;
                 Ok(Stmt::LocalVar { ty, name, init })
+            }
+            // this(...) constructor delegation
+            Token::This if matches!(self.peek_at(1), Token::LParen) => {
+                self.advance(); // consume 'this'
+                let args = self.parse_args()?;
+                self.expect(&Token::Semi)?;
+                Ok(Stmt::Expr(Expr::Call {
+                    callee: Box::new(Expr::This),
+                    args,
+                }))
             }
             _ => {
                 let expr = self.parse_expr()?;
@@ -632,7 +838,8 @@ impl Parser {
         // skip type token
         match self.tokens.get(i) {
             Some(Token::Ident(_) | Token::Int | Token::Long | Token::Double |
-                 Token::Float | Token::Boolean | Token::Byte | Token::Short | Token::Char) => { i += 1; }
+                 Token::Float | Token::Boolean | Token::Byte | Token::Short | Token::Char |
+                 Token::Var) => { i += 1; }
             _ => return false,
         }
         // skip qualified name
@@ -953,6 +1160,47 @@ impl Parser {
             Token::CharLit(c)  => { self.advance(); Ok(Expr::CharLit(c)) }
             Token::BoolLit(b)  => { self.advance(); Ok(Expr::BoolLit(b)) }
             Token::Null        => { self.advance(); Ok(Expr::Null) }
+            Token::Switch      => {
+                // Switch expression: switch (expr) { case X -> val; ... }
+                self.advance();
+                self.expect(&Token::LParen)?;
+                let expr = self.parse_expr()?;
+                self.expect(&Token::RParen)?;
+                self.expect(&Token::LBrace)?;
+                let mut cases = Vec::new();
+                while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+                    let label = if self.eat(&Token::Default) {
+                        None
+                    } else {
+                        self.expect(&Token::Case)?;
+                        let mut labels = vec![self.parse_case_label()?];
+                        while self.eat(&Token::Comma) {
+                            labels.push(self.parse_case_label()?);
+                        }
+                        Some(labels)
+                    };
+                    let mut body = Vec::new();
+                    if self.eat(&Token::Arrow) {
+                        // Arrow syntax: case X -> expr; or case X -> { ... }
+                        if self.peek() == &Token::LBrace {
+                            body = self.parse_block()?.0;
+                        } else {
+                            let e = self.parse_expr()?;
+                            body.push(Stmt::Yield(e));
+                            self.eat(&Token::Semi);
+                        }
+                    } else {
+                        self.expect(&Token::Colon)?;
+                        while self.peek() != &Token::Case && self.peek() != &Token::Default
+                            && self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+                            body.push(self.parse_stmt()?);
+                        }
+                    }
+                    cases.push(SwitchCase { labels: label, body });
+                }
+                self.expect(&Token::RBrace)?;
+                Ok(Expr::SwitchExpr { expr: Box::new(expr), cases })
+            }
             Token::This        => {
                 self.advance();
                 // this::method
@@ -1003,18 +1251,43 @@ impl Parser {
                     }
                     let len = self.parse_expr()?;
                     self.expect(&Token::RBracket)?;
-                    // skip additional dimensions
-                    while self.peek() == &Token::LBracket && self.peek2() == &Token::RBracket {
-                        self.advance(); self.advance();
+                    // Collect additional dimensions: new int[3][4] -> dims = [3, 4]
+                    let mut extra_dims: Vec<Expr> = Vec::new();
+                    while self.peek() == &Token::LBracket {
+                        self.advance();
+                        if self.peek() == &Token::RBracket {
+                            self.advance(); // skip empty []
+                        } else {
+                            let dim = self.parse_expr()?;
+                            self.expect(&Token::RBracket)?;
+                            extra_dims.push(dim);
+                        }
                     }
-                    Ok(Expr::NewArray { ty, len: Box::new(len) })
+                    if extra_dims.is_empty() {
+                        Ok(Expr::NewArray { ty, len: Box::new(len) })
+                    } else {
+                        // new int[3][4] -> NewMultiArray
+                        let mut dims = vec![len];
+                        dims.extend(extra_dims);
+                        Ok(Expr::NewMultiArray { ty, dims })
+                    }
                 } else {
                     let args = self.parse_args()?;
-                    // skip optional anonymous class body
-                    if self.peek() == &Token::LBrace {
-                        self.skip_balanced(Token::LBrace, Token::RBrace);
-                    }
-                    Ok(Expr::New { ty, args })
+                    // Anonymous class body: new Type(args) { members... }
+                    let body = if self.peek() == &Token::LBrace {
+                        self.advance(); // consume {
+                        let mut members = Vec::new();
+                        while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+                            if let Some(m) = self.parse_member("__anon__")? {
+                                members.push(m);
+                            }
+                        }
+                        self.expect(&Token::RBrace)?;
+                        Some(members)
+                    } else {
+                        None
+                    };
+                    Ok(Expr::New { ty, args, body })
                 }
             }
             Token::LParen => {
@@ -1088,7 +1361,13 @@ impl Parser {
         self.expect(&Token::LBrace)?;
         let mut elements = Vec::new();
         while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
-            elements.push(self.parse_expr()?);
+            if self.peek() == &Token::LBrace {
+                // Nested array initializer: {{1,2},{3,4}}
+                let inner = self.parse_array_init()?;
+                elements.push(Expr::ArrayInit { ty: None, elements: inner });
+            } else {
+                elements.push(self.parse_expr()?);
+            }
             if !self.eat(&Token::Comma) { break; }
         }
         self.expect(&Token::RBrace)?;
@@ -1332,5 +1611,76 @@ mod tests {
         if let Stmt::LocalVar { init: Some(Expr::MethodRef { name, .. }), .. } = &m.body.as_ref().unwrap().0[0] {
             assert_eq!(name, "println");
         } else { panic!("expected method ref"); }
+    }
+
+    #[test]
+    fn parse_record() {
+        let src = r#"
+            record Point(int x, int y) {
+            }
+        "#;
+        let file = parse(src);
+        assert_eq!(file.classes[0].kind, ClassKind::Record);
+        assert_eq!(file.classes[0].name, "Point");
+        // Should have 2 fields + 1 constructor + 2 accessors = 5 members
+        assert_eq!(file.classes[0].members.len(), 5);
+    }
+
+    #[test]
+    fn parse_text_block() {
+        let src = "class T { void f() { String s = \"\"\"\n            hello\n            \"\"\"; } }";
+        let file = parse(src);
+        let Member::Method(m) = &file.classes[0].members[0] else { panic!() };
+        if let Stmt::LocalVar { init: Some(Expr::StrLit(s)), .. } = &m.body.as_ref().unwrap().0[0] {
+            assert!(s.contains("hello"));
+        } else { panic!("expected text block string"); }
+    }
+
+    #[test]
+    fn parse_switch_arrow() {
+        let src = r#"
+            class T {
+                void f() {
+                    switch (x) {
+                        case 1 -> System.out.println("one");
+                        case 2 -> { System.out.println("two"); }
+                        default -> System.out.println("other");
+                    }
+                }
+            }
+        "#;
+        let file = parse(src);
+        let Member::Method(m) = &file.classes[0].members[0] else { panic!() };
+        if let Stmt::Switch { cases, .. } = &m.body.as_ref().unwrap().0[0] {
+            assert_eq!(cases.len(), 3);
+        } else { panic!("expected switch"); }
+    }
+
+    #[test]
+    fn parse_sealed_class() {
+        let src = r#"
+            sealed class Shape permits Circle, Rect {
+            }
+            class Circle extends Shape {}
+        "#;
+        let file = parse(src);
+        assert_eq!(file.classes[0].name, "Shape");
+        assert_eq!(file.classes[1].name, "Circle");
+    }
+
+    #[test]
+    fn parse_yield_stmt() {
+        let src = r#"
+            class T {
+                void f() {
+                    yield 42;
+                }
+            }
+        "#;
+        let file = parse(src);
+        let Member::Method(m) = &file.classes[0].members[0] else { panic!() };
+        if let Stmt::Yield(Expr::IntLit(42)) = &m.body.as_ref().unwrap().0[0] {
+            // ok
+        } else { panic!("expected yield 42"); }
     }
 }

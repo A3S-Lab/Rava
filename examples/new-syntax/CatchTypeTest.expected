@@ -1,0 +1,3 @@
+caught runtime: runtime error
+caught by parent: child
+outer caught: checked

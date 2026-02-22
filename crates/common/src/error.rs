@@ -21,6 +21,9 @@ pub enum RavaError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Java exception: {exception_type}: {message}")]
+    JavaException { exception_type: String, message: String },
+
     #[error("{0}")]
     Other(String),
 }

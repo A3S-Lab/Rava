@@ -18,17 +18,29 @@ pub struct RunArgs {
     pub program_args: Vec<String>,
 }
 
-pub async fn run(args: RunArgs) -> Result<()> {
-    let file = args.file.ok_or_else(|| anyhow::anyhow!(
-        "no file specified — pass a .java file or run from a project directory"
-    ))?;
-
-    let source = std::fs::read_to_string(&file)
-        .with_context(|| format!("cannot read {}", file.display()))?;
-
+pub fn run(args: RunArgs) -> Result<()> {
     let compiler = rava_frontend::Compiler::new();
-    let module = compiler.compile(&source, &file)
-        .map_err(|e| anyhow::anyhow!("compile error: {}", e))?;
+
+    let module = if let Some(ref file) = args.file {
+        let source = std::fs::read_to_string(file)
+            .with_context(|| format!("cannot read {}", file.display()))?;
+        compiler.compile(&source, file)
+            .map_err(|e| anyhow::anyhow!("compile error: {}", e))?
+    } else {
+        // Project mode
+        #[cfg(all(feature = "aot", feature = "pkg"))]
+        {
+            let _main = super::build::resolve_main_from_hcl_pub()?;
+            let files = super::build::collect_source_files()?;
+            if files.is_empty() {
+                anyhow::bail!("no .java files found in src/");
+            }
+            compiler.compile_project(&files)
+                .map_err(|e| anyhow::anyhow!("compile error: {}", e))?
+        }
+        #[cfg(not(all(feature = "aot", feature = "pkg")))]
+        anyhow::bail!("no file specified — pass a .java file")
+    };
 
     let interp = rava_micrort::RirInterpreter::new(module);
     interp.run_main()

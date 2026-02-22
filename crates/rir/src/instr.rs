@@ -31,7 +31,8 @@ pub enum RirInstr {
     Checkcast  { obj: Value,   class: ClassId                         },
 
     // ── Array operations ──────────────────────────────────────────────────────
-    NewArray   { elem_type: RirType, len: Value,           ret: Value },
+    NewArray      { elem_type: RirType, len: Value,           ret: Value },
+    NewMultiArray { elem_type: RirType, dims: Vec<Value>,     ret: Value },
     ArrayLoad  { arr: Value, idx: Value,                   ret: Value },
     ArrayStore { arr: Value, idx: Value, val: Value                   },
     ArrayLen   { arr: Value,                               ret: Value },
@@ -47,6 +48,7 @@ pub enum RirInstr {
     ConstInt    { ret: Value, value: i64 },
     ConstFloat  { ret: Value, value: f64 },
     ConstStr    { ret: Value, value: String },
+    ConstBool   { ret: Value, value: bool },
     ConstNull   { ret: Value },
 
     // ── Exceptions ────────────────────────────────────────────────────────────

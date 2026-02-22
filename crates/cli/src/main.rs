@@ -22,10 +22,13 @@ enum Command {
     /// Run a Java source file directly
     Run(commands::run::RunArgs),
     /// AOT-compile to a native binary
+    #[cfg(feature = "aot")]
     Build(commands::build::BuildArgs),
     /// Initialize a new project
+    #[cfg(feature = "pkg")]
     Init(commands::init::InitArgs),
     /// Add a dependency
+    #[cfg(feature = "pkg")]
     Add(commands::add::AddArgs),
     /// Run tests
     Test(commands::test::TestArgs),
@@ -33,8 +36,7 @@ enum Command {
     Fmt(commands::fmt::FmtArgs),
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
@@ -45,11 +47,14 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Run(args)   => commands::run::run(args).await,
-        Command::Build(args) => commands::build::build(args).await,
-        Command::Init(args)  => commands::init::init(args).await,
-        Command::Add(args)   => commands::add::add(args).await,
-        Command::Test(args)  => commands::test::test(args).await,
-        Command::Fmt(args)   => commands::fmt::fmt(args).await,
+        Command::Run(args)   => commands::run::run(args),
+        #[cfg(feature = "aot")]
+        Command::Build(args) => commands::build::build(args),
+        #[cfg(feature = "pkg")]
+        Command::Init(args)  => commands::init::init(args),
+        #[cfg(feature = "pkg")]
+        Command::Add(args)   => commands::add::add(args),
+        Command::Test(args)  => commands::test::test(args),
+        Command::Fmt(args)   => commands::fmt::fmt(args),
     }
 }

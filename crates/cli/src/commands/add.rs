@@ -17,7 +17,7 @@ pub struct AddArgs {
     pub dev: bool,
 }
 
-pub async fn add(args: AddArgs) -> Result<()> {
+pub fn add(args: AddArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let hcl_path = cwd.join("rava.hcl");
 
@@ -25,27 +25,23 @@ pub async fn add(args: AddArgs) -> Result<()> {
         anyhow::bail!("no rava.hcl found — run `rava init` first");
     }
 
-    // Resolve short name → full coordinate
     let registry = ShortNameRegistry::builtin();
     let coordinate = registry.resolve(&args.package).to_string();
 
-    // Validate coordinate format
     parse_coordinate(&coordinate)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Resolve version
     let version = match args.version {
         Some(v) => v,
         None => {
             print!("  fetching latest version of {coordinate} ... ");
-            let v = latest_version(&coordinate).await
+            let v = latest_version(&coordinate)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             println!("{v}");
             v
         }
     };
 
-    // Load config, add dep, write back
     let mut config = ProjectConfig::from_file(&hcl_path)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 

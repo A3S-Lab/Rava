@@ -18,6 +18,32 @@ pub struct Lowerer {
     func_id:   u32,
     block_id:  u32,
     value_id:  u32,
+    /// Maps "Class.method" -> (param_count_excluding_vararg, is_variadic)
+    varargs_methods: std::collections::HashMap<String, usize>,
+    /// Counter for generating unique lambda names.
+    lambda_counter: u32,
+    /// Pending lambda functions to emit after current function completes.
+    pending_lambdas: Vec<PendingLambda>,
+    /// Counter for generating unique anonymous class names.
+    anon_counter: u32,
+    /// Pending anonymous classes to emit after current function completes.
+    pending_anon_classes: Vec<PendingAnonClass>,
+}
+
+/// A lambda body captured during lowering, to be emitted as a separate function.
+struct PendingLambda {
+    name: String,
+    params: Vec<String>,
+    body: LambdaBody,
+    /// Captured variables from the enclosing scope.
+    captures: Vec<String>,
+}
+
+/// An anonymous class captured during lowering, to be emitted as a synthetic class.
+struct PendingAnonClass {
+    name: String,
+    parent: String,
+    members: Vec<Member>,
 }
 
 impl Lowerer {
@@ -27,6 +53,11 @@ impl Lowerer {
             func_id:  0,
             block_id: 0,
             value_id: 0,
+            varargs_methods: std::collections::HashMap::new(),
+            lambda_counter: 0,
+            pending_lambdas: Vec::new(),
+            anon_counter: 0,
+            pending_anon_classes: Vec::new(),
         }
     }
 
@@ -38,6 +69,20 @@ impl Lowerer {
     }
 
     fn lower_class(&mut self, class: &ClassDecl) -> Result<()> {
+        // Record class hierarchy for instanceof chain walking
+        if let Some(ref parent) = class.superclass {
+            self.module.class_hierarchy.insert(class.name.clone(), parent.clone());
+        }
+        // Also record implemented interfaces
+        for iface in &class.interfaces {
+            // Store as "ClassName:InterfaceName" so we can check interface instanceof
+            let key = format!("{}:{}", class.name, iface);
+            self.module.class_hierarchy.insert(key, iface.clone());
+        }
+
+        // Register class name for reverse-lookup (needed for classes with no methods)
+        self.module.class_names.insert(encode_builtin(&class.name), class.name.clone());
+
         // Collect instance field initializers for injection into constructors
         let field_inits: Vec<(String, Expr)> = class.members.iter()
             .filter_map(|m| {
@@ -60,16 +105,33 @@ impl Lowerer {
             }
         }
 
+        // Pre-scan: register varargs methods
+        for member in &class.members {
+            if let Member::Method(m) = member {
+                if let Some(last_param) = m.params.last() {
+                    if last_param.variadic {
+                        let fixed = m.params.len() - 1;
+                        let full_key = format!("{}.{}", class.name, m.name);
+                        self.varargs_methods.insert(full_key, fixed);
+                        // Also register short name for same-class calls
+                        self.varargs_methods.insert(m.name.clone(), fixed);
+                    }
+                }
+            }
+        }
+
         let has_constructor = class.members.iter().any(|m| matches!(m, Member::Constructor(_)));
+        let mut static_field_inits: Vec<&FieldDecl> = Vec::new();
+        let mut enum_constants: Vec<&EnumConstant> = Vec::new();
 
         for member in &class.members {
             match member {
                 Member::Method(m)      => self.lower_method(&class.name, m)?,
                 Member::Constructor(c) => self.lower_constructor(&class.name, c, &field_inits)?,
                 Member::Field(f)       => {
-                    // Instance/static fields with initializers: emit as synthetic <clinit>
+                    // Static field with initializer: emit SetStatic in a <clinit> function
                     if f.init.is_some() && f.modifiers.contains(&Modifier::Static) {
-                        // Static field init — handled in class init
+                        static_field_inits.push(f);
                     }
                     // Instance field inits are injected into constructors above
                 }
@@ -78,7 +140,7 @@ impl Lowerer {
                     let func_id = self.next_func_id();
                     let name = format!("{}.<clinit>", class.name);
                     let flags = FuncFlags { is_clinit: true, ..Default::default() };
-                    let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id);
+                    let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
                     ctx.lower_block(block)?;
                     if !ctx.current_block_ends_with_terminator() {
                         ctx.emit(RirInstr::Return(None));
@@ -89,11 +151,40 @@ impl Lowerer {
                     };
                     self.module.functions.push(func);
                 }
-                Member::EnumConstant(_) => {
-                    // Enum constants are handled as static fields
+                Member::EnumConstant(ec) => {
+                    enum_constants.push(ec);
                 }
                 Member::InnerClass(inner) => {
+                    // Lower inner class with its own name
                     self.lower_class(inner)?;
+                    // Also register with prefixed name (Outer.Inner) as alias
+                    let prefixed = format!("{}.{}", class.name, inner.name);
+                    let prefixed_hash = encode_builtin(&prefixed);
+                    self.module.class_names.insert(prefixed_hash, inner.name.clone());
+                    // Copy class hierarchy entries for the prefixed name
+                    if let Some(parent) = self.module.class_hierarchy.get(&inner.name).cloned() {
+                        self.module.class_hierarchy.insert(prefixed.clone(), parent);
+                    }
+                    // Duplicate constructor functions with prefixed name
+                    let ctor_name = format!("{}.<init>", inner.name);
+                    let prefixed_ctor = format!("{}.<init>", prefixed);
+                    if let Some(idx) = self.module.functions.iter().position(|f| f.name == ctor_name) {
+                        let mut ctor_copy = self.module.functions[idx].clone();
+                        ctor_copy.name = prefixed_ctor;
+                        self.module.functions.push(ctor_copy);
+                    }
+                    // Also duplicate methods with prefixed class name
+                    let method_prefix = format!("{}.", inner.name);
+                    let mut extra_funcs = Vec::new();
+                    for f in &self.module.functions {
+                        if f.name.starts_with(&method_prefix) && !f.flags.is_constructor && !f.flags.is_clinit {
+                            let new_name = format!("{}.{}", prefixed, &f.name[method_prefix.len()..]);
+                            let mut copy = f.clone();
+                            copy.name = new_name;
+                            extra_funcs.push(copy);
+                        }
+                    }
+                    self.module.functions.extend(extra_funcs);
                 }
             }
         }
@@ -103,7 +194,7 @@ impl Lowerer {
             let func_id = self.next_func_id();
             let name = format!("{}.<init>", class.name);
             let flags = FuncFlags { is_constructor: true, ..Default::default() };
-            let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id);
+            let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
             ctx.vars.insert("this".into(), Value("this".into()));
             for (field_name, init_expr) in &field_inits {
                 let val = ctx.lower_expr(init_expr)?;
@@ -119,6 +210,178 @@ impl Lowerer {
                 return_type: RirType::Void, basic_blocks: ctx.finish(), flags,
             };
             self.module.functions.push(func);
+        }
+
+        // Generate <clinit> for static field initializers
+        if !static_field_inits.is_empty() {
+            let func_id = self.next_func_id();
+            let name = format!("{}.<clinit>", class.name);
+            let flags = FuncFlags { is_clinit: true, ..Default::default() };
+            let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
+            for f in &static_field_inits {
+                if let Some(init) = &f.init {
+                    let val = ctx.lower_expr(init)?;
+                    let key = format!("{}.{}", class.name, f.name);
+                    ctx.emit(RirInstr::SetStatic {
+                        field: FieldId(encode_builtin(&key)),
+                        val,
+                    });
+                }
+            }
+            ctx.emit(RirInstr::Return(None));
+            let func = RirFunction {
+                id: func_id, name, params: vec![],
+                return_type: RirType::Void, basic_blocks: ctx.finish(), flags,
+            };
+            self.module.functions.push(func);
+        }
+
+        // Generate enum <clinit> and synthetic methods
+        if !enum_constants.is_empty() {
+            // Register field names for ordinal and __name__
+            self.module.field_names.insert(encode_builtin("ordinal"), "ordinal".into());
+            self.module.field_names.insert(encode_builtin("__name__"), "__name__".into());
+
+            // <clinit>: create an object for each enum constant, store as static field
+            let func_id = self.next_func_id();
+            let name = format!("{}.<clinit>", class.name);
+            let flags = FuncFlags { is_clinit: true, ..Default::default() };
+            let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
+            for (ordinal, ec) in enum_constants.iter().enumerate() {
+                // Allocate object
+                let obj = ctx.fresh_value();
+                ctx.emit(RirInstr::New {
+                    class: ClassId(encode_builtin(&class.name)),
+                    ret: obj.clone(),
+                });
+                // Set ordinal field
+                let ord_val = ctx.fresh_value();
+                ctx.emit(RirInstr::ConstInt { ret: ord_val.clone(), value: ordinal as i64 });
+                ctx.emit(RirInstr::SetField {
+                    obj: obj.clone(),
+                    field: FieldId(encode_builtin("ordinal")),
+                    val: ord_val,
+                });
+                // Set __name__ field
+                let name_val = ctx.fresh_value();
+                ctx.emit(RirInstr::ConstStr { ret: name_val.clone(), value: ec.name.clone() });
+                ctx.emit(RirInstr::SetField {
+                    obj: obj.clone(),
+                    field: FieldId(encode_builtin("__name__")),
+                    val: name_val,
+                });
+                // Call constructor with args if present
+                if !ec.args.is_empty() {
+                    let mut call_args = vec![obj.clone()]; // this
+                    for arg in &ec.args {
+                        let v = ctx.fresh_value();
+                        match arg {
+                            Expr::IntLit(n) => ctx.emit(RirInstr::ConstInt { ret: v.clone(), value: *n }),
+                            Expr::FloatLit(f) => ctx.emit(RirInstr::ConstFloat { ret: v.clone(), value: *f }),
+                            Expr::StrLit(s) => ctx.emit(RirInstr::ConstStr { ret: v.clone(), value: s.clone() }),
+                            Expr::BoolLit(b) => ctx.emit(RirInstr::ConstInt { ret: v.clone(), value: if *b { 1 } else { 0 } }),
+                            Expr::Null => ctx.emit(RirInstr::ConstStr { ret: v.clone(), value: "null".into() }),
+                            _ => ctx.emit(RirInstr::ConstStr { ret: v.clone(), value: "?".into() }),
+                        }
+                        call_args.push(v);
+                    }
+                    let ctor_name = format!("{}.<init>", class.name);
+                    ctx.emit(RirInstr::Call {
+                        func: FuncId(encode_builtin(&ctor_name)),
+                        args: call_args,
+                        ret: None,
+                    });
+                }
+                // Store as static field: ClassName.CONSTANT_NAME
+                let key = format!("{}.{}", class.name, ec.name);
+                ctx.emit(RirInstr::SetStatic {
+                    field: FieldId(encode_builtin(&key)),
+                    val: obj,
+                });
+            }
+            ctx.emit(RirInstr::Return(None));
+            let func = RirFunction {
+                id: func_id, name, params: vec![],
+                return_type: RirType::Void, basic_blocks: ctx.finish(), flags,
+            };
+            self.module.functions.push(func);
+
+            // Generate ordinal() method
+            {
+                let func_id = self.next_func_id();
+                let fname = format!("{}.ordinal", class.name);
+                let params = vec![(Value("this".into()), RirType::Ref(ClassId(encode_builtin(&class.name))))];
+                let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
+                ctx.vars.insert("this".into(), Value("this".into()));
+                let ret = ctx.fresh_value();
+                ctx.emit(RirInstr::GetField {
+                    obj: Value("this".into()),
+                    field: FieldId(encode_builtin("ordinal")),
+                    ret: ret.clone(),
+                });
+                ctx.emit(RirInstr::Return(Some(ret)));
+                let func = RirFunction {
+                    id: func_id, name: fname, params,
+                    return_type: RirType::I64, basic_blocks: ctx.finish(),
+                    flags: FuncFlags::default(),
+                };
+                self.module.functions.push(func);
+            }
+
+            // Generate name() method
+            {
+                let func_id = self.next_func_id();
+                let fname = format!("{}.name", class.name);
+                let params = vec![(Value("this".into()), RirType::Ref(ClassId(encode_builtin(&class.name))))];
+                let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
+                ctx.vars.insert("this".into(), Value("this".into()));
+                let ret = ctx.fresh_value();
+                ctx.emit(RirInstr::GetField {
+                    obj: Value("this".into()),
+                    field: FieldId(encode_builtin("__name__")),
+                    ret: ret.clone(),
+                });
+                ctx.emit(RirInstr::Return(Some(ret)));
+                let func = RirFunction {
+                    id: func_id, name: fname, params,
+                    return_type: RirType::I64, basic_blocks: ctx.finish(),
+                    flags: FuncFlags::default(),
+                };
+                self.module.functions.push(func);
+            }
+
+            // Generate values() static method — returns array of all constants
+            {
+                let func_id = self.next_func_id();
+                let fname = format!("{}.values", class.name);
+                let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
+                let len_val = ctx.fresh_value();
+                ctx.emit(RirInstr::ConstInt { ret: len_val.clone(), value: enum_constants.len() as i64 });
+                let arr = ctx.fresh_value();
+                ctx.emit(RirInstr::NewArray {
+                    elem_type: RirType::I64,
+                    len: len_val,
+                    ret: arr.clone(),
+                });
+                for (i, ec) in enum_constants.iter().enumerate() {
+                    let idx = ctx.fresh_value();
+                    ctx.emit(RirInstr::ConstInt { ret: idx.clone(), value: i as i64 });
+                    let val = ctx.fresh_value();
+                    let key = format!("{}.{}", class.name, ec.name);
+                    ctx.emit(RirInstr::GetStatic {
+                        field: FieldId(encode_builtin(&key)),
+                        ret: val.clone(),
+                    });
+                    ctx.emit(RirInstr::ArrayStore { arr: arr.clone(), idx, val });
+                }
+                ctx.emit(RirInstr::Return(Some(arr)));
+                let func = RirFunction {
+                    id: func_id, name: fname, params: vec![],
+                    return_type: RirType::I64, basic_blocks: ctx.finish(),
+                    flags: FuncFlags::default(),
+                };
+                self.module.functions.push(func);
+            }
         }
 
         Ok(())
@@ -140,7 +403,7 @@ impl Lowerer {
             is_constructor:  false,
             is_synchronized: method.modifiers.contains(&Modifier::Synchronized),
         };
-        let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id);
+        let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
         // Make `this` available in instance methods — prepend to params
         let is_instance = !method.modifiers.contains(&Modifier::Static);
         let params = if is_instance {
@@ -165,6 +428,8 @@ impl Lowerer {
             basic_blocks: ctx.finish(), flags,
         };
         self.module.functions.push(func);
+        self.emit_pending_lambdas()?;
+        self.emit_pending_anon_classes()?;
         Ok(())
     }
 
@@ -178,7 +443,7 @@ impl Lowerer {
         params.extend(ctor.params.iter()
             .map(|p| (Value(p.name.clone()), lower_type(&p.ty))));
         let flags = FuncFlags { is_constructor: true, ..Default::default() };
-        let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id);
+        let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
         // "this" is already in params, register in vars
         ctx.vars.insert("this".into(), Value("this".into()));
         for p in &ctor.params {
@@ -202,6 +467,69 @@ impl Lowerer {
             basic_blocks: ctx.finish(), flags,
         };
         self.module.functions.push(func);
+        self.emit_pending_lambdas()?;
+        self.emit_pending_anon_classes()?;
+        Ok(())
+    }
+
+    /// Emit all pending lambdas as top-level RIR functions.
+    fn emit_pending_lambdas(&mut self) -> Result<()> {
+        while let Some(lam) = self.pending_lambdas.pop() {
+            let func_id = self.next_func_id();
+            let params: Vec<(Value, RirType)> = lam.params.iter()
+                .map(|p| (Value(p.clone()), RirType::I64))
+                .collect();
+            let flags = FuncFlags::default();
+            let mut ctx = FuncCtx::new(
+                func_id, &mut self.block_id, &mut self.value_id,
+                &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter,
+                &mut self.pending_anon_classes, &mut self.anon_counter,
+            );
+            for p in &lam.params {
+                ctx.vars.insert(p.clone(), Value(p.clone()));
+            }
+            // Inject captured variables as parameters too
+            for cap in &lam.captures {
+                ctx.vars.insert(cap.clone(), Value(cap.clone()));
+            }
+            match &lam.body {
+                LambdaBody::Expr(expr) => {
+                    let val = ctx.lower_expr(expr)?;
+                    ctx.emit(RirInstr::Return(Some(val)));
+                }
+                LambdaBody::Block(block) => {
+                    ctx.lower_block(block)?;
+                    if !ctx.current_block_ends_with_terminator() {
+                        ctx.emit(RirInstr::Return(None));
+                    }
+                }
+            }
+            let func = RirFunction {
+                id: func_id,
+                name: lam.name,
+                params,
+                return_type: RirType::I64,
+                basic_blocks: ctx.finish(),
+                flags,
+            };
+            self.module.functions.push(func);
+        }
+        Ok(())
+    }
+
+    /// Emit all pending anonymous classes as synthetic ClassDecls.
+    fn emit_pending_anon_classes(&mut self) -> Result<()> {
+        while let Some(anon) = self.pending_anon_classes.pop() {
+            let class = ClassDecl {
+                name: anon.name.clone(),
+                kind: ClassKind::Class,
+                modifiers: vec![],
+                superclass: Some(anon.parent.clone()),
+                interfaces: vec![],
+                members: anon.members,
+            };
+            self.lower_class(&class)?;
+        }
         Ok(())
     }
 
@@ -223,10 +551,26 @@ struct FuncCtx<'a> {
     vars:       std::collections::HashMap<String, Value>,
     /// Stack of (break_target, continue_target) for loops.
     loop_stack: Vec<(BlockId, BlockId)>,
+    /// Stack of (exit_bb, result_value) for switch-expression yield.
+    yield_stack: Vec<(BlockId, Value)>,
+    /// Maps "Class.method" -> param_count_before_vararg
+    varargs_methods: &'a std::collections::HashMap<String, usize>,
+    /// Maps label name -> (break_target, continue_target) for labeled loops.
+    label_map: std::collections::HashMap<String, (BlockId, BlockId)>,
+    /// Pending label for the next loop statement.
+    pending_label: Option<String>,
+    /// Pending lambdas to emit after this function.
+    pending_lambdas: &'a mut Vec<PendingLambda>,
+    /// Lambda counter for unique names.
+    lambda_counter: &'a mut u32,
+    /// Pending anonymous classes to emit after this function.
+    pending_anon_classes: &'a mut Vec<PendingAnonClass>,
+    /// Anonymous class counter for unique names.
+    anon_counter: &'a mut u32,
 }
 
 impl<'a> FuncCtx<'a> {
-    fn new(func_id: FuncId, block_id: &'a mut u32, value_id: &'a mut u32) -> Self {
+    fn new(func_id: FuncId, block_id: &'a mut u32, value_id: &'a mut u32, varargs_methods: &'a std::collections::HashMap<String, usize>, pending_lambdas: &'a mut Vec<PendingLambda>, lambda_counter: &'a mut u32, pending_anon_classes: &'a mut Vec<PendingAnonClass>, anon_counter: &'a mut u32) -> Self {
         let entry_id = BlockId(*block_id);
         *block_id += 1;
         Self {
@@ -237,6 +581,14 @@ impl<'a> FuncCtx<'a> {
             value_id,
             vars: std::collections::HashMap::new(),
             loop_stack: Vec::new(),
+            yield_stack: Vec::new(),
+            varargs_methods,
+            label_map: std::collections::HashMap::new(),
+            pending_label: None,
+            pending_lambdas,
+            lambda_counter,
+            pending_anon_classes,
+            anon_counter,
         }
     }
 
@@ -274,6 +626,38 @@ impl<'a> FuncCtx<'a> {
 
     fn finish(self) -> Vec<BasicBlock> {
         self.blocks
+    }
+
+    /// Register a pending label (from Stmt::Labeled) for the current loop's targets.
+    fn register_pending_label(&mut self, exit_bb: BlockId, continue_bb: BlockId) {
+        if let Some(label) = self.pending_label.take() {
+            self.label_map.insert(label, (exit_bb, continue_bb));
+        }
+    }
+
+    /// If `method_key` is a known varargs method, pack trailing args into an array.
+    fn pack_varargs(&mut self, method_key: &str, mut arg_vals: Vec<Value>) -> Vec<Value> {
+        if let Some(&fixed_count) = self.varargs_methods.get(method_key) {
+            if arg_vals.len() >= fixed_count {
+                let vararg_vals: Vec<Value> = arg_vals.drain(fixed_count..).collect();
+                // Create array with vararg elements
+                let len_val = self.fresh_value();
+                self.emit(RirInstr::ConstInt { ret: len_val.clone(), value: vararg_vals.len() as i64 });
+                let arr = self.fresh_value();
+                self.emit(RirInstr::NewArray {
+                    elem_type: RirType::I64,
+                    len: len_val,
+                    ret: arr.clone(),
+                });
+                for (i, v) in vararg_vals.into_iter().enumerate() {
+                    let idx = self.fresh_value();
+                    self.emit(RirInstr::ConstInt { ret: idx.clone(), value: i as i64 });
+                    self.emit(RirInstr::ArrayStore { arr: arr.clone(), idx, val: v });
+                }
+                arg_vals.push(arr);
+            }
+        }
+        arg_vals
     }
 
     // ── Statements ────────────────────────────────────────────────────────────
@@ -333,6 +717,7 @@ impl<'a> FuncCtx<'a> {
                 let cond_val = self.lower_expr(cond)?;
                 self.emit(RirInstr::Branch { cond: cond_val, then_bb: body_bb, else_bb: exit_bb });
                 self.loop_stack.push((exit_bb, header_bb));
+                self.register_pending_label(exit_bb, header_bb);
                 self.switch_to(body_bb);
                 self.lower_stmt(body)?;
                 if !self.current_block_ends_with_terminator() {
@@ -348,6 +733,7 @@ impl<'a> FuncCtx<'a> {
                 let exit_bb   = self.new_block();
                 self.blocks[pre].instrs.push(RirInstr::Jump(body_bb));
                 self.loop_stack.push((exit_bb, header_bb));
+                self.register_pending_label(exit_bb, header_bb);
                 self.switch_to(body_bb);
                 self.lower_stmt(body)?;
                 if !self.current_block_ends_with_terminator() {
@@ -376,6 +762,7 @@ impl<'a> FuncCtx<'a> {
                 }
                 // continue jumps to update_bb, break jumps to exit_bb
                 self.loop_stack.push((exit_bb, update_bb));
+                self.register_pending_label(exit_bb, update_bb);
                 self.switch_to(body_bb);
                 self.lower_stmt(body)?;
                 if !self.current_block_ends_with_terminator() {
@@ -390,92 +777,153 @@ impl<'a> FuncCtx<'a> {
                 self.switch_to(exit_bb);
             }
             Stmt::ForEach { ty: _, name, iterable, body } => {
-                // Lower as: var __iter = iterable; int __i = 0;
-                // while (__i < __iter.size()) { var name = __iter.get(__i); body; __i++; }
-                let iter_val = self.lower_expr(iterable)?;
-                let idx_name = format!("__foreach_i_{}", self.value_id);
-                let idx = self.named_value(&idx_name);
-                self.emit(RirInstr::ConstInt { ret: idx.clone(), value: 0 });
-                self.vars.insert(idx_name.clone(), idx.clone());
+                // Lower as iterator pattern:
+                //   var __it = iterable.__method__iterator();
+                //   while (__it.__method__hasNext()) { var name = __it.__method__next(); body; }
+                let collection = self.lower_expr(iterable)?;
+
+                // __it = collection.iterator()
+                let iter_var = self.fresh_value();
+                self.emit(RirInstr::Call {
+                    func: FuncId(encode_builtin("__method__iterator")),
+                    args: vec![collection],
+                    ret:  Some(iter_var.clone()),
+                });
 
                 let pre = self.current;
                 let header_bb = self.new_block();
                 let body_bb   = self.new_block();
-                let update_bb = self.new_block();
                 let exit_bb   = self.new_block();
                 self.blocks[pre].instrs.push(RirInstr::Jump(header_bb));
 
-                // header: __i < iter.size()
+                // header: __it.hasNext()
                 self.switch_to(header_bb);
-                let len_ret = self.fresh_value();
-                self.emit(RirInstr::ArrayLen { arr: iter_val.clone(), ret: len_ret.clone() });
-                let cur_idx = self.vars.get(&idx_name).cloned().unwrap_or(idx.clone());
-                let cond_ret = self.fresh_value();
-                self.emit(RirInstr::BinOp {
-                    op: RirBinOp::Lt, lhs: cur_idx.clone(), rhs: len_ret, ret: cond_ret.clone(),
+                let has_next = self.fresh_value();
+                self.emit(RirInstr::Call {
+                    func: FuncId(encode_builtin("__method__hasNext")),
+                    args: vec![iter_var.clone()],
+                    ret:  Some(has_next.clone()),
                 });
-                self.emit(RirInstr::Branch { cond: cond_ret, then_bb: body_bb, else_bb: exit_bb });
+                self.emit(RirInstr::Branch { cond: has_next, then_bb: body_bb, else_bb: exit_bb });
 
-                // body: var name = iter[__i]; ...
-                self.loop_stack.push((exit_bb, update_bb));
+                // body: var name = __it.next(); ...
+                self.loop_stack.push((exit_bb, header_bb));
+                self.register_pending_label(exit_bb, header_bb);
                 self.switch_to(body_bb);
                 let elem = self.named_value(name);
-                let load_idx = self.vars.get(&idx_name).cloned().unwrap_or(idx.clone());
-                self.emit(RirInstr::ArrayLoad { arr: iter_val.clone(), idx: load_idx, ret: elem.clone() });
+                self.emit(RirInstr::Call {
+                    func: FuncId(encode_builtin("__method__next")),
+                    args: vec![iter_var.clone()],
+                    ret:  Some(elem.clone()),
+                });
                 self.vars.insert(name.clone(), elem);
                 self.lower_stmt(body)?;
                 if !self.current_block_ends_with_terminator() {
-                    self.emit(RirInstr::Jump(update_bb));
+                    self.emit(RirInstr::Jump(header_bb));
                 }
                 self.loop_stack.pop();
 
-                // update: __i++
-                self.switch_to(update_bb);
-                let one = self.fresh_value();
-                self.emit(RirInstr::ConstInt { ret: one.clone(), value: 1 });
-                let new_idx = self.named_value(&idx_name);
-                let old_idx = self.vars.get(&idx_name).cloned().unwrap_or(idx);
-                self.emit(RirInstr::BinOp {
-                    op: RirBinOp::Add, lhs: old_idx, rhs: one, ret: new_idx.clone(),
-                });
-                self.vars.insert(idx_name, new_idx);
-                self.emit(RirInstr::Jump(header_bb));
-
                 self.switch_to(exit_bb);
             }
-            Stmt::Break(_label) => {
-                if let Some(&(exit_bb, _)) = self.loop_stack.last() {
+            Stmt::Break(label) => {
+                let target = if let Some(lbl) = label {
+                    self.label_map.get(lbl).map(|&(exit, _)| exit)
+                } else {
+                    self.loop_stack.last().map(|&(exit, _)| exit)
+                };
+                if let Some(exit_bb) = target {
                     self.emit(RirInstr::Jump(exit_bb));
                 }
             }
-            Stmt::Continue(_label) => {
-                if let Some(&(_, continue_bb)) = self.loop_stack.last() {
-                    self.emit(RirInstr::Jump(continue_bb));
+            Stmt::Continue(label) => {
+                let target = if let Some(lbl) = label {
+                    self.label_map.get(lbl).map(|&(_, cont)| cont)
+                } else {
+                    self.loop_stack.last().map(|&(_, cont)| cont)
+                };
+                if let Some(cont_bb) = target {
+                    self.emit(RirInstr::Jump(cont_bb));
                 }
             }
-            Stmt::Labeled { stmt, .. } => {
-                // Labels: lower the inner statement (label tracking for break/continue
-                // with labels would need a label→block map; for now just lower the stmt)
+            Stmt::Labeled { label, stmt } => {
+                self.pending_label = Some(label.clone());
                 self.lower_stmt(stmt)?;
+                // If the inner wasn't a loop (pending_label not consumed), clean up
+                if self.pending_label.take().is_some() {
+                    self.label_map.remove(label);
+                }
             }
             Stmt::Throw(e) => {
                 let val = self.lower_expr(e)?;
                 self.emit(RirInstr::Throw(val));
             }
             Stmt::TryCatch { try_body, catches, finally_body } => {
-                // Simplified: lower try body, then catch bodies sequentially.
-                // Real exception routing requires exception tables (Phase 3).
-                self.lower_block(try_body)?;
+                // Emit try body with per-catch-type blocks.
+                // Each catch clause gets its own block; the interpreter matches exception types.
+                let finally_bb = if finally_body.is_some() { Some(self.new_block()) } else { None };
+                let exit_bb = self.new_block();
+
+                // Create a block for each catch clause and register type markers
+                let mut catch_blocks: Vec<(BlockId, Vec<String>)> = Vec::new();
                 for catch in catches {
-                    // Make catch variable available
+                    let cbb = self.new_block();
+                    let types: Vec<String> = catch.exception_types.iter()
+                        .map(|t| t.name.clone())
+                        .collect();
+                    catch_blocks.push((cbb, types));
+                }
+
+                // Mark try region: emit handler registrations (last catch first = stack order)
+                for (cbb, types) in catch_blocks.iter().rev() {
+                    let type_list = types.join("|");
+                    let marker = self.fresh_value();
+                    self.emit(RirInstr::ConstStr {
+                        ret: marker,
+                        value: format!("__try_catch__{}:{}", cbb.0, type_list),
+                    });
+                }
+
+                // Lower try body
+                self.lower_block(try_body)?;
+
+                // End of try: clear all exception handlers for this try
+                for _ in &catch_blocks {
+                    let marker = self.fresh_value();
+                    self.emit(RirInstr::ConstStr {
+                        ret: marker,
+                        value: "__try_end__".into(),
+                    });
+                }
+                if !self.current_block_ends_with_terminator() {
+                    self.emit(RirInstr::Jump(finally_bb.unwrap_or(exit_bb)));
+                }
+
+                // Catch blocks
+                for (i, (cbb, _types)) in catch_blocks.iter().enumerate() {
+                    self.switch_to(*cbb);
+                    let catch = &catches[i];
                     let exc_val = self.fresh_value();
-                    self.emit(RirInstr::ConstNull { ret: exc_val.clone() });
+                    self.emit(RirInstr::ConstStr {
+                        ret: exc_val.clone(),
+                        value: "__exception__".into(),
+                    });
                     self.vars.insert(catch.name.clone(), exc_val);
                     self.lower_block(&catch.body)?;
+                    if !self.current_block_ends_with_terminator() {
+                        self.emit(RirInstr::Jump(finally_bb.unwrap_or(exit_bb)));
+                    }
                 }
-                if let Some(finally) = finally_body {
-                    self.lower_block(finally)?;
+
+                // Finally block
+                if let Some(fbb) = finally_bb {
+                    self.switch_to(fbb);
+                    self.lower_block(finally_body.as_ref().unwrap())?;
+                    if !self.current_block_ends_with_terminator() {
+                        self.emit(RirInstr::Jump(exit_bb));
+                    }
                 }
+
+                self.switch_to(exit_bb);
             }
             Stmt::Switch { expr, cases } => {
                 let switch_val = self.lower_expr(expr)?;
@@ -486,15 +934,30 @@ impl<'a> FuncCtx<'a> {
                 self.loop_stack.push((exit_bb, exit_bb));
 
                 for case in cases {
-                    match &case.label {
-                        Some(label_expr) => {
+                    match &case.labels {
+                        Some(labels) => {
                             self.switch_to(self.blocks[check].id);
-                            let label_val = self.lower_expr(label_expr)?;
-                            let cond_ret  = self.fresh_value();
-                            self.emit(RirInstr::BinOp {
-                                op: RirBinOp::Eq, lhs: switch_val.clone(),
-                                rhs: label_val, ret: cond_ret.clone(),
-                            });
+                            // Multi-label: OR all comparisons together
+                            let mut or_val = None;
+                            for label_expr in labels {
+                                let label_val = self.lower_expr(label_expr)?;
+                                let cmp = self.fresh_value();
+                                self.emit(RirInstr::BinOp {
+                                    op: RirBinOp::Eq, lhs: switch_val.clone(),
+                                    rhs: label_val, ret: cmp.clone(),
+                                });
+                                or_val = Some(match or_val {
+                                    None => cmp,
+                                    Some(prev) => {
+                                        let merged = self.fresh_value();
+                                        self.emit(RirInstr::BinOp {
+                                            op: RirBinOp::Or, lhs: prev, rhs: cmp, ret: merged.clone(),
+                                        });
+                                        merged
+                                    }
+                                });
+                            }
+                            let cond_ret = or_val.unwrap();
                             let body_bb = self.new_block();
                             let next_bb = self.new_block();
                             self.blocks[check].instrs.push(
@@ -546,6 +1009,18 @@ impl<'a> FuncCtx<'a> {
                 };
                 self.emit(RirInstr::Throw(msg));
                 self.switch_to(cont_bb);
+            }
+            Stmt::Yield(expr) => {
+                let val = self.lower_expr(expr)?;
+                if let Some(&(exit_bb, ref result)) = self.yield_stack.last() {
+                    // Copy yield value into the result variable via __copy__ marker
+                    let result_clone = result.clone();
+                    self.emit(RirInstr::ConstStr {
+                        ret: result_clone,
+                        value: format!("__copy__{}", val.0),
+                    });
+                    self.emit(RirInstr::Jump(exit_bb));
+                }
             }
         }
         Ok(())
@@ -628,7 +1103,7 @@ impl<'a> FuncCtx<'a> {
             }
             Expr::BoolLit(b) => {
                 let ret = self.fresh_value();
-                self.emit(RirInstr::ConstInt { ret: ret.clone(), value: if *b { 1 } else { 0 } });
+                self.emit(RirInstr::ConstBool { ret: ret.clone(), value: *b });
                 Ok(ret)
             }
             Expr::Null => {
@@ -643,8 +1118,19 @@ impl<'a> FuncCtx<'a> {
             Expr::Super => Ok(Value("super".into())),
 
             Expr::Field { obj, name } => {
-                let obj_val = self.lower_expr(obj)?;
                 let ret = self.fresh_value();
+                // Static field access: ClassName.field
+                if let Expr::Ident(class_name) = obj.as_ref() {
+                    if is_static_path(class_name) {
+                        let key = format!("{}.{}", class_name, name);
+                        self.emit(RirInstr::GetStatic {
+                            field: FieldId(encode_builtin(&key)),
+                            ret: ret.clone(),
+                        });
+                        return Ok(ret);
+                    }
+                }
+                let obj_val = self.lower_expr(obj)?;
                 self.emit(RirInstr::GetField {
                     obj: obj_val,
                     field: FieldId(encode_builtin(name)),
@@ -664,6 +1150,7 @@ impl<'a> FuncCtx<'a> {
                         let arg_vals: Vec<Value> = args.iter()
                             .map(|a| self.lower_expr(a))
                             .collect::<Result<_>>()?;
+                        let arg_vals = self.pack_varargs(&full, arg_vals);
                         self.emit(RirInstr::Call {
                             func: FuncId(encode_builtin(&full)),
                             args: arg_vals,
@@ -697,11 +1184,38 @@ impl<'a> FuncCtx<'a> {
                     return Ok(Value("this".into()));
                 }
 
-                // Regular static/free call
+                // this(...) constructor delegation
+                if matches!(callee.as_ref(), Expr::This) {
+                    let mut arg_vals = vec![Value("this".into())];
+                    for a in args {
+                        arg_vals.push(self.lower_expr(a)?);
+                    }
+                    self.emit(RirInstr::Call {
+                        func: FuncId(encode_builtin("this.<init>")),
+                        args: arg_vals,
+                        ret:  None,
+                    });
+                    return Ok(Value("this".into()));
+                }
+
+                // Regular static/free call — check for same-class varargs
                 let arg_vals: Vec<Value> = args.iter()
                     .map(|a| self.lower_expr(a))
                     .collect::<Result<_>>()?;
                 if let Expr::Ident(name) = callee.as_ref() {
+                    // If `this` is in scope, treat bare method calls as this.method()
+                    // so virtual dispatch works correctly for inherited methods
+                    if self.vars.contains_key("this") {
+                        let mut method_args = vec![Value("this".into())];
+                        method_args.extend(self.pack_varargs(name, arg_vals));
+                        self.emit(RirInstr::Call {
+                            func: FuncId(encode_builtin(&format!("__method__{}", name))),
+                            args: method_args,
+                            ret:  Some(ret.clone()),
+                        });
+                        return Ok(ret);
+                    }
+                    let arg_vals = self.pack_varargs(name, arg_vals);
                     self.emit(RirInstr::Call {
                         func: FuncId(encode_builtin(name)),
                         args: arg_vals,
@@ -793,6 +1307,18 @@ impl<'a> FuncCtx<'a> {
                 }
                 // Field assignment
                 if let Expr::Field { obj, name } = lhs.as_ref() {
+                    // Static field assignment: ClassName.field = val
+                    if let Expr::Ident(class_name) = obj.as_ref() {
+                        if is_static_path(class_name) {
+                            let rhs_val = self.lower_expr(rhs)?;
+                            let key = format!("{}.{}", class_name, name);
+                            self.emit(RirInstr::SetStatic {
+                                field: FieldId(encode_builtin(&key)),
+                                val: rhs_val.clone(),
+                            });
+                            return Ok(rhs_val);
+                        }
+                    }
                     let obj_val = self.lower_expr(obj)?;
                     let rhs_val = self.lower_expr(rhs)?;
                     self.emit(RirInstr::SetField {
@@ -820,18 +1346,34 @@ impl<'a> FuncCtx<'a> {
                 self.lower_expr(&desugared)
             }
 
-            Expr::New { ty, args } => {
+            Expr::New { ty, args, body } => {
                 let arg_vals: Vec<Value> = args.iter()
                     .map(|a| self.lower_expr(a))
                     .collect::<Result<_>>()?;
+
+                // Anonymous class: generate a synthetic class name
+                let class_name = if let Some(members) = body {
+                    let idx = *self.anon_counter;
+                    *self.anon_counter += 1;
+                    let anon_name = format!("__anon_{}_{}", ty.name, idx);
+                    self.pending_anon_classes.push(PendingAnonClass {
+                        name: anon_name.clone(),
+                        parent: ty.name.clone(),
+                        members: members.clone(),
+                    });
+                    anon_name
+                } else {
+                    ty.name.clone()
+                };
+
                 let ret = self.fresh_value();
-                let class_id = ClassId(encode_builtin(&ty.name));
+                let class_id = ClassId(encode_builtin(&class_name));
                 self.emit(RirInstr::New { class: class_id, ret: ret.clone() });
                 // Call constructor with `this` as first arg
                 let mut ctor_args = vec![ret.clone()];
                 ctor_args.extend(arg_vals);
                 self.emit(RirInstr::Call {
-                    func: FuncId(encode_builtin(&format!("{}.<init>", ty.name))),
+                    func: FuncId(encode_builtin(&format!("{}.<init>", class_name))),
                     args: ctor_args,
                     ret:  None,
                 });
@@ -843,6 +1385,17 @@ impl<'a> FuncCtx<'a> {
                 let ret = self.fresh_value();
                 self.emit(RirInstr::NewArray {
                     elem_type: lower_type_name(&ty.name), len: len_val, ret: ret.clone(),
+                });
+                Ok(ret)
+            }
+
+            Expr::NewMultiArray { ty, dims } => {
+                let dim_vals: Vec<Value> = dims.iter()
+                    .map(|d| self.lower_expr(d))
+                    .collect::<Result<_>>()?;
+                let ret = self.fresh_value();
+                self.emit(RirInstr::NewMultiArray {
+                    elem_type: lower_type_name(&ty.name), dims: dim_vals, ret: ret.clone(),
                 });
                 Ok(ret)
             }
@@ -939,17 +1492,30 @@ impl<'a> FuncCtx<'a> {
             }
 
             Expr::Lambda { params, body } => {
-                // Lower lambda as a synthetic function reference.
-                // For Phase 1: emit a ConstStr with the lambda signature for the interpreter.
+                // Generate a unique lambda function name
+                let lambda_id = *self.lambda_counter;
+                *self.lambda_counter += 1;
+                let lambda_name = format!("__lambda_{}", lambda_id);
+
+                let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+
+                // Collect captured variables (variables from enclosing scope used in lambda)
+                let captures: Vec<String> = self.vars.keys()
+                    .filter(|k| *k != "this")
+                    .cloned()
+                    .collect();
+
+                // Register the lambda for later emission
+                self.pending_lambdas.push(PendingLambda {
+                    name: lambda_name.clone(),
+                    params: param_names,
+                    body: body.as_ref().clone(),
+                    captures,
+                });
+
+                // Return the lambda function name as a reference
                 let ret = self.fresh_value();
-                let param_names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
-                let sig = format!("__lambda__({}))", param_names.join(","));
-                self.emit(RirInstr::ConstStr { ret: ret.clone(), value: sig });
-                // Lower the body so it's available for the interpreter
-                match body.as_ref() {
-                    LambdaBody::Expr(e) => { self.lower_expr(e)?; }
-                    LambdaBody::Block(b) => { self.lower_block(b)?; }
-                }
+                self.emit(RirInstr::ConstStr { ret: ret.clone(), value: lambda_name });
                 Ok(ret)
             }
 
@@ -963,6 +1529,73 @@ impl<'a> FuncCtx<'a> {
                 });
                 Ok(ret)
             }
+
+            Expr::SwitchExpr { expr, cases } => {
+                let switch_val = self.lower_expr(expr)?;
+                let exit_bb = self.new_block();
+                let result = self.fresh_value();
+                let mut check = self.current;
+
+                // Push yield target
+                self.yield_stack.push((exit_bb, result.clone()));
+
+                for case in cases {
+                    match &case.labels {
+                        Some(labels) => {
+                            self.switch_to(self.blocks[check].id);
+                            let mut or_val = None;
+                            for label_expr in labels {
+                                let label_val = self.lower_expr(label_expr)?;
+                                let cmp = self.fresh_value();
+                                self.emit(RirInstr::BinOp {
+                                    op: RirBinOp::Eq, lhs: switch_val.clone(),
+                                    rhs: label_val, ret: cmp.clone(),
+                                });
+                                or_val = Some(match or_val {
+                                    None => cmp,
+                                    Some(prev) => {
+                                        let merged = self.fresh_value();
+                                        self.emit(RirInstr::BinOp {
+                                            op: RirBinOp::Or, lhs: prev, rhs: cmp, ret: merged.clone(),
+                                        });
+                                        merged
+                                    }
+                                });
+                            }
+                            let cond_ret = or_val.unwrap();
+                            let body_bb = self.new_block();
+                            let next_bb = self.new_block();
+                            self.blocks[check].instrs.push(
+                                RirInstr::Branch { cond: cond_ret, then_bb: body_bb, else_bb: next_bb }
+                            );
+                            self.switch_to(body_bb);
+                            for stmt in &case.body { self.lower_stmt(stmt)?; }
+                            if !self.current_block_ends_with_terminator() {
+                                self.emit(RirInstr::Jump(exit_bb));
+                            }
+                            check = self.blocks.iter().position(|b| b.id == next_bb).unwrap();
+                        }
+                        None => {
+                            // default case
+                            self.switch_to(self.blocks[check].id);
+                            for stmt in &case.body { self.lower_stmt(stmt)?; }
+                            if !self.current_block_ends_with_terminator() {
+                                self.emit(RirInstr::Jump(exit_bb));
+                            }
+                        }
+                    }
+                }
+
+                self.yield_stack.pop();
+
+                // If no default matched, jump to exit
+                self.switch_to(self.blocks[check].id);
+                if !self.current_block_ends_with_terminator() {
+                    self.emit(RirInstr::Jump(exit_bb));
+                }
+                self.switch_to(exit_bb);
+                Ok(result)
+            }
         }
     }
 
@@ -970,26 +1603,30 @@ impl<'a> FuncCtx<'a> {
     fn lower_short_circuit(&mut self, lhs: &Expr, rhs: &Expr, is_and: bool) -> Result<Value> {
         let l = self.lower_expr(lhs)?;
         let pre = self.current;
-        let rhs_bb   = self.new_block();
-        let merge_bb = self.new_block();
+        let rhs_bb     = self.new_block();
+        let merge_bb   = self.new_block();
+        let short_bb   = self.new_block(); // short-circuit default value block
         let result = self.fresh_value();
 
         if is_and {
-            // &&: if lhs is false, result is false; else evaluate rhs
+            // &&: if lhs is false, short-circuit to false; else evaluate rhs
             self.blocks[pre].instrs.push(RirInstr::Branch {
-                cond: l.clone(), then_bb: rhs_bb, else_bb: merge_bb,
+                cond: l.clone(), then_bb: rhs_bb, else_bb: short_bb,
             });
-            // In merge from lhs-false path: result = false
-            // We handle this by setting result before branch
-            self.emit(RirInstr::ConstInt { ret: result.clone(), value: 0 });
         } else {
-            // ||: if lhs is true, result is true; else evaluate rhs
+            // ||: if lhs is true, short-circuit to true; else evaluate rhs
             self.blocks[pre].instrs.push(RirInstr::Branch {
-                cond: l.clone(), then_bb: merge_bb, else_bb: rhs_bb,
+                cond: l.clone(), then_bb: short_bb, else_bb: rhs_bb,
             });
-            self.emit(RirInstr::ConstInt { ret: result.clone(), value: 1 });
         }
 
+        // Short-circuit block: set default value and jump to merge
+        self.switch_to(short_bb);
+        let default_val = if is_and { 0 } else { 1 };
+        self.emit(RirInstr::ConstInt { ret: result.clone(), value: default_val });
+        self.emit(RirInstr::Jump(merge_bb));
+
+        // RHS block: evaluate rhs, copy to result, jump to merge
         self.switch_to(rhs_bb);
         let r = self.lower_expr(rhs)?;
         self.emit(RirInstr::ConstStr {
@@ -1006,14 +1643,25 @@ impl<'a> FuncCtx<'a> {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn is_static_path(path: &str) -> bool {
-    matches!(path,
+    // Known JDK static paths
+    if matches!(path,
         "System.out" | "System.err" | "System.in" |
         "Math" | "String" | "Integer" | "Long" | "Double" |
         "Float" | "Boolean" | "Character" | "Byte" | "Short" |
         "Arrays" | "Collections" | "Objects" |
-        "System" | "Runtime" | "Thread"
+        "System" | "Runtime" | "Thread" | "List"
     ) || path.starts_with("System.")
       || path.starts_with("Math.")
+    {
+        return true;
+    }
+    // Convention: class names start with uppercase, variables with lowercase.
+    // Only treat single-segment names as static (e.g., "Color", not "Color.RED")
+    // Multi-segment paths like "Color.RED" are static field accesses, not static call targets
+    if path.contains('.') {
+        return false;
+    }
+    path.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
 }
 
 fn lower_type(ty: &TypeExpr) -> RirType {
