@@ -13,6 +13,8 @@ pub struct RirModule {
     pub field_names: HashMap<u32, String>,
     /// Maps ClassId hash → class name string, so the interpreter can reverse-lookup.
     pub class_names: HashMap<u32, String>,
+    /// Maps MethodId hash → method name string, so the interpreter can reverse-lookup.
+    pub method_names: HashMap<u32, String>,
     /// Maps class name → superclass name (for instanceof chain walking).
     pub class_hierarchy: HashMap<String, String>,
 }
@@ -49,7 +51,7 @@ pub struct FuncFlags {
 
 impl RirModule {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), functions: Vec::new(), field_names: HashMap::new(), class_names: HashMap::new(), class_hierarchy: HashMap::new() }
+        Self { name: name.into(), functions: Vec::new(), field_names: HashMap::new(), class_names: HashMap::new(), method_names: HashMap::new(), class_hierarchy: HashMap::new() }
     }
 
     /// Merge all functions and field names from `other` into this module.
@@ -60,6 +62,7 @@ impl RirModule {
         self.functions.extend(other.functions);
         self.field_names.extend(other.field_names);
         self.class_names.extend(other.class_names);
+        self.method_names.extend(other.method_names);
         self.class_hierarchy.extend(other.class_hierarchy);
     }
 }

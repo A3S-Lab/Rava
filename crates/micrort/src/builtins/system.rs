@@ -1,21 +1,21 @@
 //! Java System class builtins.
 
 use rava_common::error::Result;
-use crate::rir_interp::RVal;
+use crate::rir_interp::{RVal, write_output, write_output_no_nl};
 use super::format::{fnv, format_java_string};
 
 pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
     match func_id {
         id if id == fnv("System.out.println") => {
-            println!("{}", args.first().map(|v| v.to_display()).unwrap_or_default());
+            write_output(&args.first().map(|v| v.to_display()).unwrap_or_default());
             Some(Ok(RVal::Void))
         }
         id if id == fnv("System.out.print") => {
-            print!("{}", args.first().map(|v| v.to_display()).unwrap_or_default());
+            write_output_no_nl(&args.first().map(|v| v.to_display()).unwrap_or_default());
             Some(Ok(RVal::Void))
         }
         id if id == fnv("System.out.printf") || id == fnv("System.out.format") => {
-            print!("{}", format_java_string(args));
+            write_output_no_nl(&format_java_string(args));
             Some(Ok(RVal::Void))
         }
         id if id == fnv("System.err.println") => {

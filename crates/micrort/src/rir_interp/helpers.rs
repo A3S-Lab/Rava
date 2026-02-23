@@ -40,12 +40,18 @@ impl RirInterpreter {
     }
 
     pub(super) fn resolve_method_name(&self, func_id: u32) -> Option<String> {
+        // Fast path: check the module's method_names table (populated by Lowerer)
+        if let Some(name) = self.module.method_names.get(&func_id) {
+            return Some(name.clone());
+        }
+        // Fallback: scan known stdlib method names
         for method_name in super::KNOWN_METHODS {
             let key = format!("__method__{}", method_name);
             if crate::lowerer_hash::encode_builtin(&key) == func_id {
                 return Some(method_name.to_string());
             }
         }
+        // Fallback: scan user-defined function names
         for func in &self.module.functions {
             if func.flags.is_constructor || func.flags.is_clinit { continue; }
             if let Some(method_name) = func.name.rsplit('.').next() {
@@ -379,6 +385,33 @@ impl RirInterpreter {
                 }
                 return Ok(RVal::Void);
             }
+
+            // super(...) constructor delegation — find parent class constructor
+            if func_id == encode_builtin("super.<init>") {
+                if let Some(RVal::Object(id)) = args.first() {
+                    let class_name = self.heap.borrow().get(id)
+                        .map(|o| o.class_name.clone())
+                        .unwrap_or_default();
+                    let parent = self.module.class_hierarchy.get(&class_name).cloned();
+                    if let Some(parent_class) = parent {
+                        let ctor_name = format!("{}.<init>", parent_class);
+                        let arg_count = args.len();
+                        let idx = self.module.functions.iter()
+                            .position(|f| f.name == ctor_name && f.params.len() == arg_count)
+                            .or_else(|| self.module.functions.iter()
+                                .position(|f| f.name == ctor_name));
+                        if let Some(idx) = idx {
+                            let func = &self.module.functions[idx];
+                            let mut call_env: HashMap<String, RVal> = HashMap::new();
+                            for ((param_name, _), val) in func.params.iter().zip(args.iter()) {
+                                call_env.insert(param_name.0.clone(), val.clone());
+                            }
+                            return self.exec_function_idx(idx, call_env);
+                        }
+                    }
+                }
+                return Ok(RVal::Void);
+            }
         }
 
         if let Some(result) = builtins::dispatch(func_id, &args) {
@@ -580,27 +613,41 @@ impl RirInterpreter {
         val.to_display()
     }
 
-    pub(super) fn eval_binop(&self, op: &rava_rir::BinOp, l: &RVal, r: &RVal) -> RVal {
+    pub(super) fn eval_binop(&self, op: &rava_rir::BinOp, l: &RVal, r: &RVal) -> Result<RVal> {
         use rava_rir::BinOp::*;
         if matches!(op, Add) {
             if matches!(l, RVal::Str(_)) || matches!(r, RVal::Str(_)) {
-                return RVal::Str(format!("{}{}", self.obj_to_string(l), self.obj_to_string(r)));
+                return Ok(RVal::Str(format!("{}{}", self.obj_to_string(l), self.obj_to_string(r))));
             }
         }
         let use_float = l.is_float() || r.is_float();
-        match op {
+        Ok(match op {
             Add    => if use_float { RVal::Float(l.as_float() + r.as_float()) } else { RVal::Int(l.as_int().wrapping_add(r.as_int())) },
             Sub    => if use_float { RVal::Float(l.as_float() - r.as_float()) } else { RVal::Int(l.as_int().wrapping_sub(r.as_int())) },
             Mul    => if use_float { RVal::Float(l.as_float() * r.as_float()) } else { RVal::Int(l.as_int().wrapping_mul(r.as_int())) },
             Div    => if use_float {
                 let d = r.as_float(); if d == 0.0 { RVal::Float(f64::NAN) } else { RVal::Float(l.as_float() / d) }
             } else {
-                let d = r.as_int(); if d == 0 { RVal::Int(0) } else { RVal::Int(l.as_int() / d) }
+                let d = r.as_int();
+                if d == 0 {
+                    return Err(RavaError::JavaException {
+                        exception_type: "ArithmeticException".into(),
+                        message: "/ by zero".into(),
+                    });
+                }
+                RVal::Int(l.as_int() / d)
             },
             Rem    => if use_float {
                 let d = r.as_float(); if d == 0.0 { RVal::Float(f64::NAN) } else { RVal::Float(l.as_float() % d) }
             } else {
-                let d = r.as_int(); if d == 0 { RVal::Int(0) } else { RVal::Int(l.as_int() % d) }
+                let d = r.as_int();
+                if d == 0 {
+                    return Err(RavaError::JavaException {
+                        exception_type: "ArithmeticException".into(),
+                        message: "/ by zero".into(),
+                    });
+                }
+                RVal::Int(l.as_int() % d)
             },
             Eq     => RVal::Bool(self.values_equal(l, r)),
             Ne     => RVal::Bool(!self.values_equal(l, r)),
@@ -616,7 +663,7 @@ impl RirInterpreter {
             Shl    => RVal::Int(l.as_int() << (r.as_int() & 63)),
             Shr    => RVal::Int(l.as_int() >> (r.as_int() & 63)),
             UShr   => RVal::Int(((l.as_int() as u64) >> (r.as_int() & 63)) as i64),
-        }
+        })
     }
 
     pub(super) fn values_equal(&self, l: &RVal, r: &RVal) -> bool {

@@ -84,7 +84,30 @@ impl<'a> FuncCtx<'a> {
                 Ok(ret)
             }
             Expr::Ident(name) => {
-                Ok(self.vars.get(name).cloned().unwrap_or_else(|| Value(name.clone())))
+                if let Some(v) = self.vars.get(name) {
+                    return Ok(v.clone());
+                }
+                // Not a local var — check if it's an instance field (this.name)
+                if self.vars.contains_key("this") {
+                    let ret = self.fresh_value();
+                    self.emit(RirInstr::GetField {
+                        obj: Value("this".into()),
+                        field: FieldId(encode_builtin(name)),
+                        ret: ret.clone(),
+                    });
+                    return Ok(ret);
+                }
+                // Static field in the current class
+                if !self.class_name.is_empty() {
+                    let key = format!("{}.{}", self.class_name, name);
+                    let ret = self.fresh_value();
+                    self.emit(RirInstr::GetStatic {
+                        field: FieldId(encode_builtin(&key)),
+                        ret: ret.clone(),
+                    });
+                    return Ok(ret);
+                }
+                Ok(Value(name.clone()))
             }
             Expr::This  => Ok(Value("this".into())),
             Expr::Super => Ok(Value("super".into())),
@@ -142,9 +165,8 @@ impl<'a> FuncCtx<'a> {
                 }
 
                 if matches!(callee.as_ref(), Expr::Super) {
-                    let arg_vals: Vec<Value> = args.iter()
-                        .map(|a| self.lower_expr(a))
-                        .collect::<Result<_>>()?;
+                    let mut arg_vals = vec![Value("this".into())];
+                    for a in args { arg_vals.push(self.lower_expr(a)?); }
                     self.emit(RirInstr::Call {
                         func: FuncId(encode_builtin("super.<init>")),
                         args: arg_vals,
@@ -234,26 +256,22 @@ impl<'a> FuncCtx<'a> {
                     UnaryOp::PostInc | UnaryOp::PreInc => {
                         let one = self.fresh_value();
                         self.emit(RirInstr::ConstInt { ret: one.clone(), value: 1 });
-                        let write_ret = var_name.as_deref()
-                            .map(|n| self.named_value(n))
-                            .unwrap_or_else(|| ret.clone());
+                        let new_val = self.fresh_value();
                         self.emit(RirInstr::BinOp {
-                            op: RirBinOp::Add, lhs: val, rhs: one, ret: write_ret.clone(),
+                            op: RirBinOp::Add, lhs: val, rhs: one, ret: new_val.clone(),
                         });
-                        if let Some(n) = &var_name { self.vars.insert(n.clone(), write_ret.clone()); }
-                        return Ok(write_ret);
+                        self.write_back(expr, new_val.clone());
+                        return Ok(new_val);
                     }
                     UnaryOp::PostDec | UnaryOp::PreDec => {
                         let one = self.fresh_value();
                         self.emit(RirInstr::ConstInt { ret: one.clone(), value: 1 });
-                        let write_ret = var_name.as_deref()
-                            .map(|n| self.named_value(n))
-                            .unwrap_or_else(|| ret.clone());
+                        let new_val = self.fresh_value();
                         self.emit(RirInstr::BinOp {
-                            op: RirBinOp::Sub, lhs: val, rhs: one, ret: write_ret.clone(),
+                            op: RirBinOp::Sub, lhs: val, rhs: one, ret: new_val.clone(),
                         });
-                        if let Some(n) = &var_name { self.vars.insert(n.clone(), write_ret.clone()); }
-                        return Ok(write_ret);
+                        self.write_back(expr, new_val.clone());
+                        return Ok(new_val);
                     }
                 }
                 Ok(ret)
@@ -286,10 +304,35 @@ impl<'a> FuncCtx<'a> {
                     });
                     return Ok(rhs_val);
                 }
-                let var_name = if let Expr::Ident(n) = lhs.as_ref() { Some(n.as_str()) } else { None };
-                let val = self.lower_expr_into(rhs, var_name)?;
+                let val = self.lower_expr(rhs)?;
                 if let Expr::Ident(name) = lhs.as_ref() {
-                    self.vars.insert(name.clone(), val.clone());
+                    if self.vars.contains_key(name.as_str()) {
+                        // Known local variable — update mapping; emit copy if SSA names differ
+                        let old = self.vars[name.as_str()].clone();
+                        self.vars.insert(name.clone(), val.clone());
+                        if old != val {
+                            self.emit(RirInstr::ConstStr {
+                                ret: old,
+                                value: format!("__copy__{}", val.0),
+                            });
+                        }
+                    } else if self.vars.contains_key("this") {
+                        // Instance field assignment: this.name = val
+                        self.emit(RirInstr::SetField {
+                            obj: Value("this".into()),
+                            field: FieldId(encode_builtin(name)),
+                            val: val.clone(),
+                        });
+                    } else if !self.class_name.is_empty() {
+                        // Static field assignment in current class
+                        let key = format!("{}.{}", self.class_name, name);
+                        self.emit(RirInstr::SetStatic {
+                            field: FieldId(encode_builtin(&key)),
+                            val: val.clone(),
+                        });
+                    } else {
+                        self.vars.insert(name.clone(), val.clone());
+                    }
                 }
                 Ok(val)
             }

@@ -149,7 +149,7 @@ impl RirInterpreter {
             RirInstr::BinOp { op, lhs, rhs, ret } => {
                 let l = self.resolve(env, lhs);
                 let r = self.resolve(env, rhs);
-                env.insert(ret.0.clone(), self.eval_binop(op, &l, &r));
+                env.insert(ret.0.clone(), self.eval_binop(op, &l, &r)?);
             }
             RirInstr::UnaryOp { op, operand, ret } => {
                 let v = self.resolve(env, operand);

@@ -93,6 +93,10 @@ impl Lowerer {
                 let hash = encode_builtin(&f.name);
                 self.module.field_names.insert(hash, f.name.clone());
             }
+            if let Member::Method(m) = member {
+                let key = format!("__method__{}", m.name);
+                self.module.method_names.insert(encode_builtin(&key), m.name.clone());
+            }
         }
 
         for member in &class.members {
@@ -356,6 +360,7 @@ impl Lowerer {
             is_synchronized: method.modifiers.contains(&Modifier::Synchronized),
         };
         let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
+        ctx.class_name = class.to_string();
         let is_instance = !method.modifiers.contains(&Modifier::Static);
         let params = if is_instance {
             let mut p = vec![(Value("this".into()), RirType::Ref(ClassId(encode_builtin(class))))];
@@ -391,6 +396,7 @@ impl Lowerer {
         params.extend(ctor.params.iter().map(|p| (Value(p.name.clone()), lower_type(&p.ty))));
         let flags = FuncFlags { is_constructor: true, ..Default::default() };
         let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
+        ctx.class_name = class.to_string();
         ctx.vars.insert("this".into(), Value("this".into()));
         for p in &ctor.params {
             ctx.vars.insert(p.name.clone(), Value(p.name.clone()));
@@ -494,6 +500,8 @@ pub(super) struct FuncCtx<'a> {
     pub(super) lambda_counter: &'a mut u32,
     pub(super) pending_anon_classes: &'a mut Vec<PendingAnonClass>,
     pub(super) anon_counter: &'a mut u32,
+    /// The class this function belongs to (for static field resolution).
+    pub(super) class_name: String,
 }
 
 impl<'a> FuncCtx<'a> {
@@ -525,6 +533,7 @@ impl<'a> FuncCtx<'a> {
             lambda_counter,
             pending_anon_classes,
             anon_counter,
+            class_name: String::new(),
         }
     }
 
@@ -562,6 +571,50 @@ impl<'a> FuncCtx<'a> {
 
     pub(super) fn finish(self) -> Vec<BasicBlock> {
         self.blocks
+    }
+
+    /// Write `val` back to the location described by `expr` (local var, instance field, or static field).
+    pub(super) fn write_back(&mut self, expr: &Expr, val: Value) {
+        match expr {
+            Expr::Ident(name) => {
+                if self.vars.contains_key(name.as_str()) {
+                    let old = self.vars[name.as_str()].clone();
+                    self.vars.insert(name.clone(), val.clone());
+                    if old != val {
+                        self.emit(RirInstr::ConstStr { ret: old, value: format!("__copy__{}", val.0) });
+                    }
+                } else if self.vars.contains_key("this") {
+                    self.emit(RirInstr::SetField {
+                        obj: Value("this".into()),
+                        field: FieldId(encode_builtin(name)),
+                        val,
+                    });
+                } else if !self.class_name.is_empty() {
+                    let key = format!("{}.{}", self.class_name, name);
+                    self.emit(RirInstr::SetStatic { field: FieldId(encode_builtin(&key)), val });
+                } else {
+                    self.vars.insert(name.clone(), val);
+                }
+            }
+            Expr::Field { obj, name } => {
+                if let Expr::Ident(class_name) = obj.as_ref() {
+                    if is_static_path(class_name) {
+                        let key = format!("{}.{}", class_name, name);
+                        self.emit(RirInstr::SetStatic { field: FieldId(encode_builtin(&key)), val });
+                        return;
+                    }
+                }
+                if let Ok(obj_val) = self.lower_expr(obj) {
+                    self.emit(RirInstr::SetField { obj: obj_val, field: FieldId(encode_builtin(name)), val });
+                }
+            }
+            Expr::Index { arr, idx } => {
+                if let (Ok(arr_val), Ok(idx_val)) = (self.lower_expr(arr), self.lower_expr(idx)) {
+                    self.emit(RirInstr::ArrayStore { arr: arr_val, idx: idx_val, val });
+                }
+            }
+            _ => {}
+        }
     }
 
     pub(super) fn register_pending_label(&mut self, exit_bb: BlockId, continue_bb: BlockId) {

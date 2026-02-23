@@ -15,6 +15,34 @@ mod objects;
 
 pub use rval::{ObjId, JavaObject, RVal};
 
+/// Thread-local output sink — set during tests to capture println output.
+thread_local! {
+    pub(crate) static OUTPUT: RefCell<Option<Vec<u8>>> = RefCell::new(None);
+}
+
+/// Write a line to the current output sink (or real stdout if none set).
+pub(crate) fn write_output(s: &str) {
+    OUTPUT.with(|o| {
+        if let Some(ref mut buf) = *o.borrow_mut() {
+            buf.extend_from_slice(s.as_bytes());
+            buf.push(b'\n');
+        } else {
+            println!("{}", s);
+        }
+    });
+}
+
+/// Write without newline.
+pub(crate) fn write_output_no_nl(s: &str) {
+    OUTPUT.with(|o| {
+        if let Some(ref mut buf) = *o.borrow_mut() {
+            buf.extend_from_slice(s.as_bytes());
+        } else {
+            print!("{}", s);
+        }
+    });
+}
+
 /// All known instance method names — used to reverse-lookup __method__<name> calls.
 const KNOWN_METHODS: &[&str] = &[
     // String
@@ -61,4 +89,17 @@ impl RirInterpreter {
             static_fields: RefCell::new(HashMap::new()),
         }
     }
+
+    /// Run main(), capturing all System.out output into `buf`.
+    pub fn run_main_with_output(&self, buf: &mut Vec<u8>) -> rava_common::error::Result<()> {
+        OUTPUT.with(|o| { *o.borrow_mut() = Some(Vec::new()); });
+        let result = self.run_main();
+        OUTPUT.with(|o| {
+            if let Some(captured) = o.borrow_mut().take() {
+                buf.extend_from_slice(&captured);
+            }
+        });
+        result
+    }
 }
+
