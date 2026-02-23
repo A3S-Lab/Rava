@@ -234,12 +234,27 @@ pub enum Expr {
     Instanceof { expr: Box<Expr>, ty: TypeExpr },
     /// `expr instanceof Type name` (pattern matching, Java 16+)
     InstanceofPattern { expr: Box<Expr>, ty: TypeExpr, name: String },
+    /// `expr instanceof RecordType(Type1 a, Type2 b)` (record pattern, Java 21+)
+    RecordPattern { expr: Box<Expr>, ty: TypeExpr, components: Vec<(TypeExpr, String)> },
     /// `(params) -> body`
     Lambda { params: Vec<LambdaParam>, body: Box<LambdaBody> },
     /// `expr::method` or `Type::method` or `Type::new`
     MethodRef { obj: Box<Expr>, name: String },
     /// Switch expression: `switch (expr) { case X -> val; ... }`
     SwitchExpr { expr: Box<Expr>, cases: Vec<SwitchCase> },
+}
+
+/// A switch case label — either an expression, null, or a guarded pattern.
+#[derive(Debug, Clone)]
+pub enum CaseLabel {
+    /// `case expr`
+    Expr(Expr),
+    /// `case null`
+    Null,
+    /// `case Type name when guard` (guarded pattern, Java 21+)
+    GuardedPattern { ty: TypeExpr, name: String, guard: Expr },
+    /// `case Type name` (type pattern without guard)
+    TypePattern { ty: TypeExpr, name: String },
 }
 
 /// Lambda parameter (may or may not have explicit type).

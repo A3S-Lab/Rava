@@ -233,13 +233,19 @@ Tools:
 
 | Feature | AOT Support | Notes |
 |---------|-------------|-------|
-| Records | ✅ | Java 16+ |
+| Records | ✅ | Java 16+; compact constructors, component accessors |
 | Sealed Classes | ✅ | Java 17+ |
-| Pattern Matching | ✅ | Java 21+ |
+| Pattern Matching (instanceof) | ✅ | Java 16+; binding variables, guarded patterns |
+| Pattern Matching (switch) | ✅ | Java 21+; type patterns, `case null`, guarded patterns |
+| Switch Expressions | ✅ | Java 14+; arrow syntax, `yield` |
 | Virtual Threads | ✅ | Java 21+, native AOT support |
 | Text Blocks | ✅ | Java 15+ |
-| var local variables | ✅ | Java 10+ |
-| Lambda / Stream | ✅ | Java 8+ |
+| var local variables | ✅ | Java 10+; including `var` lambda parameters |
+| Lambda / Stream | ✅ | Java 8+; full Stream API, Collectors |
+| Method References | ✅ | Static, instance, unbound, constructor refs |
+| Anonymous Classes | ✅ | Including anonymous Comparator |
+| Try-with-resources | ✅ | Single and multiple resources |
+| Module System | ✅ | `module-info.java` parsing |
 | Reflection (statically resolvable) | ✅ | AOT metadata table, faster than JVM reflection |
 | Reflection (dynamic) | ✅ | MicroRT metadata engine, automatic fallback |
 | Dynamic Proxy (compile-time interfaces) | ✅ | AOT pre-generated proxy classes |
@@ -367,9 +373,18 @@ crates/
 ├── rir/                 # RirModule / RirFunction / BasicBlock / RirInstr (SSA)
 ├── heap/                # UnifiedHeap, ObjectHeader (mark word), KlassDescriptor, GcStrategy
 ├── frontend/            # Compiler + Parser / TypeChecker / Lowerer traits
+│   └── src/
+│       ├── parser/      # mod.rs, class.rs, types.rs, stmt.rs, expr.rs
+│       └── lowerer/     # mod.rs, stmt.rs, expr.rs, helpers.rs, tests.rs
 ├── aot/                 # AotCompiler + 7 named OptPasses + CodegenBackend trait
 ├── codegen-cranelift/   # CraneliftBackend: RIR → object file → native binary
+│   └── src/translator/  # mod.rs, helpers.rs
 ├── micrort/             # Interpreter + ClassLoader + BytecodeVerifier + ReflectionEngine
+│   └── src/
+│       ├── rir_interp/  # mod.rs, rval.rs, interp.rs, helpers.rs, objects.rs
+│       └── builtins/    # mod.rs, format.rs, math.rs, numbers.rs, string.rs,
+│                        # system.rs, collections.rs, io.rs, concurrent.rs,
+│                        # reflect.rs, network.rs
 ├── hcl/                 # HCL parsing/generation (rava.hcl, rava.lock)
 ├── pkg/                 # ProjectConfig, DependencyGraph, Lockfile, ShortNameRegistry
 └── cli/                 # rava binary (run / build / init / add / test / fmt)
@@ -430,7 +445,7 @@ common    → (none)
 | Phase | Deliverable | Status |
 |-------|------------|--------|
 | Framework | Workspace skeleton: 10 crates, all traits defined, Cranelift wired up | ✅ |
-| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add`, `rava init`, static Java | 🚧 (frontend pipeline: lexer ✅, parser ✅, lowerer 🚧 `lower_for_each` failing; `rava init` ✅) |
+| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add`, `rava init`, static Java | 🚧 (frontend pipeline: lexer ✅, parser ✅, lowerer ✅; builtins ✅; `rava init` ✅) |
 | Phase 2 (3-6mo) | Reflection: AOT metadata table + dual-path dispatch | ⬜ |
 | Phase 3 (6-12mo) | MicroRT v1: bytecode interpreter + class loader + unified object model | ⬜ |
 | Phase 4 (2-3mo) | Dynamic proxy AOT: pre-generated proxy classes | ⬜ |
@@ -440,13 +455,14 @@ common    → (none)
 
 ## Test Coverage
 
-33 tests passing, 1 failing (`cargo test --workspace`):
+50 tests passing (`cargo test --workspace`):
 
 | Crate | Tests |
 |-------|-------|
 | `rava-aot` | 2 — 7 passes registered in correct order |
-| `rava-codegen-cranelift` | 2 — Cranelift ISA init for host target |
-| `rava-frontend` | 28 — lexer (hex, binary, char, operators, keywords), parser (hello world, local var, do-while, for-each, break/continue, try/catch, lambda, enum, instanceof pattern, method ref, record, sealed class, text block, switch arrow, yield), lowerer (hello world, arithmetic, do-while, break/continue, ternary; `lower_for_each` failing), compiler, resolver |
+| `rava-codegen-cranelift` | 6 — Cranelift ISA init, translator helpers |
+| `rava-frontend` | 34 — lexer (hex, binary, char, operators, keywords), parser (hello world, local var, do-while, for-each, break/continue, try/catch, lambda, enum, instanceof pattern, method ref, record, sealed class, text block, switch arrow, yield, module-info, guarded patterns, case null), lowerer (hello world, arithmetic, do-while, break/continue, ternary, for-each, record pattern), compiler, resolver |
+| `rava-micrort` | 4 — builtin dispatch (math, string, collections, format) |
 | `rava` (cli) | 1 — PascalCase conversion |
 
 ---

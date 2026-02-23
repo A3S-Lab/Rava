@@ -7,6 +7,8 @@
 
 #![allow(dead_code)]
 
+mod helpers;
+
 use std::collections::HashMap;
 use cranelift_codegen::ir::{
     self, types, AbiParam, InstBuilder, MemFlags, Signature,
@@ -20,6 +22,8 @@ use cranelift_module::{FuncId as ClifFuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 use rava_common::error::{RavaError, Result};
 use rava_rir::{BinOp, RirFunction, RirInstr, RirModule, RirType, UnaryOp};
+
+use helpers::{build_signature, block_ends_with_terminator, collect_def_names, mangle_name};
 
 /// Tracked value type for AOT dispatch (println, concat, etc.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,7 +79,6 @@ struct TranslationCtx<'a> {
 
 impl<'a> TranslationCtx<'a> {
     fn new(rir: &'a RirModule, obj: &'a mut ObjectModule) -> Result<Self> {
-        // Declare runtime functions
         let rt_println_int = Self::declare_rt_func(obj, "rava_println_int", &[types::I64], None)?;
         let rt_println_float = Self::declare_rt_func(obj, "rava_println_float", &[types::F64], None)?;
         let rt_println_str = Self::declare_rt_func(obj, "rava_println_str", &[types::I64], None)?;
@@ -86,20 +89,16 @@ impl<'a> TranslationCtx<'a> {
         let rt_str_concat = Self::declare_rt_func(obj, "rava_str_concat", &[types::I64, types::I64], Some(types::I64))?;
         let rt_int_to_str = Self::declare_rt_func(obj, "rava_int_to_str", &[types::I64], Some(types::I64))?;
         let rt_float_to_str = Self::declare_rt_func(obj, "rava_float_to_str", &[types::F64], Some(types::I64))?;
-        // Object runtime
         let rt_obj_alloc = Self::declare_rt_func(obj, "rava_obj_alloc", &[types::I64], Some(types::I64))?;
         let rt_obj_get_field = Self::declare_rt_func(obj, "rava_obj_get_field", &[types::I64, types::I64], Some(types::I64))?;
         let rt_obj_set_field = Self::declare_rt_func(obj, "rava_obj_set_field", &[types::I64, types::I64, types::I64], None)?;
-        // Array runtime
         let rt_arr_alloc = Self::declare_rt_func(obj, "rava_arr_alloc", &[types::I64], Some(types::I64))?;
         let rt_arr_load = Self::declare_rt_func(obj, "rava_arr_load", &[types::I64, types::I64], Some(types::I64))?;
         let rt_arr_store = Self::declare_rt_func(obj, "rava_arr_store", &[types::I64, types::I64, types::I64], None)?;
         let rt_arr_len = Self::declare_rt_func(obj, "rava_arr_len", &[types::I64], Some(types::I64))?;
-        // Class tag runtime
         let rt_obj_set_tag = Self::declare_rt_func(obj, "rava_obj_set_tag", &[types::I64, types::I64], None)?;
         let rt_obj_get_tag = Self::declare_rt_func(obj, "rava_obj_get_tag", &[types::I64], Some(types::I64))?;
 
-        // Build field hash → sequential slot index from module's field_names
         let mut field_slots = HashMap::new();
         let mut slot = 0u32;
         for &hash in rir.field_names.keys() {
@@ -107,7 +106,6 @@ impl<'a> TranslationCtx<'a> {
             slot += 1;
         }
 
-        // Build class tag map: assign each class a unique integer tag
         let mut class_tags = HashMap::new();
         let mut tag = 1i64;
         for func in &rir.functions {
@@ -120,7 +118,6 @@ impl<'a> TranslationCtx<'a> {
             }
         }
 
-        // Declare all RIR functions first (forward declaration)
         let mut func_ids = HashMap::new();
         for func in &rir.functions {
             let sig = build_signature(func);
@@ -160,28 +157,23 @@ impl<'a> TranslationCtx<'a> {
         for func in &self.rir.functions {
             self.translate_function(func)?;
         }
-        // Emit rava_entry → <ClassName>_main trampoline so the C runtime
-        // can call a fixed symbol regardless of the actual main class name.
         self.emit_entry_trampoline()?;
         Ok(())
     }
 
-    /// Emit a `rava_entry(long)` function that calls the real `<Class>.main`.
     fn emit_entry_trampoline(&mut self) -> Result<()> {
-        // Find the main function: look for "<Name>.main" with 1 param (args)
         let main_func = self.rir.functions.iter().find(|f| {
             f.name.ends_with(".main") && !f.flags.is_constructor && !f.flags.is_clinit
         });
         let main_name = match main_func {
             Some(f) => f.name.clone(),
-            None => return Ok(()), // no main method — skip (library mode)
+            None => return Ok(()),
         };
         let main_clif_id = match self.func_ids.get(&main_name) {
             Some(&id) => id,
             None => return Ok(()),
         };
 
-        // Declare rava_entry(i64) -> void
         let mut entry_sig = Signature::new(CallConv::SystemV);
         entry_sig.params.push(AbiParam::new(types::I64));
         let entry_id = self.obj.declare_function("rava_entry", Linkage::Export, &entry_sig)
@@ -199,11 +191,8 @@ impl<'a> TranslationCtx<'a> {
         builder.switch_to_block(block);
         builder.seal_block(block);
 
-        // Call the real main function, passing through the args parameter
         let args_val = builder.block_params(block)[0];
         let main_ref = self.obj.declare_func_in_func(main_clif_id, builder.func);
-
-        // Check how many params the real main expects
         let main_sig = builder.func.dfg.ext_funcs[main_ref].signature;
         let expected = builder.func.dfg.signatures[main_sig].params.len();
         if expected > 0 {
@@ -233,20 +222,16 @@ impl<'a> TranslationCtx<'a> {
         let mut fb_ctx = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut clif_func, &mut fb_ctx);
 
-        // Create CLIF blocks for each RIR basic block
         let mut block_map: HashMap<u32, ir::Block> = HashMap::new();
         for bb in &func.basic_blocks {
             let clif_block = builder.create_block();
             block_map.insert(bb.id.0, clif_block);
         }
 
-        // Variable counter for SSA values
         let mut var_map: HashMap<String, Variable> = HashMap::new();
         let mut var_counter = 0u32;
-        // Track value types for dispatch (println, concat, etc.)
         let mut val_types: HashMap<String, ValType> = HashMap::new();
 
-        // Helper to get or create a variable
         let get_var = |name: &str, var_map: &mut HashMap<String, Variable>, var_counter: &mut u32| -> Variable {
             if let Some(&v) = var_map.get(name) {
                 return v;
@@ -257,8 +242,6 @@ impl<'a> TranslationCtx<'a> {
             v
         };
 
-        // Declare all variables as I64 (we use I64 as the universal type for simplicity)
-        // We'll collect all value names first, deduplicating
         let mut all_names: Vec<String> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         for p in &func.params {
@@ -282,7 +265,6 @@ impl<'a> TranslationCtx<'a> {
             builder.declare_var(v, types::I64);
         }
 
-        // Entry block: set up parameters
         let entry_block = block_map[&func.basic_blocks[0].id.0];
         builder.append_block_params_for_function_params(entry_block);
         builder.switch_to_block(entry_block);
@@ -293,33 +275,25 @@ impl<'a> TranslationCtx<'a> {
             builder.def_var(var, param_val);
         }
 
-        // Translate each basic block
         for (bb_idx, bb) in func.basic_blocks.iter().enumerate() {
             let clif_block = block_map[&bb.id.0];
-
             if bb_idx > 0 {
                 builder.switch_to_block(clif_block);
             }
-
             for instr in &bb.instrs {
                 self.translate_instr(
                     instr, &mut builder, &block_map, &mut var_map, &mut var_counter,
                     &mut val_types,
                 )?;
             }
-
-            // If block doesn't end with a terminator, add a return
             if !block_ends_with_terminator(&bb.instrs) {
                 builder.ins().return_(&[]);
             }
         }
 
-        // Seal all blocks after all instructions have been emitted
         builder.seal_all_blocks();
-
         builder.finalize();
 
-        // Define the function in the object module
         let mut ctx = cranelift_codegen::Context::for_function(clif_func);
         self.obj.define_function(clif_func_id, &mut ctx)
             .map_err(|e| RavaError::Codegen(format!("define {} failed: {e}", func.name)))?;
@@ -344,17 +318,14 @@ impl<'a> TranslationCtx<'a> {
             }
             RirInstr::ConstFloat { ret, value } => {
                 let v = builder.ins().f64const(*value);
-                // Store as bits in I64 for uniform variable type
                 let bits = builder.ins().bitcast(types::I64, MemFlags::new(), v);
                 self.def_val(builder, var_map, var_counter, &ret.0, bits);
                 val_types.insert(ret.0.clone(), ValType::Float);
             }
             RirInstr::ConstStr { ret, value } => {
-                // Handle __copy__ markers
                 if let Some(src) = value.strip_prefix("__copy__") {
                     let src_val = self.use_val(builder, var_map, var_counter, src);
                     self.def_val(builder, var_map, var_counter, &ret.0, src_val);
-                    // Propagate type
                     if let Some(&ty) = val_types.get(src) {
                         val_types.insert(ret.0.clone(), ty);
                     }
@@ -377,10 +348,8 @@ impl<'a> TranslationCtx<'a> {
                 let l_is_str = val_types.get(&lhs.0) == Some(&ValType::Str);
                 let r_is_str = val_types.get(&rhs.0) == Some(&ValType::Str);
                 if *op == BinOp::Add && (l_is_str || r_is_str) {
-                    // String concatenation
                     let l = self.use_val(builder, var_map, var_counter, &lhs.0);
                     let r = self.use_val(builder, var_map, var_counter, &rhs.0);
-                    // Convert non-string operand to string
                     let l_str = if l_is_str {
                         l
                     } else {
@@ -467,7 +436,6 @@ impl<'a> TranslationCtx<'a> {
                 let arg_vals: Vec<ir::Value> = args.iter()
                     .map(|a| self.use_val(builder, var_map, var_counter, &a.0))
                     .collect();
-                // Check first arg type for dispatch
                 let first_arg_type = args.first()
                     .and_then(|a| val_types.get(&a.0).copied());
                 self.translate_call(builder, func_id.0, &arg_vals, ret.as_ref(),
@@ -475,21 +443,18 @@ impl<'a> TranslationCtx<'a> {
             }
             RirInstr::Convert { val, to, ret, .. } => {
                 let v = self.use_val(builder, var_map, var_counter, &val.0);
-                // For Phase 1, most conversions are identity (everything is I64)
                 let result = match to {
-                    RirType::F32 | RirType::F64 => v, // keep as bits
+                    RirType::F32 | RirType::F64 => v,
                     _ => v,
                 };
                 self.def_val(builder, var_map, var_counter, &ret.0, result);
             }
-            // ── Object operations ──
             RirInstr::New { class, ret } => {
                 let num_fields = self.field_slots.len() as i64;
                 let nf = builder.ins().iconst(types::I64, num_fields);
                 let func_ref = self.obj.declare_func_in_func(self.rt_obj_alloc, builder.func);
                 let inst = builder.ins().call(func_ref, &[nf]);
                 let result = builder.inst_results(inst)[0];
-                // Set class tag on the newly allocated object
                 let tag_val = self.class_tags.get(&class.0).copied().unwrap_or(0);
                 let tag = builder.ins().iconst(types::I64, tag_val);
                 let set_tag_ref = self.obj.declare_func_in_func(self.rt_obj_set_tag, builder.func);
@@ -499,7 +464,6 @@ impl<'a> TranslationCtx<'a> {
             RirInstr::GetField { obj: obj_val, field, ret } => {
                 use rava_frontend::lowerer::encode_builtin;
                 let ptr = self.use_val(builder, var_map, var_counter, &obj_val.0);
-                // Special case: .length on arrays → rava_arr_len
                 let length_hash = encode_builtin("length");
                 if field.0 == length_hash {
                     let func_ref = self.obj.declare_func_in_func(self.rt_arr_len, builder.func);
@@ -528,7 +492,6 @@ impl<'a> TranslationCtx<'a> {
                 builder.ins().call(func_ref, &[ptr, slot_val, value]);
             }
             RirInstr::SetStatic { .. } => {}
-            // ── Array operations ──
             RirInstr::NewArray { len, ret, .. } => {
                 let length = self.use_val(builder, var_map, var_counter, &len.0);
                 let func_ref = self.obj.declare_func_in_func(self.rt_arr_alloc, builder.func);
@@ -537,7 +500,6 @@ impl<'a> TranslationCtx<'a> {
                 self.def_val(builder, var_map, var_counter, &ret.0, result);
             }
             RirInstr::NewMultiArray { dims, ret, .. } => {
-                // AOT: allocate outer array only (multi-dim init is interpreter-only for now)
                 if let Some(first) = dims.first() {
                     let length = self.use_val(builder, var_map, var_counter, &first.0);
                     let func_ref = self.obj.declare_func_in_func(self.rt_arr_alloc, builder.func);
@@ -589,13 +551,11 @@ impl<'a> TranslationCtx<'a> {
             RirInstr::MonitorEnter(_) | RirInstr::MonitorExit(_) => {}
             RirInstr::CallVirtual { receiver, method, args, ret } |
             RirInstr::CallInterface { receiver, method, args, ret } => {
-                // Phase 1: static dispatch — resolve method by hash against known functions
                 let recv = self.use_val(builder, var_map, var_counter, &receiver.0);
                 let mut arg_vals = vec![recv];
                 for a in args {
                     arg_vals.push(self.use_val(builder, var_map, var_counter, &a.0));
                 }
-                // Try to find a matching function by method hash
                 let mut found = false;
                 for (name, &clif_id) in &self.func_ids {
                     use rava_frontend::lowerer::encode_builtin;
@@ -645,7 +605,6 @@ impl<'a> TranslationCtx<'a> {
 
     fn translate_binop(&self, builder: &mut FunctionBuilder, op: &BinOp, l: ir::Value, r: ir::Value, is_float: bool) -> ir::Value {
         if is_float {
-            // Bitcast I64 bits to F64 for float operations
             let lf = builder.ins().bitcast(types::F64, MemFlags::new(), l);
             let rf = builder.ins().bitcast(types::F64, MemFlags::new(), r);
             match op {
@@ -666,7 +625,6 @@ impl<'a> TranslationCtx<'a> {
                     builder.ins().bitcast(types::I64, MemFlags::new(), res)
                 }
                 BinOp::Rem => {
-                    // No frem in Cranelift — use fmod pattern: a - trunc(a/b) * b
                     let div = builder.ins().fdiv(lf, rf);
                     let trunc = builder.ins().trunc(div);
                     let prod = builder.ins().fmul(trunc, rf);
@@ -697,7 +655,6 @@ impl<'a> TranslationCtx<'a> {
                     let cmp = builder.ins().fcmp(FloatCC::GreaterThanOrEqual, lf, rf);
                     builder.ins().uextend(types::I64, cmp)
                 }
-                // Bitwise ops on floats don't make sense, fall through to int
                 _ => self.translate_binop(builder, op, l, r, false),
             }
         } else {
@@ -754,7 +711,6 @@ impl<'a> TranslationCtx<'a> {
     ) -> Result<()> {
         use rava_frontend::lowerer::encode_builtin;
 
-        // System.out.println dispatch — type-aware
         if func_id == encode_builtin("System.out.println") {
             if args.is_empty() {
                 let void_ref = self.obj.declare_func_in_func(self.rt_println_void, builder.func);
@@ -764,7 +720,6 @@ impl<'a> TranslationCtx<'a> {
                     Some(ValType::Str) => self.rt_println_str,
                     Some(ValType::Bool) => self.rt_println_bool,
                     Some(ValType::Float) => {
-                        // Convert I64 bits back to F64 for the float println
                         let f = builder.ins().bitcast(types::F64, MemFlags::new(), args[0]);
                         let func_ref = self.obj.declare_func_in_func(self.rt_println_float, builder.func);
                         builder.ins().call(func_ref, &[f]);
@@ -785,6 +740,7 @@ impl<'a> TranslationCtx<'a> {
             }
             return Ok(());
         }
+
         if func_id == encode_builtin("System.out.print") {
             if !args.is_empty() {
                 let rt_func = match first_arg_type {
@@ -801,7 +757,6 @@ impl<'a> TranslationCtx<'a> {
             return Ok(());
         }
 
-        // String concatenation via runtime
         if func_id == encode_builtin("__str_concat__") {
             let func_ref = self.obj.declare_func_in_func(self.rt_str_concat, builder.func);
             let inst = builder.ins().call(func_ref, &[args[0], args[1]]);
@@ -813,7 +768,6 @@ impl<'a> TranslationCtx<'a> {
             return Ok(());
         }
 
-        // int-to-string conversion
         if func_id == encode_builtin("__int_to_str__") {
             let func_ref = self.obj.declare_func_in_func(self.rt_int_to_str, builder.func);
             let inst = builder.ins().call(func_ref, &[args[0]]);
@@ -825,13 +779,11 @@ impl<'a> TranslationCtx<'a> {
             return Ok(());
         }
 
-        // User-defined function call
         for (name, &clif_id) in &self.func_ids {
             let name_match = encode_builtin(name) == func_id
                 || name.rsplit('.').next()
                     .map(|s| encode_builtin(s) == func_id)
                     .unwrap_or(false)
-                // Instance method: __method__<short_name>
                 || name.rsplit('.').next()
                     .map(|s| encode_builtin(&format!("__method__{s}")) == func_id)
                     .unwrap_or(false);
@@ -858,7 +810,6 @@ impl<'a> TranslationCtx<'a> {
             }
         }
 
-        // Unknown call — return 0
         if let Some(r) = ret {
             let v = builder.ins().iconst(types::I64, 0);
             self.def_val(builder, var_map, var_counter, &r.0, v);
@@ -900,7 +851,6 @@ impl<'a> TranslationCtx<'a> {
             *var_counter += 1;
             var_map.insert(name.to_string(), v);
             builder.declare_var(v, types::I64);
-            // Initialize to 0
             let zero = builder.ins().iconst(types::I64, 0);
             builder.def_var(v, zero);
             v
@@ -909,19 +859,17 @@ impl<'a> TranslationCtx<'a> {
     }
 
     fn get_string_ptr(&mut self, builder: &mut FunctionBuilder, s: &str) -> Result<ir::Value> {
-        // Get or create a data section entry for this string constant
         let data_id = if let Some(&id) = self.str_constants.get(s) {
             id
         } else {
-            // Create a null-terminated string in the data section
             let mut data_bytes = s.as_bytes().to_vec();
-            data_bytes.push(0); // null terminator
+            data_bytes.push(0);
 
             let data_id = self.obj.declare_data(
                 &format!(".str.{}", self.str_constants.len()),
                 Linkage::Local,
-                false, // not writable
-                false, // not TLS
+                false,
+                false,
             ).map_err(|e| RavaError::Codegen(format!("declare string data failed: {e}")))?;
 
             let mut data_desc = cranelift_module::DataDescription::new();
@@ -933,74 +881,8 @@ impl<'a> TranslationCtx<'a> {
             data_id
         };
 
-        // Get a pointer to the data
         let gv = self.obj.declare_data_in_func(data_id, builder.func);
         let ptr = builder.ins().global_value(types::I64, gv);
         Ok(ptr)
     }
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-fn build_signature(func: &RirFunction) -> Signature {
-    let mut sig = Signature::new(CallConv::SystemV);
-    for (_, ty) in &func.params {
-        sig.params.push(AbiParam::new(rir_type_to_clif(ty)));
-    }
-    match &func.return_type {
-        RirType::Void => {}
-        ty => { sig.returns.push(AbiParam::new(rir_type_to_clif(ty))); }
-    }
-    sig
-}
-
-fn rir_type_to_clif(ty: &RirType) -> ir::Type {
-    match ty {
-        RirType::I8 | RirType::I16 | RirType::I32 | RirType::Bool => types::I64,
-        RirType::I64 => types::I64,
-        RirType::F32 => types::I64, // stored as bits
-        RirType::F64 => types::I64, // stored as bits
-        RirType::Ref(_) | RirType::Array(_) | RirType::RawPtr => types::I64,
-        RirType::Void => types::I64, // shouldn't happen for params
-    }
-}
-
-fn block_ends_with_terminator(instrs: &[RirInstr]) -> bool {
-    matches!(instrs.last(),
-        Some(RirInstr::Return(_) | RirInstr::Jump(_) | RirInstr::Branch { .. } |
-             RirInstr::Unreachable | RirInstr::Throw(_)))
-}
-
-/// Collect all value names defined by an instruction.
-fn collect_def_names(instr: &RirInstr, names: &mut Vec<String>) {
-    match instr {
-        RirInstr::ConstInt { ret, .. } |
-        RirInstr::ConstFloat { ret, .. } |
-        RirInstr::ConstStr { ret, .. } |
-        RirInstr::ConstBool { ret, .. } |
-        RirInstr::ConstNull { ret } => { names.push(ret.0.clone()); }
-        RirInstr::BinOp { ret, .. } |
-        RirInstr::UnaryOp { ret, .. } => { names.push(ret.0.clone()); }
-        RirInstr::Call { ret: Some(ret), .. } => { names.push(ret.0.clone()); }
-        RirInstr::New { ret, .. } => { names.push(ret.0.clone()); }
-        RirInstr::GetField { ret, .. } |
-        RirInstr::GetStatic { ret, .. } => { names.push(ret.0.clone()); }
-        RirInstr::NewArray { ret, .. } |
-        RirInstr::NewMultiArray { ret, .. } |
-        RirInstr::ArrayLoad { ret, .. } |
-        RirInstr::ArrayLen { ret, .. } => { names.push(ret.0.clone()); }
-        RirInstr::Instanceof { ret, .. } => { names.push(ret.0.clone()); }
-        RirInstr::Convert { ret, .. } => { names.push(ret.0.clone()); }
-        RirInstr::CallVirtual { ret: Some(ret), .. } |
-        RirInstr::CallInterface { ret: Some(ret), .. } => { names.push(ret.0.clone()); }
-        RirInstr::MicroRtReflect { ret, .. } |
-        RirInstr::MicroRtProxy { ret, .. } |
-        RirInstr::MicroRtClassLoad { ret, .. } => { names.push(ret.0.clone()); }
-        _ => {}
-    }
-}
-
-/// Mangle a Java-style name (e.g. `Main.main`) to a C-compatible symbol (`Main_main`).
-fn mangle_name(name: &str) -> String {
-    name.replace('.', "_").replace('<', "_").replace('>', "_")
 }

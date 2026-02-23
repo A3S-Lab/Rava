@@ -1,0 +1,83 @@
+//! Built-in Java method dispatch for the RIR interpreter.
+//!
+//! Organized by domain:
+//!   format      — format_java_string, fnv hash, rand_f64
+//!   math        — java.lang.Math
+//!   numbers     — Integer, Long, Double, Float, Byte, Short, Boolean, Character
+//!   string      — String instance + static methods
+//!   system      — System.out, System.exit, System.arraycopy, etc.
+//!   collections — ArrayList, Collections, Arrays, List/Set/Map factories
+//!   io          — java.io / java.nio.file
+//!   concurrent  — Thread, Atomic*, Lock stubs
+//!   reflect     — Class.forName, reflection stubs
+//!   network     — java.net stubs
+
+pub mod collections;
+pub mod concurrent;
+pub mod format;
+pub mod io;
+pub mod math;
+pub mod network;
+pub mod numbers;
+pub mod reflect;
+pub mod string;
+pub mod system;
+
+use rava_common::error::Result;
+use crate::rir_interp::RVal;
+use std::cell::Cell;
+use std::rc::Rc;
+
+pub use collections::rval_cmp;
+pub use format::format_java_string;
+
+/// Dispatch a static/free builtin call by hashed func_id.
+pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
+    system::dispatch(func_id, args)
+        .or_else(|| math::dispatch(func_id, args))
+        .or_else(|| numbers::dispatch(func_id, args))
+        .or_else(|| string::dispatch_static(func_id, args))
+        .or_else(|| collections::dispatch(func_id, args))
+        .or_else(|| io::dispatch(func_id, args))
+        .or_else(|| concurrent::dispatch(func_id, args))
+        .or_else(|| reflect::dispatch(func_id, args))
+        .or_else(|| network::dispatch(func_id, args))
+}
+
+/// Dispatch an instance method call on a receiver value (unnamed).
+pub fn dispatch_method(receiver: &RVal, args: &[RVal]) -> Option<Result<RVal>> {
+    let _ = (receiver, args);
+    None
+}
+
+/// Dispatch a named instance method on a receiver value.
+pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
+    match receiver {
+        RVal::Str(s)                    => string::dispatch_named(s, method, args),
+        RVal::Array(arr)                => collections::dispatch_array_named(arr, method, args),
+        RVal::ArrayIter(arr, idx)       => dispatch_array_iter(arr, idx, method),
+        RVal::Object(_)                 => {
+            // Try concurrent instance methods (AtomicInteger, Lock, etc.)
+            concurrent::dispatch_named(method, args)
+                .or_else(|| reflect::dispatch_named(method, args))
+        }
+        _ => None,
+    }
+}
+
+fn dispatch_array_iter(
+    arr: &Rc<std::cell::RefCell<Vec<RVal>>>,
+    idx: &Rc<Cell<usize>>,
+    method: &str,
+) -> Option<Result<RVal>> {
+    match method {
+        "hasNext" => Some(Ok(RVal::Bool(idx.get() < arr.borrow().len()))),
+        "next" => {
+            let i = idx.get();
+            let val = arr.borrow().get(i).cloned().unwrap_or(RVal::Null);
+            idx.set(i + 1);
+            Some(Ok(val))
+        }
+        _ => None,
+    }
+}
