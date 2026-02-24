@@ -227,3 +227,40 @@ public class Main {
 "#;
     assert_eq!(compile_and_run(src).trim(), "20");
 }
+
+#[test]
+fn aot_array() {
+    let src = r#"
+public class Main {
+    public static void main(String[] args) {
+        int[] arr = {10, 20, 30, 40, 50};
+        int sum = 0;
+        for (int i = 0; i < arr.length; i++) {
+            sum += arr[i];
+        }
+        System.out.println(sum);
+    }
+}
+"#;
+    assert_eq!(compile_and_run(src).trim(), "150");
+}
+
+#[test]
+fn aot_conditional() {
+    let src = r#"
+public class Main {
+    static int max(int a, int b) {
+        if (a > b) return a;
+        return b;
+    }
+    public static void main(String[] args) {
+        System.out.println(max(3, 7));
+        System.out.println(max(10, 4));
+    }
+}
+"#;
+    let out = compile_and_run(src);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "7");
+    assert_eq!(lines[1], "10");
+}
