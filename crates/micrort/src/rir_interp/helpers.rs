@@ -660,6 +660,21 @@ impl RirInterpreter {
 
     pub(super) fn obj_to_string(&self, val: &RVal) -> String {
         if let RVal::Object(id) = val {
+            let class_name = self.heap.borrow().get(id)
+                .map(|o| o.class_name.clone())
+                .unwrap_or_default();
+            // Try user-defined toString() first
+            if let Some(idx) = self.find_method_in_chain(&class_name, "toString", 1) {
+                let func = &self.module.functions[idx];
+                let mut call_env: HashMap<String, RVal> = HashMap::new();
+                if let Some((param_name, _)) = func.params.first() {
+                    call_env.insert(param_name.0.clone(), val.clone());
+                }
+                if let Ok(result) = self.exec_function_idx(idx, call_env) {
+                    return result.to_display();
+                }
+            }
+            // Fallback: check known fields
             let heap = self.heap.borrow();
             if let Some(obj) = heap.get(id) {
                 if let Some(msg) = obj.fields.get("message") { return msg.to_display(); }

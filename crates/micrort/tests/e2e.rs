@@ -442,3 +442,22 @@ class Main {
 "#);
     assert_eq!(out.trim(), "3.14\n5\n7\n256\ntrue");
 }
+
+#[test]
+fn user_defined_tostring() {
+    let out = run(r#"
+class Point {
+    int x, y;
+    Point(int x, int y) { this.x = x; this.y = y; }
+    public String toString() { return "(" + x + ", " + y + ")"; }
+}
+class Main {
+    public static void main(String[] args) {
+        Point p = new Point(3, 4);
+        System.out.println(p);
+        System.out.println("Point: " + p);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "(3, 4)\nPoint: (3, 4)");
+}
