@@ -212,9 +212,15 @@ impl<'a> FuncCtx<'a> {
                 }
 
                 let receiver = self.lower_expr(callee)?;
+                // Extract method name from `obj.method(...)` callee for virtual dispatch
+                let method_hash = if let Expr::Field { name: method_name, .. } = callee.as_ref() {
+                    encode_builtin(method_name)
+                } else {
+                    0
+                };
                 self.emit(RirInstr::CallVirtual {
                     receiver,
-                    method: MethodId(0),
+                    method: MethodId(method_hash),
                     args: arg_vals,
                     ret: Some(ret.clone()),
                 });

@@ -126,6 +126,33 @@ public class Main {
 }
 
 #[test]
+fn aot_inheritance() {
+    let src = r#"
+class Animal {
+    String speak() { return "..."; }
+}
+class Dog extends Animal {
+    String speak() { return "Woof"; }
+}
+class Cat extends Animal {
+    String speak() { return "Meow"; }
+}
+public class Main {
+    public static void main(String[] args) {
+        Animal dog = new Dog();
+        Animal cat = new Cat();
+        System.out.println(dog.speak());
+        System.out.println(cat.speak());
+    }
+}
+"#;
+    let out = compile_and_run(src);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "Woof");
+    assert_eq!(lines[1], "Meow");
+}
+
+#[test]
 fn aot_string_concat() {
     let src = r#"
 public class Main {

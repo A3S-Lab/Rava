@@ -607,40 +607,119 @@ impl<'a> TranslationCtx<'a> {
                 for a in args {
                     arg_vals.push(self.use_val(builder, var_map, var_counter, &a.0));
                 }
-                let mut found = false;
-                for (name, &clif_id) in &self.func_ids {
-                    use rava_frontend::lowerer::encode_builtin;
-                    let name_hash = encode_builtin(name);
-                    let short_hash = name.rsplit('.').next()
-                        .map(|s| encode_builtin(s))
-                        .unwrap_or(0);
-                    if name_hash == method.0 || short_hash == method.0 {
-                        let func_ref = self.obj.declare_func_in_func(clif_id, builder.func);
-                        let sig = builder.func.dfg.ext_funcs[func_ref].signature;
-                        let expected = builder.func.dfg.signatures[sig].params.len();
-                        let call_args = if arg_vals.len() > expected {
-                            &arg_vals[..expected]
+
+                // Collect all methods matching the short name (virtual dispatch candidates)
+                use rava_frontend::lowerer::encode_builtin;
+                let candidates: Vec<(ClifFuncId, String, RirType)> = self.func_ids.iter()
+                    .filter_map(|(name, &clif_id)| {
+                        let short_hash = name.rsplit('.').next()
+                            .map(|s| encode_builtin(s))
+                            .unwrap_or(0);
+                        let name_hash = encode_builtin(name);
+                        if name_hash == method.0 || short_hash == method.0 {
+                            let ret_type = self.rir.functions.iter()
+                                .find(|f| &f.name == name)
+                                .map(|f| f.return_type.clone())
+                                .unwrap_or(RirType::Void);
+                            // Extract class name from "ClassName.methodName"
+                            let class_name = name.rsplitn(2, '.').nth(1).unwrap_or("").to_string();
+                            Some((clif_id, class_name, ret_type))
                         } else {
-                            &arg_vals
-                        };
-                        let inst = builder.ins().call(func_ref, call_args);
-                        if let Some(r) = ret {
-                            let results = builder.inst_results(inst);
-                            if !results.is_empty() {
-                                self.def_val(builder, var_map, var_counter, &r.0, results[0]);
-                            } else {
-                                let v = builder.ins().iconst(types::I64, 0);
-                                self.def_val(builder, var_map, var_counter, &r.0, v);
-                            }
+                            None
                         }
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
+                    })
+                    .collect();
+
+                if candidates.is_empty() {
                     if let Some(r) = ret {
                         let v = builder.ins().iconst(types::I64, 0);
                         self.def_val(builder, var_map, var_counter, &r.0, v);
+                    }
+                } else if candidates.len() == 1 {
+                    // Only one implementation — direct call
+                    let (clif_id, _, ret_type) = &candidates[0];
+                    let func_ref = self.obj.declare_func_in_func(*clif_id, builder.func);
+                    let sig = builder.func.dfg.ext_funcs[func_ref].signature;
+                    let expected = builder.func.dfg.signatures[sig].params.len();
+                    let call_args = if arg_vals.len() > expected { &arg_vals[..expected] } else { &arg_vals };
+                    let inst = builder.ins().call(func_ref, call_args);
+                    if let Some(r) = ret {
+                        let results = builder.inst_results(inst);
+                        if !results.is_empty() {
+                            self.def_val(builder, var_map, var_counter, &r.0, results[0]);
+                        } else {
+                            let v = builder.ins().iconst(types::I64, 0);
+                            self.def_val(builder, var_map, var_counter, &r.0, v);
+                        }
+                        match ret_type {
+                            RirType::Ref(_) => { val_types.insert(r.0.clone(), ValType::Str); }
+                            RirType::F32 | RirType::F64 => { val_types.insert(r.0.clone(), ValType::Float); }
+                            RirType::Bool => { val_types.insert(r.0.clone(), ValType::Bool); }
+                            _ => {}
+                        }
+                    }
+                } else {
+                    // Multiple implementations — dispatch on class tag at runtime.
+                    // Use block parameters (phi nodes) to pass the result to merge_block.
+                    let get_tag_ref = self.obj.declare_func_in_func(self.rt_obj_get_tag, builder.func);
+                    let tag_inst = builder.ins().call(get_tag_ref, &[recv]);
+                    let actual_tag = builder.inst_results(tag_inst)[0];
+
+                    let merge_block = builder.create_block();
+                    // merge_block takes one i64 param: the call result
+                    builder.append_block_param(merge_block, types::I64);
+                    let ret_type = candidates[0].2.clone();
+
+                    for (i, (clif_id, class_name, _)) in candidates.iter().enumerate() {
+                        let class_hash = encode_builtin(class_name);
+                        let expected_tag = self.class_tags.get(&class_hash).copied().unwrap_or(0);
+                        let tag_const = builder.ins().iconst(types::I64, expected_tag);
+                        let cmp = builder.ins().icmp(IntCC::Equal, actual_tag, tag_const);
+
+                        let match_block = builder.create_block();
+                        let next_block = if i + 1 < candidates.len() {
+                            builder.create_block()
+                        } else {
+                            merge_block
+                        };
+
+                        if i + 1 < candidates.len() {
+                            builder.ins().brif(cmp, match_block, &[], next_block, &[]);
+                        } else {
+                            // Last candidate: always jump to match_block (fallback)
+                            builder.ins().jump(match_block, &[]);
+                        }
+
+                        builder.switch_to_block(match_block);
+                        let func_ref = self.obj.declare_func_in_func(*clif_id, builder.func);
+                        let sig = builder.func.dfg.ext_funcs[func_ref].signature;
+                        let expected_params = builder.func.dfg.signatures[sig].params.len();
+                        let call_args = if arg_vals.len() > expected_params { &arg_vals[..expected_params] } else { &arg_vals };
+                        let call_inst = builder.ins().call(func_ref, call_args);
+                        let call_results = builder.inst_results(call_inst);
+                        let result_val = if !call_results.is_empty() {
+                            call_results[0]
+                        } else {
+                            builder.ins().iconst(types::I64, 0)
+                        };
+                        builder.ins().jump(merge_block, &[result_val]);
+
+                        if i + 1 < candidates.len() {
+                            builder.switch_to_block(next_block);
+                        }
+                    }
+
+                    builder.switch_to_block(merge_block);
+                    let result = builder.block_params(merge_block)[0];
+
+                    if let Some(r) = ret {
+                        self.def_val(builder, var_map, var_counter, &r.0, result);
+                        match ret_type {
+                            RirType::Ref(_) => { val_types.insert(r.0.clone(), ValType::Str); }
+                            RirType::F32 | RirType::F64 => { val_types.insert(r.0.clone(), ValType::Float); }
+                            RirType::Bool => { val_types.insert(r.0.clone(), ValType::Bool); }
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -830,40 +909,124 @@ impl<'a> TranslationCtx<'a> {
             return Ok(());
         }
 
-        for (name, &clif_id) in &self.func_ids {
-            let name_match = encode_builtin(name) == func_id
-                || name.rsplit('.').next()
-                    .map(|s| encode_builtin(s) == func_id)
-                    .unwrap_or(false)
-                || name.rsplit('.').next()
-                    .map(|s| encode_builtin(&format!("__method__{s}")) == func_id)
-                    .unwrap_or(false);
-            if name_match {
-                let func_ref = self.obj.declare_func_in_func(clif_id, builder.func);
-                let sig = builder.func.dfg.ext_funcs[func_ref].signature;
-                let expected_params = builder.func.dfg.signatures[sig].params.len();
-                let call_args = if args.len() > expected_params {
-                    &args[..expected_params]
+        // Collect all matching candidates for virtual dispatch
+        let candidates: Vec<(ClifFuncId, String, RirType)> = self.func_ids.iter()
+            .filter_map(|(name, &clif_id)| {
+                let name_match = encode_builtin(name) == func_id
+                    || name.rsplit('.').next()
+                        .map(|s| encode_builtin(s) == func_id)
+                        .unwrap_or(false)
+                    || name.rsplit('.').next()
+                        .map(|s| encode_builtin(&format!("__method__{s}")) == func_id)
+                        .unwrap_or(false);
+                if name_match {
+                    let ret_type = self.rir.functions.iter()
+                        .find(|f| &f.name == name)
+                        .map(|f| f.return_type.clone())
+                        .unwrap_or(RirType::Void);
+                    let class_name = name.rsplitn(2, '.').nth(1).unwrap_or("").to_string();
+                    Some((clif_id, class_name, ret_type))
                 } else {
-                    args
-                };
-                let inst = builder.ins().call(func_ref, call_args);
-                if let Some(r) = ret {
-                    let results = builder.inst_results(inst);
-                    if !results.is_empty() {
-                        self.def_val(builder, var_map, var_counter, &r.0, results[0]);
-                    } else {
-                        let v = builder.ins().iconst(types::I64, 0);
-                        self.def_val(builder, var_map, var_counter, &r.0, v);
-                    }
+                    None
                 }
-                return Ok(());
+            })
+            .collect();
+
+        if candidates.is_empty() {
+            if let Some(r) = ret {
+                let v = builder.ins().iconst(types::I64, 0);
+                self.def_val(builder, var_map, var_counter, &r.0, v);
+            }
+            return Ok(());
+        }
+
+        if candidates.len() == 1 {
+            let (clif_id, _, ret_type) = &candidates[0];
+            let func_ref = self.obj.declare_func_in_func(*clif_id, builder.func);
+            let sig = builder.func.dfg.ext_funcs[func_ref].signature;
+            let expected_params = builder.func.dfg.signatures[sig].params.len();
+            let call_args = if args.len() > expected_params { &args[..expected_params] } else { args };
+            let inst = builder.ins().call(func_ref, call_args);
+            if let Some(r) = ret {
+                let results = builder.inst_results(inst);
+                if !results.is_empty() {
+                    self.def_val(builder, var_map, var_counter, &r.0, results[0]);
+                } else {
+                    let v = builder.ins().iconst(types::I64, 0);
+                    self.def_val(builder, var_map, var_counter, &r.0, v);
+                }
+                match ret_type {
+                    RirType::Ref(_) => { val_types.insert(r.0.clone(), ValType::Str); }
+                    RirType::F32 | RirType::F64 => { val_types.insert(r.0.clone(), ValType::Float); }
+                    RirType::Bool => { val_types.insert(r.0.clone(), ValType::Bool); }
+                    _ => {}
+                }
+            }
+            return Ok(());
+        }
+
+        // Multiple candidates — virtual dispatch on class tag.
+        // The receiver is args[0] (first arg is always `this`).
+        let recv = if !args.is_empty() { args[0] } else {
+            if let Some(r) = ret {
+                let v = builder.ins().iconst(types::I64, 0);
+                self.def_val(builder, var_map, var_counter, &r.0, v);
+            }
+            return Ok(());
+        };
+        let get_tag_ref = self.obj.declare_func_in_func(self.rt_obj_get_tag, builder.func);
+        let tag_inst = builder.ins().call(get_tag_ref, &[recv]);
+        let actual_tag = builder.inst_results(tag_inst)[0];
+
+        let merge_block = builder.create_block();
+        builder.append_block_param(merge_block, types::I64);
+        let ret_type = candidates[0].2.clone();
+
+        for (i, (clif_id, class_name, _)) in candidates.iter().enumerate() {
+            let class_hash = encode_builtin(class_name);
+            let expected_tag = self.class_tags.get(&class_hash).copied().unwrap_or(0);
+            let tag_const = builder.ins().iconst(types::I64, expected_tag);
+            let cmp = builder.ins().icmp(IntCC::Equal, actual_tag, tag_const);
+
+            let match_block = builder.create_block();
+            let next_block = if i + 1 < candidates.len() {
+                builder.create_block()
+            } else {
+                merge_block
+            };
+
+            if i + 1 < candidates.len() {
+                builder.ins().brif(cmp, match_block, &[], next_block, &[]);
+            } else {
+                builder.ins().jump(match_block, &[]);
+            }
+
+            builder.switch_to_block(match_block);
+            let func_ref = self.obj.declare_func_in_func(*clif_id, builder.func);
+            let sig = builder.func.dfg.ext_funcs[func_ref].signature;
+            let expected_params = builder.func.dfg.signatures[sig].params.len();
+            let call_args = if args.len() > expected_params { &args[..expected_params] } else { args };
+            let call_inst = builder.ins().call(func_ref, call_args);
+            let call_results = builder.inst_results(call_inst);
+            let result_val = if !call_results.is_empty() { call_results[0] } else { builder.ins().iconst(types::I64, 0) };
+            builder.ins().jump(merge_block, &[result_val]);
+
+            if i + 1 < candidates.len() {
+                builder.switch_to_block(next_block);
             }
         }
 
+        builder.switch_to_block(merge_block);
+        let result = builder.block_params(merge_block)[0];
+
         if let Some(r) = ret {
-            let v = builder.ins().iconst(types::I64, 0);
-            self.def_val(builder, var_map, var_counter, &r.0, v);
+            self.def_val(builder, var_map, var_counter, &r.0, result);
+            match ret_type {
+                RirType::Ref(_) => { val_types.insert(r.0.clone(), ValType::Str); }
+                RirType::F32 | RirType::F64 => { val_types.insert(r.0.clone(), ValType::Float); }
+                RirType::Bool => { val_types.insert(r.0.clone(), ValType::Bool); }
+                _ => {}
+            }
         }
         Ok(())
     }
