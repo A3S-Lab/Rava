@@ -264,10 +264,88 @@ impl RirInterpreter {
                 super::write_output_no_nl(&s);
                 return Ok(RVal::Void);
             }
+            // Collectors factory methods — create Collector objects
+            if func_id == encode_builtin("Collectors.toList") || func_id == encode_builtin("Collectors.toUnmodifiableList") {
+                let id = self.alloc_object("Collector");
+                self.heap.borrow_mut().get_mut(&id).map(|o| o.fields.insert("__ctype__".into(), RVal::Str("toList".into())));
+                return Ok(RVal::Object(id));
+            }
+            if func_id == encode_builtin("Collectors.toSet") {
+                let id = self.alloc_object("Collector");
+                self.heap.borrow_mut().get_mut(&id).map(|o| o.fields.insert("__ctype__".into(), RVal::Str("toSet".into())));
+                return Ok(RVal::Object(id));
+            }
+            if func_id == encode_builtin("Collectors.joining") {
+                let delim = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let id = self.alloc_object("Collector");
+                {
+                    let mut heap = self.heap.borrow_mut();
+                    if let Some(o) = heap.get_mut(&id) {
+                        o.fields.insert("__ctype__".into(), RVal::Str("joining".into()));
+                        o.fields.insert("__delim__".into(), RVal::Str(delim));
+                    }
+                }
+                return Ok(RVal::Object(id));
+            }
+            if func_id == encode_builtin("Collectors.groupingBy") {
+                let lambda = args.first().cloned().unwrap_or(RVal::Null);
+                let id = self.alloc_object("Collector");
+                {
+                    let mut heap = self.heap.borrow_mut();
+                    if let Some(o) = heap.get_mut(&id) {
+                        o.fields.insert("__ctype__".into(), RVal::Str("groupingBy".into()));
+                        o.fields.insert("__lambda__".into(), lambda);
+                    }
+                }
+                return Ok(RVal::Object(id));
+            }
+            if func_id == encode_builtin("Collectors.counting") {
+                let id = self.alloc_object("Collector");
+                self.heap.borrow_mut().get_mut(&id).map(|o| o.fields.insert("__ctype__".into(), RVal::Str("counting".into())));
+                return Ok(RVal::Object(id));
+            }
+            if func_id == encode_builtin("Collectors.toMap") {
+                let key_fn = args.first().cloned().unwrap_or(RVal::Null);
+                let val_fn = args.get(1).cloned().unwrap_or(RVal::Null);
+                let id = self.alloc_object("Collector");
+                {
+                    let mut heap = self.heap.borrow_mut();
+                    if let Some(o) = heap.get_mut(&id) {
+                        o.fields.insert("__ctype__".into(), RVal::Str("toMap".into()));
+                        o.fields.insert("__keyfn__".into(), key_fn);
+                        o.fields.insert("__valfn__".into(), val_fn);
+                    }
+                }
+                return Ok(RVal::Object(id));
+            }
+            // Comparator.naturalOrder() / reverseOrder()
+            if func_id == encode_builtin("Comparator.naturalOrder") {
+                return Ok(RVal::Str("__comparator__natural__".into()));
+            }
+            if func_id == encode_builtin("Comparator.reverseOrder") {
+                return Ok(RVal::Str("__comparator__reverse__".into()));
+            }
+            // Stream.of(...) / Arrays.stream(...) — create a stream from args
+            if func_id == encode_builtin("Stream.of") || func_id == encode_builtin("Arrays.stream") {
+                // If single arg is already an array, use it directly; otherwise collect all args
+                let items = if args.len() == 1 {
+                    if let RVal::Array(a) = &args[0] { a.borrow().clone() } else { args.clone() }
+                } else {
+                    args.clone()
+                };
+                return Ok(RVal::Array(Rc::new(RefCell::new(items))));
+            }
         }
 
         if let Some(method_name) = self.resolve_method_name(func_id) {
             if let Some(receiver) = args.first() {
+                // NullPointerException on null receiver
+                if matches!(receiver, RVal::Null) {
+                    return Err(RavaError::JavaException {
+                        exception_type: "NullPointerException".into(),
+                        message: format!("Cannot invoke method '{}' on null", method_name),
+                    });
+                }
                 let method_args = &args[1..];
                 if let Some(result) = builtins::dispatch_named_method(receiver, &method_name, method_args) {
                     return result;

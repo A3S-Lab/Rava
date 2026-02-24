@@ -258,7 +258,80 @@ impl RirInterpreter {
                 }
                 Some(Ok(RVal::Void))
             }
-            "collect" => Some(Ok(receiver.clone())),
+            "collect" => {
+                let arr = self.as_array(receiver)?;
+                if let Some(RVal::Object(cid)) = args.first() {
+                    let (ctype, delim, lambda, key_fn, val_fn) = {
+                        let heap = self.heap.borrow();
+                        if let Some(cobj) = heap.get(cid) {
+                            let ctype = cobj.fields.get("__ctype__").map(|v| v.to_display()).unwrap_or_default();
+                            let delim = cobj.fields.get("__delim__").map(|v| v.to_display()).unwrap_or_default();
+                            let lambda = cobj.fields.get("__lambda__").cloned();
+                            let key_fn = cobj.fields.get("__keyfn__").cloned();
+                            let val_fn = cobj.fields.get("__valfn__").cloned();
+                            (ctype, delim, lambda, key_fn, val_fn)
+                        } else { (String::new(), String::new(), None, None, None) }
+                    };
+                    match ctype.as_str() {
+                        "joining" => {
+                            let s = arr.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>().join(&delim);
+                            return Some(Ok(RVal::Str(s)));
+                        }
+                        "toList" => return Some(Ok(receiver.clone())),
+                        "toSet" => {
+                            let mut seen = std::collections::HashSet::new();
+                            let deduped: Vec<RVal> = arr.borrow().iter()
+                                .filter(|v| seen.insert(v.to_display()))
+                                .cloned().collect();
+                            return Some(Ok(RVal::Array(Rc::new(RefCell::new(deduped)))));
+                        }
+                        "groupingBy" => {
+                            let items = arr.borrow().clone();
+                            let map_id = self.alloc_object("HashMap");
+                            for item in &items {
+                                let key = if let Some(ref lam) = lambda {
+                                    match self.invoke_lambda(lam, &[item.clone()]) {
+                                        Ok(k) => k.to_display(),
+                                        Err(_) => continue,
+                                    }
+                                } else { item.to_display() };
+                                let mut heap = self.heap.borrow_mut();
+                                if let Some(map_obj) = heap.get_mut(&map_id) {
+                                    let bucket = map_obj.fields.entry(key)
+                                        .or_insert_with(|| RVal::Array(Rc::new(RefCell::new(vec![]))));
+                                    if let RVal::Array(a) = bucket { a.borrow_mut().push(item.clone()); }
+                                }
+                            }
+                            return Some(Ok(RVal::Object(map_id)));
+                        }
+                        "toMap" => {
+                            let items = arr.borrow().clone();
+                            let map_id = self.alloc_object("HashMap");
+                            for item in &items {
+                                let k = if let Some(ref kf) = key_fn {
+                                    match self.invoke_lambda(kf, &[item.clone()]) {
+                                        Ok(v) => v.to_display(),
+                                        Err(_) => continue,
+                                    }
+                                } else { item.to_display() };
+                                let v = if let Some(ref vf) = val_fn {
+                                    match self.invoke_lambda(vf, &[item.clone()]) {
+                                        Ok(v) => v,
+                                        Err(_) => continue,
+                                    }
+                                } else { item.clone() };
+                                let mut heap = self.heap.borrow_mut();
+                                if let Some(map_obj) = heap.get_mut(&map_id) {
+                                    map_obj.fields.insert(k, v);
+                                }
+                            }
+                            return Some(Ok(RVal::Object(map_id)));
+                        }
+                        _ => {}
+                    }
+                }
+                Some(Ok(receiver.clone()))
+            }
             "reduce" => {
                 let arr = self.as_array(receiver)?;
                 let items = arr.borrow();
@@ -288,8 +361,52 @@ impl RirInterpreter {
             "sorted" => {
                 let arr = self.as_array(receiver)?;
                 let mut items = arr.borrow().clone();
-                items.sort_by(|a, b| a.as_int().cmp(&b.as_int()));
+                if let Some(comparator) = args.first() {
+                    match comparator {
+                        RVal::Str(s) if s == "__comparator__reverse__" => {
+                            items.sort_by(|a, b| b.to_display().cmp(&a.to_display()));
+                        }
+                        RVal::Str(s) if s == "__comparator__natural__" => {
+                            items.sort_by(|a, b| a.to_display().cmp(&b.to_display()));
+                        }
+                        _ => {
+                            // lambda comparator
+                            let comp = comparator.clone();
+                            let mut err = None;
+                            items.sort_by(|a, b| {
+                                if err.is_some() { return std::cmp::Ordering::Equal; }
+                                match self.invoke_lambda(&comp, &[a.clone(), b.clone()]) {
+                                    Ok(v) => v.as_int().cmp(&0),
+                                    Err(e) => { err = Some(e); std::cmp::Ordering::Equal }
+                                }
+                            });
+                            if let Some(e) = err { return Some(Err(e)); }
+                        }
+                    }
+                } else {
+                    // natural order: numeric if all ints, else string
+                    let all_int = items.iter().all(|v| matches!(v, RVal::Int(_)));
+                    if all_int {
+                        items.sort_by(|a, b| a.as_int().cmp(&b.as_int()));
+                    } else {
+                        items.sort_by(|a, b| a.to_display().cmp(&b.to_display()));
+                    }
+                }
                 Some(Ok(RVal::Array(Rc::new(RefCell::new(items)))))
+            }
+            "flatMap" => {
+                let arr = self.as_array(receiver)?;
+                let items = arr.borrow().clone();
+                let lambda = args.first().cloned().unwrap_or(RVal::Null);
+                let mut result = Vec::new();
+                for item in &items {
+                    match self.invoke_lambda(&lambda, &[item.clone()]) {
+                        Ok(RVal::Array(a)) => result.extend(a.borrow().clone()),
+                        Ok(v) => result.push(v),
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(result)))))
             }
             "count" => {
                 let arr = self.as_array(receiver)?;

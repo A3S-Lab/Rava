@@ -247,9 +247,22 @@ impl RirInterpreter {
             }
             RirInstr::ArrayLoad { arr, idx, ret } => {
                 let arr_val = self.resolve(env, arr);
-                let i = self.resolve(env, idx).as_int() as usize;
+                let i = self.resolve(env, idx).as_int();
                 let val = match &arr_val {
-                    RVal::Array(a) => a.borrow().get(i).cloned().unwrap_or(RVal::Null),
+                    RVal::Array(a) => {
+                        let borrow = a.borrow();
+                        if i < 0 || i as usize >= borrow.len() {
+                            return Err(RavaError::JavaException {
+                                exception_type: "ArrayIndexOutOfBoundsException".into(),
+                                message: format!("Index {} out of bounds for length {}", i, borrow.len()),
+                            });
+                        }
+                        borrow[i as usize].clone()
+                    }
+                    RVal::Null => return Err(RavaError::JavaException {
+                        exception_type: "NullPointerException".into(),
+                        message: "null array access".into(),
+                    }),
                     _ => RVal::Null,
                 };
                 env.insert(ret.0.clone(), val);
@@ -287,13 +300,26 @@ impl RirInterpreter {
                 let obj_val = self.resolve(env, obj);
                 let class_name = self.class_name_for(class.0);
                 if let RVal::Object(id) = &obj_val {
-                    let ok = self.heap.borrow().get(id)
-                        .map(|o| o.class_name == class_name)
-                        .unwrap_or(false);
+                    let actual = self.heap.borrow().get(id)
+                        .map(|o| o.class_name.clone())
+                        .unwrap_or_default();
+                    // Allow cast if same class, or if target is a known supertype
+                    let ok = actual == class_name
+                        || class_name == "Object"
+                        || self.find_method_in_chain(&actual, "<init>", 1).is_some();
                     if !ok {
-                        return Err(RavaError::Other(
-                            format!("ClassCastException: cannot cast to {class_name}")
-                        ));
+                        return Err(RavaError::JavaException {
+                            exception_type: "ClassCastException".into(),
+                            message: format!("{} cannot be cast to {}", actual, class_name),
+                        });
+                    }
+                } else if let RVal::Str(_) = &obj_val {
+                    // String cast to non-String type
+                    if class_name != "String" && class_name != "Object" && class_name != "CharSequence" && class_name != "Comparable" {
+                        return Err(RavaError::JavaException {
+                            exception_type: "ClassCastException".into(),
+                            message: format!("String cannot be cast to {}", class_name),
+                        });
                     }
                 }
             }

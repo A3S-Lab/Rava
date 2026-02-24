@@ -461,3 +461,143 @@ class Main {
 "#);
     assert_eq!(out.trim(), "(3, 4)\nPoint: (3, 4)");
 }
+
+#[test]
+fn nested_generics() {
+    let out = run(r#"
+import java.util.*;
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        Map<Integer, List<String>> grouped = Stream.of("a","bb","cc","ddd","e")
+            .collect(Collectors.groupingBy(String::length));
+        System.out.println(grouped.get(1).size());
+        System.out.println(grouped.get(2).size());
+        String joined = Stream.of("x","y","z").collect(Collectors.joining("-"));
+        System.out.println(joined);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "2\n2\nx-y-z");
+}
+
+#[test]
+fn nested_for_each_2d() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int[][] matrix = {{1,2,3},{4,5,6},{7,8,9}};
+        int sum = 0;
+        for (int[] row : matrix) for (int v : row) sum += v;
+        System.out.println(sum);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "45");
+}
+
+#[test]
+fn string_format_padding() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println(String.format("%-5s|%5d", "hi", 42));
+        System.out.println(String.format("%05d", 7));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "hi   |   42\n00007");
+}
+
+#[test]
+fn null_pointer_exception() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        try {
+            String s = null;
+            int len = s.length();
+        } catch (NullPointerException e) {
+            System.out.println("NPE");
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "NPE");
+}
+
+#[test]
+fn array_index_out_of_bounds() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        try {
+            int[] arr = {1, 2, 3};
+            int x = arr[5];
+        } catch (ArrayIndexOutOfBoundsException e) {
+            System.out.println("AIOOBE");
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "AIOOBE");
+}
+
+#[test]
+fn collectors_to_map() {
+    let out = run(r#"
+import java.util.*;
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> map = Stream.of("a", "bb", "ccc")
+            .collect(Collectors.toMap(s -> s, s -> s.length()));
+        System.out.println(map.get("a"));
+        System.out.println(map.get("bb"));
+        System.out.println(map.get("ccc"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1\n2\n3");
+}
+
+#[test]
+fn stream_flat_map() {
+    let out = run(r#"
+import java.util.*;
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> flat = Stream.of(Arrays.asList(1,2), Arrays.asList(3,4))
+            .flatMap(l -> l.stream())
+            .collect(Collectors.toList());
+        System.out.println(flat.size());
+        System.out.println(flat.get(0));
+        System.out.println(flat.get(3));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "4\n1\n4");
+}
+
+#[test]
+fn stream_sorted_comparator() {
+    let out = run(r#"
+import java.util.*;
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        List<String> sorted = Stream.of("banana","apple","cherry")
+            .sorted(Comparator.naturalOrder())
+            .collect(Collectors.toList());
+        System.out.println(sorted.get(0));
+        System.out.println(sorted.get(2));
+        List<String> rev = Stream.of("banana","apple","cherry")
+            .sorted(Comparator.reverseOrder())
+            .collect(Collectors.toList());
+        System.out.println(rev.get(0));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "apple\ncherry\ncherry");
+}

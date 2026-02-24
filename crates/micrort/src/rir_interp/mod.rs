@@ -72,7 +72,7 @@ const KNOWN_METHODS: &[&str] = &[
     // Map.Entry
     "getKey", "getValue",
     // Stream
-    "stream", "map", "filter", "forEach", "collect", "reduce",
+    "stream", "map", "flatMap", "filter", "forEach", "collect", "reduce",
     "sorted", "count", "toList", "distinct", "limit", "skip",
     "findFirst", "anyMatch", "allMatch", "noneMatch",
     "mapToInt", "mapToLong", "mapToDouble", "sum", "average", "min", "max",

@@ -343,6 +343,7 @@ impl Parser {
                 match self.tokens.get(i) {
                     Some(Token::Lt)  => { depth += 1; i += 1; }
                     Some(Token::Gt)  => { depth -= 1; i += 1; if depth <= 0 { break; } }
+                    Some(Token::Shr) => { depth -= 2; i += 1; if depth <= 0 { break; } }
                     None | Some(Token::Eof) => break,
                     _ => { i += 1; }
                 }
