@@ -71,10 +71,12 @@ struct TranslationCtx<'a> {
     rt_obj_get_tag: ClifFuncId,
     /// String constant data IDs
     str_constants: HashMap<String, cranelift_module::DataId>,
-    /// Maps FieldId hash → sequential slot index (per class, but flattened for Phase 1)
+    /// Maps FieldId hash → sequential slot index (per class, flattened)
     field_slots: HashMap<u32, u32>,
     /// Maps ClassId hash → unique class tag integer
     class_tags: HashMap<u32, i64>,
+    /// Maps static field FieldId hash → Cranelift DataId (mutable global i64)
+    static_globals: HashMap<u32, cranelift_module::DataId>,
 }
 
 impl<'a> TranslationCtx<'a> {
@@ -127,6 +129,35 @@ impl<'a> TranslationCtx<'a> {
             func_ids.insert(func.name.clone(), id);
         }
 
+        // Pre-declare mutable global variables for all static fields.
+        // We scan all SetStatic/GetStatic instructions to find the field hashes.
+        let mut static_globals: HashMap<u32, cranelift_module::DataId> = HashMap::new();
+        let mut static_counter = 0usize;
+        for func in &rir.functions {
+            for bb in &func.basic_blocks {
+                for instr in &bb.instrs {
+                    let hash = match instr {
+                        RirInstr::GetStatic { field, .. } => Some(field.0),
+                        RirInstr::SetStatic { field, .. } => Some(field.0),
+                        _ => None,
+                    };
+                    if let Some(h) = hash {
+                        if !static_globals.contains_key(&h) {
+                            let name = format!(".static.{}", static_counter);
+                            static_counter += 1;
+                            let data_id = obj.declare_data(&name, Linkage::Local, true, false)
+                                .map_err(|e| RavaError::Codegen(format!("declare static {name}: {e}")))?;
+                            let mut desc = cranelift_module::DataDescription::new();
+                            desc.define_zeroinit(8);
+                            obj.define_data(data_id, &desc)
+                                .map_err(|e| RavaError::Codegen(format!("define static {name}: {e}")))?;
+                            static_globals.insert(h, data_id);
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(Self {
             rir, obj, func_ids,
             rt_println_int, rt_println_float, rt_println_str,
@@ -139,6 +170,7 @@ impl<'a> TranslationCtx<'a> {
             str_constants: HashMap::new(),
             field_slots,
             class_tags,
+            static_globals,
         })
     }
 
@@ -484,9 +516,16 @@ impl<'a> TranslationCtx<'a> {
                     self.def_val(builder, var_map, var_counter, &ret.0, result);
                 }
             }
-            RirInstr::GetStatic { ret, .. } => {
-                let v = builder.ins().iconst(types::I64, 0);
-                self.def_val(builder, var_map, var_counter, &ret.0, v);
+            RirInstr::GetStatic { field, ret } => {
+                if let Some(&data_id) = self.static_globals.get(&field.0) {
+                    let gv = self.obj.declare_data_in_func(data_id, builder.func);
+                    let ptr = builder.ins().global_value(types::I64, gv);
+                    let v = builder.ins().load(types::I64, MemFlags::new(), ptr, 0);
+                    self.def_val(builder, var_map, var_counter, &ret.0, v);
+                } else {
+                    let v = builder.ins().iconst(types::I64, 0);
+                    self.def_val(builder, var_map, var_counter, &ret.0, v);
+                }
             }
             RirInstr::SetField { obj: obj_val, field, val } => {
                 let ptr = self.use_val(builder, var_map, var_counter, &obj_val.0);
@@ -496,7 +535,14 @@ impl<'a> TranslationCtx<'a> {
                 let func_ref = self.obj.declare_func_in_func(self.rt_obj_set_field, builder.func);
                 builder.ins().call(func_ref, &[ptr, slot_val, value]);
             }
-            RirInstr::SetStatic { .. } => {}
+            RirInstr::SetStatic { field, val } => {
+                if let Some(&data_id) = self.static_globals.get(&field.0) {
+                    let gv = self.obj.declare_data_in_func(data_id, builder.func);
+                    let ptr = builder.ins().global_value(types::I64, gv);
+                    let v = self.use_val(builder, var_map, var_counter, &val.0);
+                    builder.ins().store(MemFlags::new(), v, ptr, 0);
+                }
+            }
             RirInstr::NewArray { len, ret, .. } => {
                 let length = self.use_val(builder, var_map, var_counter, &len.0);
                 let func_ref = self.obj.declare_func_in_func(self.rt_arr_alloc, builder.func);

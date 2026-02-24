@@ -93,6 +93,39 @@ public class Main {
 }
 
 #[test]
+fn aot_static_fields() {
+    let src = r#"
+public class Main {
+    static int count = 0;
+    public static void main(String[] args) {
+        count++;
+        count++;
+        count++;
+        System.out.println(count);
+    }
+}
+"#;
+    assert_eq!(compile_and_run(src).trim(), "3");
+}
+
+#[test]
+fn aot_object_fields() {
+    let src = r#"
+public class Main {
+    int x;
+    int y;
+    public static void main(String[] args) {
+        Main m = new Main();
+        m.x = 10;
+        m.y = 20;
+        System.out.println(m.x + m.y);
+    }
+}
+"#;
+    assert_eq!(compile_and_run(src).trim(), "30");
+}
+
+#[test]
 fn aot_string_concat() {
     let src = r#"
 public class Main {
