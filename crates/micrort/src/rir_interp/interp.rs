@@ -203,9 +203,30 @@ impl RirInterpreter {
                 self.set_field(&obj_val, field.0, v);
             }
             RirInstr::GetStatic { field, ret } => {
-                let key = format!("static#{}", field.0);
-                let val = self.static_fields.borrow().get(&key).cloned().unwrap_or(RVal::Null);
-                env.insert(ret.0.clone(), val);
+                use crate::lowerer_hash::encode_builtin;
+                // Built-in constants
+                let builtin_val = if field.0 == encode_builtin("Math.PI") {
+                    Some(RVal::Float(std::f64::consts::PI))
+                } else if field.0 == encode_builtin("Math.E") {
+                    Some(RVal::Float(std::f64::consts::E))
+                } else if field.0 == encode_builtin("Integer.MAX_VALUE") {
+                    Some(RVal::Int(i32::MAX as i64))
+                } else if field.0 == encode_builtin("Integer.MIN_VALUE") {
+                    Some(RVal::Int(i32::MIN as i64))
+                } else if field.0 == encode_builtin("Long.MAX_VALUE") {
+                    Some(RVal::Int(i64::MAX))
+                } else if field.0 == encode_builtin("Long.MIN_VALUE") {
+                    Some(RVal::Int(i64::MIN))
+                } else {
+                    None
+                };
+                if let Some(v) = builtin_val {
+                    env.insert(ret.0.clone(), v);
+                } else {
+                    let key = format!("static#{}", field.0);
+                    let val = self.static_fields.borrow().get(&key).cloned().unwrap_or(RVal::Null);
+                    env.insert(ret.0.clone(), val);
+                }
             }
             RirInstr::SetStatic { field, val } => {
                 let key = format!("static#{}", field.0);

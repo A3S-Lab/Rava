@@ -416,3 +416,29 @@ class Main {
 "#);
     assert_eq!(out.trim(), "3\n1");
 }
+
+#[test]
+fn math_constants_and_abstract() {
+    let out = run(r#"
+abstract class Shape {
+    abstract double area();
+    String describe() { return String.format("%.2f", area()); }
+}
+class Circle extends Shape {
+    double r;
+    Circle(double r) { this.r = r; }
+    public double area() { return Math.PI * r * r; }
+}
+class Main {
+    public static void main(String[] args) {
+        Shape c = new Circle(1.0);
+        System.out.println(c.describe());
+        System.out.println(Math.abs(-5));
+        System.out.println(Math.max(3, 7));
+        System.out.println((int) Math.pow(2, 8));
+        System.out.println(Integer.MAX_VALUE > 0);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3.14\n5\n7\n256\ntrue");
+}
