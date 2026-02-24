@@ -164,7 +164,15 @@ impl RirInterpreter {
             }
             RirInstr::Call { func: func_id, args: arg_vals, ret } => {
                 let result = self.dispatch_call(func_id.0, arg_vals, env)?;
-                if let Some(r) = ret { env.insert(r.0.clone(), result); }
+                if let Some(r) = ret {
+                    env.insert(r.0.clone(), result);
+                } else if let RVal::Array(_) = &result {
+                    // <init> calls (e.g. ArrayList.<init>) return the constructed collection
+                    // but have ret=None; update the `this` variable (first arg) in env.
+                    if let Some(this_var) = arg_vals.first() {
+                        env.insert(this_var.0.clone(), result);
+                    }
+                }
             }
             RirInstr::New { class, ret } => {
                 let class_name = self.class_name_for(class.0);

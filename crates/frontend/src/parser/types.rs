@@ -51,7 +51,15 @@ impl Parser {
             loop {
                 match self.advance() {
                     Token::Lt  => depth += 1,
-                    Token::Gt  => { depth -= 1; if depth <= 0 { break; } }
+                    Token::Gt  => {
+                        depth -= 1;
+                        if depth <= 0 { break; }
+                    }
+                    // Handle >> as two closing >
+                    Token::Shr => {
+                        depth -= 2;
+                        if depth <= 0 { break; }
+                    }
                     Token::Eof => break,
                     _ => {}
                 }

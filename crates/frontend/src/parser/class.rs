@@ -240,6 +240,11 @@ impl Parser {
             return Ok(Some(Member::InnerClass(inner)));
         }
 
+        // Skip method-level generic type parameters: `<T extends Foo<T>>`
+        if self.peek() == &Token::Lt {
+            self.skip_type_params();
+        }
+
         // constructor: ClassName(
         if matches!(self.peek(), Token::Ident(n) if n == class_name) {
             if self.peek2() == &Token::LParen {

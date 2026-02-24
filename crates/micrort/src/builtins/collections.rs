@@ -10,8 +10,9 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
     match func_id {
         // ── ArrayList ─────────────────────────────────────────────────────────
         id if id == fnv("ArrayList") || id == fnv("ArrayList.<init>") => {
-            // If arg is a collection, copy it
-            if let Some(RVal::Array(src)) = args.first() {
+            // args[0] is `this` (empty array), args[1] is optional collection arg
+            let collection_arg = if args.len() >= 2 { args.get(1) } else { args.first() };
+            if let Some(RVal::Array(src)) = collection_arg {
                 return Some(Ok(RVal::Array(Rc::new(RefCell::new(src.borrow().clone())))));
             }
             Some(Ok(RVal::Array(Rc::new(RefCell::new(Vec::new())))))
