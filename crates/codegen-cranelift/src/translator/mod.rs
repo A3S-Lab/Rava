@@ -174,10 +174,13 @@ impl<'a> TranslationCtx<'a> {
             None => return Ok(()),
         };
 
+        // Emit a C-compatible `main(int argc, char** argv)` entry point.
         let mut entry_sig = Signature::new(CallConv::SystemV);
-        entry_sig.params.push(AbiParam::new(types::I64));
-        let entry_id = self.obj.declare_function("rava_entry", Linkage::Export, &entry_sig)
-            .map_err(|e| RavaError::Codegen(format!("declare rava_entry failed: {e}")))?;
+        entry_sig.params.push(AbiParam::new(types::I32)); // argc
+        entry_sig.params.push(AbiParam::new(types::I64)); // argv
+        entry_sig.returns.push(AbiParam::new(types::I32)); // return int
+        let entry_id = self.obj.declare_function("main", Linkage::Export, &entry_sig)
+            .map_err(|e| RavaError::Codegen(format!("declare main failed: {e}")))?;
 
         let mut clif_func = ir::Function::with_name_signature(
             ir::UserFuncName::user(0, entry_id.as_u32()),
@@ -191,21 +194,23 @@ impl<'a> TranslationCtx<'a> {
         builder.switch_to_block(block);
         builder.seal_block(block);
 
-        let args_val = builder.block_params(block)[0];
+        // argv is block param index 1 (i64 pointer)
+        let argv_val = builder.block_params(block)[1];
         let main_ref = self.obj.declare_func_in_func(main_clif_id, builder.func);
         let main_sig = builder.func.dfg.ext_funcs[main_ref].signature;
         let expected = builder.func.dfg.signatures[main_sig].params.len();
         if expected > 0 {
-            builder.ins().call(main_ref, &[args_val]);
+            builder.ins().call(main_ref, &[argv_val]);
         } else {
             builder.ins().call(main_ref, &[]);
         }
-        builder.ins().return_(&[]);
+        let zero = builder.ins().iconst(types::I32, 0);
+        builder.ins().return_(&[zero]);
         builder.finalize();
 
         let mut ctx = cranelift_codegen::Context::for_function(clif_func);
         self.obj.define_function(entry_id, &mut ctx)
-            .map_err(|e| RavaError::Codegen(format!("define rava_entry failed: {e}")))?;
+            .map_err(|e| RavaError::Codegen(format!("define main failed: {e}")))?;
 
         Ok(())
     }

@@ -1,0 +1,10 @@
+[package]
+name    = "rava-rt"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "rava_rt"
+
+[build-dependencies]
+cc = "1"

@@ -12,6 +12,7 @@ rava-common   = { workspace = true }
 rava-rir      = { workspace = true }
 rava-aot      = { workspace = true }
 rava-frontend = { workspace = true }
+rava-rt       = { path = "../../crates/rt" }
 thiserror     = { workspace = true }
 
 # Cranelift code generation

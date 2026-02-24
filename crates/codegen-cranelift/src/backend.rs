@@ -112,16 +112,15 @@ impl CraneliftBackend {
 
     /// Invoke the system linker to produce the final native binary.
     fn invoke_linker(&self, obj_path: &Path, output: &Path) -> Result<()> {
-        // Find the runtime C file
-        let rt_path = self.find_runtime()?;
+        let rt_lib_dir = rava_rt::lib_dir();
 
-        // Use `cc` as the linker driver — it handles platform differences
         let status = std::process::Command::new("cc")
             .arg(obj_path)
-            .arg(&rt_path)
             .arg("-o")
             .arg(output)
-            .arg("-lm") // math library
+            .arg(format!("-L{rt_lib_dir}"))
+            .arg("-lrava_rt")
+            .arg("-lm")
             .status()
             .map_err(|e| RavaError::Codegen(format!("failed to invoke linker: {e}")))?;
 
@@ -131,21 +130,6 @@ impl CraneliftBackend {
             )));
         }
         Ok(())
-    }
-
-    /// Find the rava runtime C file.
-    fn find_runtime(&self) -> Result<std::path::PathBuf> {
-        // Try relative to the executable
-        let exe = std::env::current_exe().unwrap_or_default();
-        let candidates = [
-            exe.parent().unwrap_or(Path::new(".")).join("../../runtime/rava_rt.c"),
-            std::path::PathBuf::from("runtime/rava_rt.c"),
-            exe.parent().unwrap_or(Path::new(".")).join("../share/rava/rava_rt.c"),
-        ];
-        for c in &candidates {
-            if c.exists() { return Ok(c.clone()); }
-        }
-        Err(RavaError::Codegen("cannot find runtime/rava_rt.c".into()))
     }
 }
 
