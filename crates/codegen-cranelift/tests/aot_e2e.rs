@@ -164,3 +164,66 @@ public class Main {
 "#;
     assert_eq!(compile_and_run(src).trim(), "Hello, World!");
 }
+
+#[test]
+fn aot_constructor_args() {
+    let src = r#"
+public class Main {
+    String name;
+    int age;
+    Main(String name, int age) {
+        this.name = name;
+        this.age = age;
+    }
+    public static void main(String[] args) {
+        Main m = new Main("Alice", 30);
+        System.out.println(m.name);
+        System.out.println(m.age);
+    }
+}
+"#;
+    let out = compile_and_run(src);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "Alice");
+    assert_eq!(lines[1], "30");
+}
+
+#[test]
+fn aot_while_loop() {
+    let src = r#"
+public class Main {
+    public static void main(String[] args) {
+        int n = 1;
+        int result = 1;
+        while (n <= 5) {
+            result *= n;
+            n++;
+        }
+        System.out.println(result);
+    }
+}
+"#;
+    assert_eq!(compile_and_run(src).trim(), "120");
+}
+
+#[test]
+fn aot_interface() {
+    let src = r#"
+interface Shape {
+    int area();
+}
+class Rect implements Shape {
+    int w;
+    int h;
+    Rect(int w, int h) { this.w = w; this.h = h; }
+    public int area() { return w * h; }
+}
+public class Main {
+    public static void main(String[] args) {
+        Shape s = new Rect(4, 5);
+        System.out.println(s.area());
+    }
+}
+"#;
+    assert_eq!(compile_and_run(src).trim(), "20");
+}

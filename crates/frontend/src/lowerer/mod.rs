@@ -92,6 +92,8 @@ impl Lowerer {
             if let Member::Field(f) = member {
                 let hash = encode_builtin(&f.name);
                 self.module.field_names.insert(hash, f.name.clone());
+                let rir_type = type_expr_to_rir_type(&f.ty);
+                self.module.field_types.insert(hash, rir_type);
             }
             if let Member::Method(m) = member {
                 let key = format!("__method__{}", m.name);
@@ -644,5 +646,19 @@ impl<'a> FuncCtx<'a> {
             }
         }
         arg_vals
+    }
+}
+
+/// Convert an AST TypeExpr to a RirType for field type tracking.
+pub(crate) fn type_expr_to_rir_type(t: &crate::ast::TypeExpr) -> RirType {
+    if t.array_dims > 0 {
+        return RirType::Ref(rava_rir::ClassId(encode_builtin("Array")));
+    }
+    match t.name.as_str() {
+        "int" | "long" | "short" | "byte" | "char" => RirType::I64,
+        "float" | "double" => RirType::F64,
+        "boolean" => RirType::Bool,
+        "void" => RirType::Void,
+        _ => RirType::Ref(rava_rir::ClassId(encode_builtin(&t.name))),
     }
 }

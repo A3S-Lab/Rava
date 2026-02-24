@@ -11,6 +11,8 @@ pub struct RirModule {
     pub functions:   Vec<RirFunction>,
     /// Maps FieldId hash → field name string, so the interpreter can reverse-lookup.
     pub field_names: HashMap<u32, String>,
+    /// Maps FieldId hash → field type, for AOT type propagation.
+    pub field_types: HashMap<u32, RirType>,
     /// Maps ClassId hash → class name string, so the interpreter can reverse-lookup.
     pub class_names: HashMap<u32, String>,
     /// Maps MethodId hash → method name string, so the interpreter can reverse-lookup.
@@ -51,7 +53,7 @@ pub struct FuncFlags {
 
 impl RirModule {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), functions: Vec::new(), field_names: HashMap::new(), class_names: HashMap::new(), method_names: HashMap::new(), class_hierarchy: HashMap::new() }
+        Self { name: name.into(), functions: Vec::new(), field_names: HashMap::new(), field_types: HashMap::new(), class_names: HashMap::new(), method_names: HashMap::new(), class_hierarchy: HashMap::new() }
     }
 
     /// Merge all functions and field names from `other` into this module.
@@ -61,6 +63,7 @@ impl RirModule {
     pub fn merge(&mut self, other: RirModule) {
         self.functions.extend(other.functions);
         self.field_names.extend(other.field_names);
+        self.field_types.extend(other.field_types);
         self.class_names.extend(other.class_names);
         self.method_names.extend(other.method_names);
         self.class_hierarchy.extend(other.class_hierarchy);

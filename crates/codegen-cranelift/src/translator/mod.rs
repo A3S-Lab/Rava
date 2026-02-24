@@ -514,6 +514,15 @@ impl<'a> TranslationCtx<'a> {
                     let inst = builder.ins().call(func_ref, &[ptr, slot_val]);
                     let result = builder.inst_results(inst)[0];
                     self.def_val(builder, var_map, var_counter, &ret.0, result);
+                    // Propagate field type for correct println dispatch
+                    if let Some(ft) = self.rir.field_types.get(&field.0) {
+                        match ft {
+                            rava_rir::RirType::Ref(_) => { val_types.insert(ret.0.clone(), ValType::Str); }
+                            rava_rir::RirType::F32 | rava_rir::RirType::F64 => { val_types.insert(ret.0.clone(), ValType::Float); }
+                            rava_rir::RirType::Bool => { val_types.insert(ret.0.clone(), ValType::Bool); }
+                            _ => {}
+                        }
+                    }
                 }
             }
             RirInstr::GetStatic { field, ret } => {
