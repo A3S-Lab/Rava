@@ -15,7 +15,15 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
                     else { i64::from_str_radix(s.trim(), radix).unwrap_or(0) };
             Some(Ok(RVal::Int(n)))
         }
-        id if id == fnv("Integer.toString") => Some(Ok(RVal::Str(args.first().map(|v| v.to_display()).unwrap_or_default()))),
+        id if id == fnv("Integer.toString") => {
+            let n = args.first().map(|v| v.as_int()).unwrap_or(0);
+            let radix = args.get(1).map(|v| v.as_int()).unwrap_or(10) as u32;
+            let s = if radix == 16 { format!("{:x}", n) }
+                    else if radix == 2 { format!("{:b}", n) }
+                    else if radix == 8 { format!("{:o}", n) }
+                    else { n.to_string() };
+            Some(Ok(RVal::Str(s)))
+        }
         id if id == fnv("Integer.toHexString")    => Some(Ok(RVal::Str(format!("{:x}", args.first().map(|v| v.as_int()).unwrap_or(0) as u64)))),
         id if id == fnv("Integer.toBinaryString") => Some(Ok(RVal::Str(format!("{:b}", args.first().map(|v| v.as_int()).unwrap_or(0) as u64)))),
         id if id == fnv("Integer.toOctalString")  => Some(Ok(RVal::Str(format!("{:o}", args.first().map(|v| v.as_int()).unwrap_or(0) as u64)))),

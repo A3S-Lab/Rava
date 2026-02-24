@@ -57,8 +57,14 @@ const KNOWN_METHODS: &[&str] = &[
     "addAll", "removeAll", "iterator", "toArray", "sort",
     "subList", "indexOf",
     // HashMap
-    "put", "getOrDefault", "containsKey", "containsValue",
-    "keySet", "values", "entrySet",
+    "put", "get", "getOrDefault", "containsKey", "containsValue",
+    "keySet", "values", "entrySet", "remove", "replace", "putIfAbsent",
+    "computeIfAbsent", "merge", "compute", "putAll", "forEach",
+    // PriorityQueue / Queue / Deque
+    "offer", "poll", "peek", "push", "pop",
+    "addFirst", "addLast", "removeFirst", "removeLast",
+    "getFirst", "getLast", "offerFirst", "offerLast",
+    "pollFirst", "pollLast", "peekFirst", "peekLast",
     // StringBuilder
     "append", "insert", "reverse", "deleteCharAt",
     // Object

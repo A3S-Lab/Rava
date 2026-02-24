@@ -77,7 +77,11 @@ pub fn dispatch_named(s: &str, method: &str, args: &[RVal]) -> Option<Result<RVa
             Some(Ok(RVal::Str(s.replace(pat.as_str(), to.as_str()))))
         }
         "indexOf" => {
-            let pat = args.first().map(|v| v.to_display()).unwrap_or_default();
+            let arg = args.first().cloned().unwrap_or(RVal::Null);
+            let pat = match &arg {
+                RVal::Int(n) => char::from_u32(*n as u32).map(|c| c.to_string()).unwrap_or_default(),
+                _ => arg.to_display(),
+            };
             Some(Ok(RVal::Int(s.find(pat.as_str()).map(|i| i as i64).unwrap_or(-1))))
         }
         "lastIndexOf" => {

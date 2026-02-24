@@ -350,3 +350,69 @@ class Main {
 "#);
     assert_eq!(out.trim(), "one\ntwo\nthree\nother\nother");
 }
+
+#[test]
+fn treemap_sorted() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> map = new TreeMap<>();
+        map.put("banana", 2);
+        map.put("apple", 1);
+        map.put("cherry", 3);
+        for (String k : map.keySet()) System.out.println(k);
+        System.out.println(map.get("apple"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "apple\nbanana\ncherry\n1");
+}
+
+#[test]
+fn priority_queue() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        PriorityQueue<Integer> pq = new PriorityQueue<>();
+        pq.offer(5); pq.offer(1); pq.offer(3); pq.offer(2);
+        System.out.println(pq.poll());
+        System.out.println(pq.poll());
+        System.out.println(pq.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1\n2\n2");
+}
+
+#[test]
+fn integer_radix() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println(Integer.toString(255, 16));
+        System.out.println(Integer.toString(10, 2));
+        System.out.println(Integer.toHexString(255));
+        System.out.println(Integer.toBinaryString(10));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "ff\n1010\nff\n1010");
+}
+
+#[test]
+fn string_chars_stream() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String s = "hello world";
+        long vowels = s.chars().filter(c -> "aeiou".indexOf(c) >= 0).count();
+        System.out.println(vowels);
+        long spaces = s.chars().filter(c -> c == ' ').count();
+        System.out.println(spaces);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n1");
+}

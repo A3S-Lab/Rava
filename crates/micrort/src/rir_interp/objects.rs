@@ -382,4 +382,66 @@ impl RirInterpreter {
     pub(super) fn as_array<'b>(&self, val: &'b RVal) -> Option<&'b Rc<RefCell<Vec<RVal>>>> {
         if let RVal::Array(arr) = val { Some(arr) } else { None }
     }
+
+    // ── PriorityQueue methods ─────────────────────────────────────────────────
+
+    pub(super) fn dispatch_priority_queue(&self, id: ObjId, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
+        match method {
+            "offer" | "add" => {
+                let val = args.first().cloned().unwrap_or(RVal::Null);
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    let items = obj.fields.entry("__items__".into()).or_insert(RVal::Array(Rc::new(RefCell::new(vec![]))));
+                    if let RVal::Array(arr) = items {
+                        arr.borrow_mut().push(val);
+                        arr.borrow_mut().sort_by(|a, b| crate::builtins::rval_cmp(a, b));
+                    }
+                }
+                Some(Ok(RVal::Bool(true)))
+            }
+            "poll" | "remove" => {
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    if let Some(RVal::Array(arr)) = obj.fields.get("__items__") {
+                        let mut v = arr.borrow_mut();
+                        if !v.is_empty() { return Some(Ok(v.remove(0))); }
+                    }
+                }
+                Some(Ok(RVal::Null))
+            }
+            "peek" => {
+                let heap = self.heap.borrow();
+                if let Some(obj) = heap.get(&id) {
+                    if let Some(RVal::Array(arr)) = obj.fields.get("__items__") {
+                        return Some(Ok(arr.borrow().first().cloned().unwrap_or(RVal::Null)));
+                    }
+                }
+                Some(Ok(RVal::Null))
+            }
+            "size" => {
+                let heap = self.heap.borrow();
+                let n = heap.get(&id)
+                    .and_then(|o| o.fields.get("__items__"))
+                    .and_then(|v| if let RVal::Array(a) = v { Some(a.borrow().len() as i64) } else { None })
+                    .unwrap_or(0);
+                Some(Ok(RVal::Int(n)))
+            }
+            "isEmpty" => {
+                let heap = self.heap.borrow();
+                let empty = heap.get(&id)
+                    .and_then(|o| o.fields.get("__items__"))
+                    .and_then(|v| if let RVal::Array(a) = v { Some(a.borrow().is_empty()) } else { None })
+                    .unwrap_or(true);
+                Some(Ok(RVal::Bool(empty)))
+            }
+            "clear" => {
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    obj.fields.insert("__items__".into(), RVal::Array(Rc::new(RefCell::new(vec![]))));
+                }
+                Some(Ok(RVal::Void))
+            }
+            _ => None,
+        }
+    }
 }

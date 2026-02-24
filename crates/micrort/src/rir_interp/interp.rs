@@ -178,6 +178,15 @@ impl RirInterpreter {
                 let class_name = self.class_name_for(class.0);
                 if class_name == "ArrayList" || class_name == "LinkedList" {
                     env.insert(ret.0.clone(), RVal::Array(Rc::new(RefCell::new(Vec::new()))));
+                } else if class_name == "PriorityQueue" {
+                    let id = self.alloc_object("PriorityQueue");
+                    {
+                        let mut heap = self.heap.borrow_mut();
+                        if let Some(obj) = heap.get_mut(&id) {
+                            obj.fields.insert("__items__".into(), RVal::Array(Rc::new(RefCell::new(vec![]))));
+                        }
+                    }
+                    env.insert(ret.0.clone(), RVal::Object(id));
                 } else {
                     let id = self.alloc_object(&class_name);
                     env.insert(ret.0.clone(), RVal::Object(id));

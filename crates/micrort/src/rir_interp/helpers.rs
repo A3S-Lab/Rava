@@ -69,7 +69,9 @@ impl RirInterpreter {
             return name.clone();
         }
         for name in &["String", "Integer", "Long", "Double", "Float", "Boolean",
-                       "ArrayList", "HashMap", "Object", "Exception",
+                       "ArrayList", "HashMap", "TreeMap", "LinkedHashMap",
+                       "PriorityQueue", "LinkedList", "HashSet", "TreeSet",
+                       "Object", "Exception",
                        "RuntimeException", "NullPointerException",
                        "IllegalArgumentException", "IllegalStateException",
                        "IndexOutOfBoundsException", "ArrayIndexOutOfBoundsException",
@@ -282,8 +284,19 @@ impl RirInterpreter {
                             return result;
                         }
                     }
-                    if class_name == "HashMap" {
+                    if class_name == "HashMap" || class_name == "TreeMap" || class_name == "LinkedHashMap" {
                         if let Some(result) = self.dispatch_hash_map(*id, &method_name, method_args) {
+                            // For TreeMap, sort keySet/entrySet results
+                            if class_name == "TreeMap" && (method_name == "keySet" || method_name == "values" || method_name == "entrySet") {
+                                if let Ok(RVal::Array(arr)) = &result {
+                                    arr.borrow_mut().sort_by(|a, b| a.to_display().cmp(&b.to_display()));
+                                }
+                            }
+                            return result;
+                        }
+                    }
+                    if class_name == "PriorityQueue" {
+                        if let Some(result) = self.dispatch_priority_queue(*id, &method_name, method_args) {
                             return result;
                         }
                     }
