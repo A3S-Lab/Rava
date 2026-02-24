@@ -14,13 +14,14 @@ mod stmt;
 mod expr;
 
 pub struct Parser {
-    pub(crate) tokens: Vec<Token>,
-    pub(crate) pos:    usize,
+    pub(crate) tokens:         Vec<Token>,
+    pub(crate) pos:            usize,
+    pub(crate) pending_fields: Vec<crate::ast::Member>,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self { tokens, pos: 0, pending_fields: Vec::new() }
     }
 
     // ── Token navigation ──────────────────────────────────────────────────────

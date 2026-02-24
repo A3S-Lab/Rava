@@ -56,6 +56,20 @@ pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Op
         RVal::Str(s)                    => string::dispatch_named(s, method, args),
         RVal::Array(arr)                => collections::dispatch_array_named(arr, method, args),
         RVal::ArrayIter(arr, idx)       => dispatch_array_iter(arr, idx, method),
+        RVal::Int(n) => match method {
+            "compareTo" => {
+                let other = args.first().map(|v| v.as_int()).unwrap_or(0);
+                Some(Ok(RVal::Int(n.cmp(&other) as i64)))
+            }
+            _ => None,
+        },
+        RVal::Float(f) => match method {
+            "compareTo" => {
+                let other = args.first().map(|v| v.as_float()).unwrap_or(0.0);
+                Some(Ok(RVal::Int(f.partial_cmp(&other).map(|o| o as i64).unwrap_or(0))))
+            }
+            _ => None,
+        },
         RVal::Object(_)                 => {
             // Try concurrent instance methods (AtomicInteger, Lock, etc.)
             concurrent::dispatch_named(method, args)

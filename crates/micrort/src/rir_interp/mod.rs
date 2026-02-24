@@ -69,6 +69,7 @@ const KNOWN_METHODS: &[&str] = &[
     "stream", "map", "filter", "forEach", "collect", "reduce",
     "sorted", "count", "toList", "distinct", "limit", "skip",
     "findFirst", "anyMatch", "allMatch", "noneMatch",
+    "mapToInt", "mapToLong", "mapToDouble", "sum", "average", "min", "max",
     // Iterable / Iterator
     "of", "iterator", "hasNext", "next",
 ];

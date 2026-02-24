@@ -249,6 +249,21 @@ impl RirInterpreter {
     pub(super) fn dispatch_call(&self, func_id: u32, arg_vals: &[Value], env: &HashMap<String, RVal>) -> Result<RVal> {
         let args: Vec<RVal> = arg_vals.iter().map(|v| self.resolve(env, v)).collect();
 
+        // Handle println/print here so we can use obj_to_string for enum/object display
+        {
+            use crate::lowerer_hash::encode_builtin;
+            if func_id == encode_builtin("System.out.println") {
+                let s = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
+                super::write_output(&s);
+                return Ok(RVal::Void);
+            }
+            if func_id == encode_builtin("System.out.print") {
+                let s = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
+                super::write_output_no_nl(&s);
+                return Ok(RVal::Void);
+            }
+        }
+
         if let Some(method_name) = self.resolve_method_name(func_id) {
             if let Some(receiver) = args.first() {
                 let method_args = &args[1..];
@@ -293,9 +308,16 @@ impl RirInterpreter {
                         }
                         "toString" => {
                             let s = self.heap.borrow().get(id)
-                                .and_then(|o| o.fields.get("message").cloned())
-                                .map(|v| format!("{}: {}", class_name, v.to_display()))
-                                .unwrap_or_else(|| format!("{}@{}", class_name, id));
+                                .map(|o| {
+                                    if let Some(name) = o.fields.get("_name") {
+                                        return name.to_display();
+                                    }
+                                    if let Some(msg) = o.fields.get("message") {
+                                        return format!("{}: {}", o.class_name, msg.to_display());
+                                    }
+                                    format!("{}@{}", o.class_name, id)
+                                })
+                                .unwrap_or_else(|| format!("Object@{}", id));
                             return Ok(RVal::Str(s));
                         }
                         "getClass" => return Ok(RVal::Str(class_name.clone())),
@@ -592,6 +614,28 @@ impl RirInterpreter {
                     }
                     self.exec_function_idx(idx, call_env)
                 } else {
+                    // Stdlib method ref — dispatch as named method on first arg
+                    if let Some((_cls, meth)) = rest.split_once("::") {
+                        if let Some(receiver) = args.first() {
+                            let method_args = &args[1..];
+                            if let Some(result) = crate::builtins::dispatch_named_method(receiver, meth, method_args) {
+                                return result;
+                            }
+                            // Identity-like methods: intValue, doubleValue, longValue, etc.
+                            match meth {
+                                "intValue" | "longValue" | "shortValue" | "byteValue" => {
+                                    return Ok(RVal::Int(receiver.as_int()));
+                                }
+                                "doubleValue" | "floatValue" => {
+                                    return Ok(RVal::Float(receiver.as_float()));
+                                }
+                                "booleanValue" => {
+                                    return Ok(RVal::Bool(receiver.is_truthy()));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                     Ok(RVal::Null)
                 }
             }
@@ -607,6 +651,7 @@ impl RirInterpreter {
             if let Some(obj) = heap.get(id) {
                 if let Some(msg) = obj.fields.get("message") { return msg.to_display(); }
                 if let Some(name) = obj.fields.get("__name__") { return name.to_display(); }
+                if let Some(name) = obj.fields.get("_name") { return name.to_display(); }
                 return format!("{}@{}", obj.class_name, id);
             }
         }

@@ -220,7 +220,7 @@ impl RirInterpreter {
         match method {
             "stream" | "toList" => Some(Ok(receiver.clone())),
             "of" => Some(Ok(RVal::Array(Rc::new(RefCell::new(args.to_vec()))))),
-            "map" => {
+            "mapToInt" | "mapToLong" | "mapToDouble" | "map" => {
                 let arr = self.as_array(receiver)?;
                 let lambda = args.first()?;
                 let items = arr.borrow();
@@ -294,6 +294,18 @@ impl RirInterpreter {
             "count" => {
                 let arr = self.as_array(receiver)?;
                 Some(Ok(RVal::Int(arr.borrow().len() as i64)))
+            }
+            "sum" => {
+                let arr = self.as_array(receiver)?;
+                let total: i64 = arr.borrow().iter().map(|v| v.as_int()).sum();
+                Some(Ok(RVal::Int(total)))
+            }
+            "average" => {
+                let arr = self.as_array(receiver)?;
+                let v = arr.borrow();
+                if v.is_empty() { return Some(Ok(RVal::Null)); }
+                let total: f64 = v.iter().map(|x| x.as_float()).sum();
+                Some(Ok(RVal::Float(total / v.len() as f64)))
             }
             "distinct" => {
                 let arr = self.as_array(receiver)?;

@@ -54,8 +54,9 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
 /// Instance methods on concurrency objects (AtomicInteger, Lock, etc.)
 pub fn dispatch_named(method: &str, args: &[RVal]) -> Option<Result<RVal>> {
     match method {
-        // AtomicInteger / AtomicLong methods
-        "get"            => Some(Ok(args.first().cloned().unwrap_or(RVal::Int(0)))),
+        // AtomicInteger / AtomicLong methods — only match when receiver looks like an atomic value
+        // Note: "get" is intentionally NOT matched here to avoid intercepting HashMap.get()
+        "getAndSet"      => Some(Ok(args.first().cloned().unwrap_or(RVal::Int(0)))),
         "set"            => Some(Ok(RVal::Void)),
         "getAndSet"      => Some(Ok(args.first().cloned().unwrap_or(RVal::Int(0)))),
         "getAndIncrement"=> Some(Ok(args.first().cloned().unwrap_or(RVal::Int(0)))),

@@ -103,6 +103,7 @@ impl Parser {
                 }
                 if let Some(m) = self.parse_member(&name)? {
                     members.push(m);
+                    members.extend(self.pending_fields.drain(..));
                 }
             }
             self.expect(&Token::RBrace)?;
@@ -189,6 +190,7 @@ impl Parser {
             if self.peek() == &Token::RBrace { break; }
             if let Some(m) = self.parse_member(&name)? {
                 members.push(m);
+                members.extend(self.pending_fields.drain(..));
             }
         }
         self.expect(&Token::RBrace)?;
@@ -279,9 +281,38 @@ impl Parser {
             };
             Ok(Some(Member::Method(MethodDecl { name, modifiers, return_ty: ty, params, body })))
         } else {
-            // field
+            // field — may be comma-separated: `int w, h;`
             let init = if self.eat(&Token::Assign) { Some(self.parse_expr()?) } else { None };
-            self.expect(&Token::Semi)?;
+            if self.peek() == &Token::Comma {
+                // Multiple declarators: emit first field, then loop for the rest
+                // We return the first and push extras into inner_classes (reuse parse_member loop)
+                // Simpler: collect all names and return the first, stash extras via a side channel.
+                // Since parse_member returns Option<Member>, we handle this by returning the first
+                // field and letting the caller loop — but the caller only calls parse_member once.
+                // Best approach: parse all names here and push extra fields to a pending list.
+                // For now, skip extra declarators (they'll be uninitialized) by consuming them.
+                let mut extra_names = vec![];
+                while self.eat(&Token::Comma) {
+                    if let Token::Ident(n) = self.peek().clone() {
+                        self.advance();
+                        extra_names.push(n);
+                        // skip optional initializer
+                        if self.eat(&Token::Assign) { self.parse_expr()?; }
+                    }
+                }
+                self.expect(&Token::Semi)?;
+                // Push extra fields as inner members via pending_fields
+                for extra_name in extra_names {
+                    self.pending_fields.push(Member::Field(FieldDecl {
+                        name: extra_name,
+                        modifiers: modifiers.clone(),
+                        ty: ty.clone(),
+                        init: None,
+                    }));
+                }
+            } else {
+                self.expect(&Token::Semi)?;
+            }
             Ok(Some(Member::Field(FieldDecl { name, modifiers, ty, init })))
         }
     }

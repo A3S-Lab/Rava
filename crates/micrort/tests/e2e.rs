@@ -192,3 +192,161 @@ class Main {
 "#);
     assert_eq!(out.trim(), "caught");
 }
+
+#[test]
+fn hashmap() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> map = new HashMap<>();
+        map.put("a", 1);
+        map.put("b", 2);
+        map.put("c", 3);
+        System.out.println(map.get("b"));
+        System.out.println(map.size());
+        System.out.println(map.containsKey("a"));
+        System.out.println(map.containsKey("z"));
+        map.remove("a");
+        System.out.println(map.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "2\n3\ntrue\nfalse\n2");
+}
+
+#[test]
+fn collections_sort_and_foreach() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> nums = new ArrayList<>(Arrays.asList(3, 1, 4, 1, 5, 9, 2, 6));
+        Collections.sort(nums);
+        System.out.println(nums.get(0));
+        System.out.println(nums.get(nums.size() - 1));
+        int sum = 0;
+        for (int n : nums) { sum += n; }
+        System.out.println(sum);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1\n9\n31");
+}
+
+#[test]
+fn string_format() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println(String.format("%d + %d = %d", 3, 4, 7));
+        System.out.println(String.format("Hello, %s!", "World"));
+        System.out.println(String.format("%.2f", 3.14159));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3 + 4 = 7\nHello, World!\n3.14");
+}
+
+#[test]
+fn interface_and_polymorphism() {
+    let out = run(r#"
+interface Shape {
+    double area();
+    default String describe() { return "shape with area " + area(); }
+}
+class Circle implements Shape {
+    double r;
+    Circle(double r) { this.r = r; }
+    public double area() { return 3.14159 * r * r; }
+}
+class Rect implements Shape {
+    int w, h;
+    Rect(int w, int h) { this.w = w; this.h = h; }
+    public double area() { return w * h; }
+}
+class Main {
+    public static void main(String[] args) {
+        Shape[] shapes = { new Rect(3, 4), new Rect(5, 6) };
+        int total = 0;
+        for (Shape s : shapes) { total += (int) s.area(); }
+        System.out.println(total);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "42");
+}
+
+#[test]
+fn generic_method() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    static <T extends Comparable<T>> T max(T a, T b) {
+        return a.compareTo(b) >= 0 ? a : b;
+    }
+    public static void main(String[] args) {
+        System.out.println(max(3, 7));
+        System.out.println(max("apple", "banana"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "7\nbanana");
+}
+
+#[test]
+fn lambda_and_stream() {
+    let out = run(r#"
+import java.util.*;
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+        int sum = nums.stream()
+            .filter(n -> n % 2 == 0)
+            .mapToInt(Integer::intValue)
+            .sum();
+        System.out.println(sum);
+        long count = nums.stream().filter(n -> n > 5).count();
+        System.out.println(count);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "30\n5");
+}
+
+#[test]
+fn enum_basic() {
+    let out = run(r#"
+enum Day { MON, TUE, WED, THU, FRI, SAT, SUN }
+class Main {
+    public static void main(String[] args) {
+        Day d = Day.WED;
+        System.out.println(d);
+        System.out.println(d.ordinal());
+        System.out.println(Day.values().length);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "WED\n2\n7");
+}
+
+#[test]
+fn switch_expression() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        for (int i = 1; i <= 5; i++) {
+            String s = switch (i) {
+                case 1 -> "one";
+                case 2 -> "two";
+                case 3 -> "three";
+                default -> "other";
+            };
+            System.out.println(s);
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "one\ntwo\nthree\nother\nother");
+}
