@@ -288,6 +288,14 @@ impl<'a> FuncCtx<'a> {
                         value: format!("__try_catch__{}:{}", cbb.0, type_list),
                     });
                 }
+                // Register finally block as a catch-all that runs before re-throwing
+                if let Some(fbb) = finally_bb {
+                    let marker = self.fresh_value();
+                    self.emit(RirInstr::ConstStr {
+                        ret: marker,
+                        value: format!("__try_finally__{}:{}", fbb.0, exit_bb.0),
+                    });
+                }
 
                 self.lower_block(try_body)?;
 
@@ -296,6 +304,13 @@ impl<'a> FuncCtx<'a> {
                     self.emit(RirInstr::ConstStr {
                         ret: marker,
                         value: "__try_end__".into(),
+                    });
+                }
+                if finally_bb.is_some() {
+                    let marker = self.fresh_value();
+                    self.emit(RirInstr::ConstStr {
+                        ret: marker,
+                        value: "__try_finally_end__".into(),
                     });
                 }
                 if !self.current_block_ends_with_terminator() {

@@ -49,14 +49,20 @@ pub fn format_java_string(args: &[RVal]) -> String {
                 }
                 'd' => {
                     let val = args.get(arg_idx).map(|v| v.as_int()).unwrap_or(0);
+                    let plus = flags.contains('+');
                     if let Some(w) = width {
                         if flags.contains('0') {
-                            result.push_str(&format!("{:0>width$}", val, width = w));
+                            let s = if plus && val >= 0 { format!("+{:0>width$}", val, width = w.saturating_sub(1)) } else { format!("{:0>width$}", val, width = w) };
+                            result.push_str(&s);
                         } else if flags.contains('-') {
-                            result.push_str(&format!("{:<width$}", val, width = w));
+                            let s = if plus && val >= 0 { format!("+{:<width$}", val, width = w.saturating_sub(1)) } else { format!("{:<width$}", val, width = w) };
+                            result.push_str(&s);
                         } else {
-                            result.push_str(&format!("{:width$}", val, width = w));
+                            let s = if plus && val >= 0 { format!("+{:>width$}", val, width = w.saturating_sub(1)) } else { format!("{:>width$}", val, width = w) };
+                            result.push_str(&s);
                         }
+                    } else if plus && val >= 0 {
+                        result.push_str(&format!("+{}", val));
                     } else {
                         result.push_str(&val.to_string());
                     }
@@ -65,13 +71,29 @@ pub fn format_java_string(args: &[RVal]) -> String {
                 'f' => {
                     let val = args.get(arg_idx).map(|v| v.as_float()).unwrap_or(0.0);
                     let prec = precision.unwrap_or(6);
-                    result.push_str(&format!("{:.prec$}", val, prec = prec));
+                    if let Some(w) = width {
+                        if flags.contains('-') {
+                            result.push_str(&format!("{:<width$.prec$}", val, width = w, prec = prec));
+                        } else {
+                            result.push_str(&format!("{:>width$.prec$}", val, width = w, prec = prec));
+                        }
+                    } else {
+                        result.push_str(&format!("{:.prec$}", val, prec = prec));
+                    }
                     arg_idx += 1;
                 }
                 'e' => {
                     let val = args.get(arg_idx).map(|v| v.as_float()).unwrap_or(0.0);
                     let prec = precision.unwrap_or(6);
-                    result.push_str(&format!("{:.prec$e}", val, prec = prec));
+                    // Rust uses e5, Java uses e+05 — reformat
+                    let raw = format!("{:.prec$e}", val, prec = prec);
+                    let formatted = if let Some(e_pos) = raw.find('e') {
+                        let mantissa = &raw[..e_pos];
+                        let exp_str = &raw[e_pos+1..];
+                        let exp: i32 = exp_str.parse().unwrap_or(0);
+                        format!("{}e{:+03}", mantissa, exp)
+                    } else { raw };
+                    result.push_str(&formatted);
                     arg_idx += 1;
                 }
                 'b' => {

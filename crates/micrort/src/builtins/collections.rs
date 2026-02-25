@@ -242,8 +242,16 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         id if id == fnv("Collections.emptyMap") => Some(Ok(RVal::Null)),
         id if id == fnv("Collections.unmodifiableList")
             || id == fnv("Collections.unmodifiableSet")
-            || id == fnv("Collections.unmodifiableMap")
-            || id == fnv("Collections.synchronizedList")
+            || id == fnv("Collections.unmodifiableMap") =>
+        {
+            let val = args.first().cloned().unwrap_or(RVal::Null);
+            if let RVal::Array(ref arr) = val {
+                let ptr = Rc::as_ptr(arr) as usize;
+                crate::rir_interp::UNMODIFIABLE.with(|u| u.borrow_mut().insert(ptr));
+            }
+            Some(Ok(val))
+        }
+        id if id == fnv("Collections.synchronizedList")
             || id == fnv("Collections.synchronizedMap")
             || id == fnv("Collections.checkedList") =>
         {
@@ -327,6 +335,14 @@ pub fn rval_cmp(a: &RVal, b: &RVal) -> std::cmp::Ordering {
 /// ArrayList instance methods.
 pub fn dispatch_array_named(arr: &Rc<RefCell<Vec<RVal>>>, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
     use std::cell::Cell;
+    // Check unmodifiable before any mutation
+    let is_unmod = crate::rir_interp::UNMODIFIABLE.with(|u| u.borrow().contains(&(Rc::as_ptr(arr) as usize)));
+    if is_unmod && matches!(method, "add" | "remove" | "set" | "addAll" | "removeAll" | "clear" | "sort") {
+        return Some(Err(rava_common::error::RavaError::JavaException {
+            exception_type: "UnsupportedOperationException".into(),
+            message: format!("Collection is unmodifiable"),
+        }));
+    }
     match method {
         "size" | "length" => Some(Ok(RVal::Int(arr.borrow().len() as i64))),
         "isEmpty"         => Some(Ok(RVal::Bool(arr.borrow().is_empty()))),

@@ -585,10 +585,29 @@ impl<'a> FuncCtx<'a> {
             Expr::MethodRef { obj, name } => {
                 let ret = self.fresh_value();
                 let obj_str = expr_to_str(obj);
-                self.emit(RirInstr::ConstStr {
-                    ret: ret.clone(),
-                    value: format!("__methodref__{}::{}", obj_str, name),
-                });
+                // If obj is a variable (lowercase start, not a known class), emit a
+                // bound method ref that captures the receiver at runtime.
+                let is_var = obj_str.chars().next().map(|c| c.is_lowercase()).unwrap_or(false)
+                    && !matches!(obj_str.as_str(), "int" | "long" | "double" | "float" | "boolean");
+                if is_var {
+                    // Emit: __bound_methodref__<varname>::<method>
+                    // The interpreter will look up the variable value at call time.
+                    let sentinel = format!("__bound_methodref__{}::{}", obj_str, name);
+                    self.emit(RirInstr::ConstStr { ret: ret.clone(), value: sentinel });
+                    // Also emit a capture instruction so the interpreter can find the receiver.
+                    // We encode this as a lambda capture via a special Call.
+                    let recv_val = Value(obj_str.clone());
+                    self.emit(RirInstr::Call {
+                        func: FuncId(encode_builtin("__capture_bound_methodref__")),
+                        args: vec![ret.clone(), recv_val],
+                        ret: None,
+                    });
+                } else {
+                    self.emit(RirInstr::ConstStr {
+                        ret: ret.clone(),
+                        value: format!("__methodref__{}::{}", obj_str, name),
+                    });
+                }
                 Ok(ret)
             }
 

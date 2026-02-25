@@ -26,6 +26,9 @@ thread_local! {
     /// Annotation registry: "ClassName" or "ClassName::memberName" → list of annotation names.
     pub(crate) static ANNOTATION_REGISTRY: RefCell<HashMap<String, Vec<String>>> =
         RefCell::new(HashMap::new());
+    /// Unmodifiable array pointers (raw Rc address) — add/remove/set throw UnsupportedOperationException.
+    pub(crate) static UNMODIFIABLE: RefCell<std::collections::HashSet<usize>> =
+        RefCell::new(std::collections::HashSet::new());
 }
 
 /// Write a line to the current output sink (or real stdout if none set).
@@ -77,9 +80,14 @@ const KNOWN_METHODS: &[&str] = &[
     // StringBuilder
     "append", "insert", "reverse", "deleteCharAt",
     // Object
-    "getClass", "notify", "wait", "getMessage",
+    "getClass", "notify", "wait", "getMessage", "getCause",
     // Map.Entry
     "getKey", "getValue",
+    // Functional interfaces (Function, Predicate, Consumer, Supplier)
+    "apply", "test", "accept", "get", "run",
+    "andThen", "compose", "and", "or", "negate",
+    // Comparator
+    "thenComparing", "thenComparingInt", "thenComparingLong", "thenComparingDouble", "reversed",
     // Stream
     "stream", "map", "flatMap", "filter", "forEach", "collect", "reduce",
     "sorted", "count", "toList", "distinct", "limit", "skip",

@@ -700,6 +700,109 @@ impl RirInterpreter {
                     }
                 }
             }
+            // Function.andThen(after) — compose: apply this, then after
+            "andThen" => {
+                let f = receiver.clone();
+                let after = args.first().cloned().unwrap_or(RVal::Null);
+                // Return a composed lambda sentinel
+                let composed_name = format!("__composed_andThen__{}__{}", f.to_display(), after.to_display());
+                super::LAMBDA_CAPTURES.with(|lc| {
+                    let mut map = lc.borrow_mut();
+                    let mut captures = std::collections::HashMap::new();
+                    captures.insert("__f__".into(), f);
+                    captures.insert("__after__".into(), after);
+                    map.insert(composed_name.clone(), captures);
+                });
+                Some(Ok(RVal::Str(composed_name)))
+            }
+            // Function.compose(before) — compose: apply before, then this
+            "compose" => {
+                let f = receiver.clone();
+                let before = args.first().cloned().unwrap_or(RVal::Null);
+                let composed_name = format!("__composed_compose__{}__{}", f.to_display(), before.to_display());
+                super::LAMBDA_CAPTURES.with(|lc| {
+                    let mut map = lc.borrow_mut();
+                    let mut captures = std::collections::HashMap::new();
+                    captures.insert("__f__".into(), f);
+                    captures.insert("__before__".into(), before);
+                    map.insert(composed_name.clone(), captures);
+                });
+                Some(Ok(RVal::Str(composed_name)))
+            }
+            // Predicate.and(other) — logical AND of two predicates
+            "and" => {
+                let f = receiver.clone();
+                let other = args.first().cloned().unwrap_or(RVal::Null);
+                let composed_name = format!("__composed_and__{}__{}", f.to_display(), other.to_display());
+                super::LAMBDA_CAPTURES.with(|lc| {
+                    let mut map = lc.borrow_mut();
+                    let mut captures = std::collections::HashMap::new();
+                    captures.insert("__f__".into(), f);
+                    captures.insert("__other__".into(), other);
+                    map.insert(composed_name.clone(), captures);
+                });
+                Some(Ok(RVal::Str(composed_name)))
+            }
+            // Predicate.or(other) — logical OR of two predicates
+            "or" => {
+                let f = receiver.clone();
+                let other = args.first().cloned().unwrap_or(RVal::Null);
+                let composed_name = format!("__composed_or__{}__{}", f.to_display(), other.to_display());
+                super::LAMBDA_CAPTURES.with(|lc| {
+                    let mut map = lc.borrow_mut();
+                    let mut captures = std::collections::HashMap::new();
+                    captures.insert("__f__".into(), f);
+                    captures.insert("__other__".into(), other);
+                    map.insert(composed_name.clone(), captures);
+                });
+                Some(Ok(RVal::Str(composed_name)))
+            }
+            // Predicate.negate() — logical NOT
+            "negate" => {
+                let f = receiver.clone();
+                let composed_name = format!("__composed_negate__{}", f.to_display());
+                super::LAMBDA_CAPTURES.with(|lc| {
+                    let mut map = lc.borrow_mut();
+                    let mut captures = std::collections::HashMap::new();
+                    captures.insert("__f__".into(), f);
+                    map.insert(composed_name.clone(), captures);
+                });
+                Some(Ok(RVal::Str(composed_name)))
+            }
+            // Comparator.thenComparing(other) — chain two comparators
+            "thenComparing" | "thenComparingInt" | "thenComparingLong" | "thenComparingDouble" => {
+                let primary = receiver.clone();
+                let secondary = args.first().cloned().unwrap_or(RVal::Null);
+                let composed_name = format!("__comparator__then__{}__{}", primary.to_display(), secondary.to_display());
+                super::LAMBDA_CAPTURES.with(|lc| {
+                    let mut map = lc.borrow_mut();
+                    let mut captures = std::collections::HashMap::new();
+                    captures.insert("__primary__".into(), primary);
+                    captures.insert("__secondary__".into(), secondary);
+                    map.insert(composed_name.clone(), captures);
+                });
+                Some(Ok(RVal::Str(composed_name)))
+            }
+            // Comparator.reversed()
+            "reversed" => {
+                let f = receiver.clone();
+                let composed_name = format!("__comparator__reversed__{}", f.to_display());
+                super::LAMBDA_CAPTURES.with(|lc| {
+                    let mut map = lc.borrow_mut();
+                    let mut captures = std::collections::HashMap::new();
+                    captures.insert("__f__".into(), f);
+                    map.insert(composed_name.clone(), captures);
+                });
+                Some(Ok(RVal::Str(composed_name)))
+            }
+            // Function/Predicate.apply/test — invoke the lambda
+            "apply" | "test" | "accept" => {
+                let lambda = receiver.clone();
+                match self.invoke_lambda(&lambda, args) {
+                    Ok(v) => Some(Ok(v)),
+                    Err(e) => Some(Err(e)),
+                }
+            }
             // Deque / LinkedList front/back operations
             "addFirst" | "offerFirst" | "push" => {
                 let arr = self.as_array(receiver)?;

@@ -282,8 +282,20 @@ impl Parser {
                 self.expect(&Token::Semi)?;
                 Ok(Stmt::LocalVar { ty: TypeExpr::simple("var"), name, init: Some(init) })
             }
-            // local variable declaration
+            // `final Type name = ...` — treat final as a no-op modifier
+            Token::Final => {
+                self.advance(); // consume `final`
+                let ty = self.parse_type_expr()?;
+                let name = self.expect_ident()?;
+                let init = if self.eat(&Token::Assign) {
+                    Some(self.parse_expr()?)
+                } else { None };
+                self.expect(&Token::Semi)?;
+                Ok(Stmt::LocalVar { ty, name, init })
+            }
+            // local variable declaration (skip optional `final` modifier)
             tok if self.is_type_start(&tok) && self.is_local_var_decl() => {
+                self.eat(&Token::Final);
                 let ty = self.parse_type_expr()?;
                 let name = self.expect_ident()?;
                 let init = if self.eat(&Token::Assign) {

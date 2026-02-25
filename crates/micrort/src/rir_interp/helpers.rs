@@ -180,7 +180,28 @@ impl RirInterpreter {
     // ── Value resolution ──────────────────────────────────────────────────────
 
     pub(super) fn resolve(&self, env: &HashMap<String, RVal>, val: &Value) -> RVal {
-        env.get(&val.0).cloned().unwrap_or(RVal::Null)
+        if let Some(v) = env.get(&val.0) {
+            return v.clone();
+        }
+        // SSA fallback: if val was never set (e.g. loop body never ran),
+        // find a __copy__ instruction that copies val into some other name,
+        // and return that name's value instead.
+        for func in &self.module.functions {
+            for bb in &func.basic_blocks {
+                for instr in &bb.instrs {
+                    if let rava_rir::RirInstr::ConstStr { ret, value } = instr {
+                        if let Some(src) = value.strip_prefix("__copy__") {
+                            if src == val.0 {
+                                if let Some(v) = env.get(&ret.0) {
+                                    return v.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        RVal::Null
     }
 
     pub(super) fn resolve_synthetic(&self, s: &str, env: &HashMap<String, RVal>) -> Option<RVal> {
@@ -259,6 +280,17 @@ impl RirInterpreter {
         // Handle println/print here so we can use obj_to_string for enum/object display
         {
             use crate::lowerer_hash::encode_builtin;
+            // Capture bound method ref receiver: __capture_bound_methodref__(sentinel, receiver)
+            if func_id == encode_builtin("__capture_bound_methodref__") {
+                if let (Some(RVal::Str(sentinel)), Some(receiver)) = (args.first(), args.get(1)) {
+                    super::LAMBDA_CAPTURES.with(|lc| {
+                        let mut map = lc.borrow_mut();
+                        let caps = map.entry(sentinel.clone()).or_default();
+                        caps.insert("__receiver__".into(), receiver.clone());
+                    });
+                }
+                return Ok(RVal::Void);
+            }
             if func_id == encode_builtin("System.out.println") {
                 let s = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
                 super::write_output(&s);
@@ -329,6 +361,23 @@ impl RirInterpreter {
             }
             if func_id == encode_builtin("Comparator.reverseOrder") {
                 return Ok(RVal::Str("__comparator__reverse__".into()));
+            }
+            // Comparator.comparingInt(keyExtractor) / Comparator.comparing(keyExtractor)
+            if func_id == encode_builtin("Comparator.comparingInt")
+                || func_id == encode_builtin("Comparator.comparing")
+                || func_id == encode_builtin("Comparator.comparingLong")
+                || func_id == encode_builtin("Comparator.comparingDouble")
+            {
+                if let Some(key_fn) = args.first() {
+                    let name = format!("__comparator__by__{}", key_fn.to_display());
+                    crate::rir_interp::LAMBDA_CAPTURES.with(|lc| {
+                        let mut map = lc.borrow_mut();
+                        let captures = map.entry(name.clone()).or_default();
+                        captures.insert("__keyfn__".into(), key_fn.clone());
+                    });
+                    return Ok(RVal::Str(name));
+                }
+                return Ok(RVal::Str("__comparator__natural__".into()));
             }
             // Stream.of(...) / Arrays.stream(...) — create a stream from args
             if func_id == encode_builtin("Stream.of") || func_id == encode_builtin("Arrays.stream") {
@@ -404,9 +453,11 @@ impl RirInterpreter {
                 // sort(comparator) on ArrayList — needs interpreter for lambda invocation
                 if method_name == "sort" {
                     if let RVal::Array(arr) = receiver {
-                        if let Some(comparator) = method_args.first() {
-                            let comparator = comparator.clone();
-                            let mut elems = arr.borrow().clone();
+                        let comparator = method_args.first().cloned().unwrap_or(RVal::Null);
+                        let mut elems = arr.borrow().clone();
+                        if matches!(comparator, RVal::Null) {
+                            elems.sort_by(|a, b| crate::builtins::rval_cmp(a, b));
+                        } else {
                             for i in 1..elems.len() {
                                 let mut j = i;
                                 while j > 0 {
@@ -417,9 +468,9 @@ impl RirInterpreter {
                                     } else { break; }
                                 }
                             }
-                            *arr.borrow_mut() = elems;
-                            return Ok(RVal::Void);
                         }
+                        *arr.borrow_mut() = elems;
+                        return Ok(RVal::Void);
                     }
                 }
                 if let Some(result) = self.dispatch_stream(receiver, &method_name, method_args) {
@@ -517,6 +568,12 @@ impl RirInterpreter {
                                 .unwrap_or(RVal::Null);
                             return Ok(msg);
                         }
+                        "getCause" => {
+                            let cause = self.heap.borrow().get(id)
+                                .and_then(|o| o.fields.get("__cause__").cloned())
+                                .unwrap_or(RVal::Null);
+                            return Ok(cause);
+                        }
                         "toString" => {
                             let s = self.heap.borrow().get(id)
                                 .map(|o| {
@@ -548,6 +605,16 @@ impl RirInterpreter {
                     }
                 }
                 if let RVal::Str(ref s) = receiver {
+                    // Functional interface composition methods on lambdas
+                    if s.starts_with("__lambda_") || s.starts_with("__composed_") || s.starts_with("__methodref__") || s.starts_with("__comparator__") {
+                        if let Some(result) = self.dispatch_stream(&receiver, &method_name, method_args) {
+                            return result;
+                        }
+                        // Default: invoke the lambda directly
+                        if method_name == "apply" || method_name == "test" || method_name == "accept" || method_name == "run" {
+                            return self.invoke_lambda(&receiver, method_args);
+                        }
+                    }
                     if s.starts_with("__lambda_") {
                         return self.call_lambda_by_name(s, method_args);
                     }
@@ -867,7 +934,21 @@ impl RirInterpreter {
                         obj.fields.insert(format!("__arg{}__", i), arg.clone());
                     }
                     if let Some(msg_arg) = args.get(1) {
-                        obj.fields.insert("message".into(), msg_arg.clone());
+                        if !matches!(msg_arg, RVal::Object(_)) {
+                            obj.fields.insert("message".into(), msg_arg.clone());
+                        }
+                    }
+                    // RuntimeException(String msg, Throwable cause) — store cause
+                    if let Some(cause_arg) = args.get(2) {
+                        if matches!(cause_arg, RVal::Object(_)) {
+                            obj.fields.insert("__cause__".into(), cause_arg.clone());
+                        }
+                    }
+                    // RuntimeException(Throwable cause) — single Object arg is the cause
+                    if args.len() == 2 {
+                        if let Some(RVal::Object(_)) = args.get(1) {
+                            obj.fields.insert("__cause__".into(), args[1].clone());
+                        }
                     }
                 }
             }
@@ -955,7 +1036,7 @@ impl RirInterpreter {
                 }
             } else {
                 // Fallback: old behavior (no method name known)
-                return self.dispatch_virtual(receiver, arg_vals, env);
+                return self.dispatch_virtual(receiver, 0, arg_vals, env);
             }
         }
 
@@ -969,8 +1050,17 @@ impl RirInterpreter {
         Ok(RVal::Void)
     }
 
-    pub(super) fn dispatch_virtual(&self, receiver: RVal, arg_vals: &[Value], env: &HashMap<String, RVal>) -> Result<RVal> {
+    pub(super) fn dispatch_virtual(&self, receiver: RVal, method_id: u32, arg_vals: &[Value], env: &HashMap<String, RVal>) -> Result<RVal> {
+        use crate::lowerer_hash::encode_builtin;
         let args: Vec<RVal> = arg_vals.iter().map(|v| self.resolve(env, v)).collect();
+        // Resolve method name from hash
+        let method_name = self.module.method_names.get(&method_id).cloned()
+            .or_else(|| {
+                for m in super::KNOWN_METHODS {
+                    if encode_builtin(m) == method_id { return Some(m.to_string()); }
+                }
+                None
+            });
         if let RVal::Str(ref s) = receiver {
             if s.starts_with("__lambda_") {
                 return self.call_lambda_by_name(s, &args);
@@ -986,23 +1076,66 @@ impl RirInterpreter {
                     return self.exec_function_idx(idx, call_env);
                 }
             }
+            // Comparator/lambda method dispatch
+            if s.starts_with("__comparator__") || s.starts_with("__composed_") {
+                if let Some(ref mname) = method_name {
+                    if let Some(result) = self.dispatch_stream(&receiver, mname, &args) {
+                        return result;
+                    }
+                }
+                return self.invoke_lambda(&receiver, &args);
+            }
         }
         if let Some(result) = builtins::dispatch_method(&receiver, &args) {
             return result;
         }
-        // sort(comparator) on ArrayList — needs interpreter for lambda invocation
+        // Named method dispatch using method_id
+        if let Some(ref mname) = method_name {
+            if let Some(result) = builtins::dispatch_named_method(&receiver, mname, &args) {
+                return result;
+            }
+            // sort(comparator) on ArrayList
+            if mname == "sort" {
+                if let RVal::Array(arr) = &receiver {
+                    if let Some(comparator) = args.first() {
+                        let comparator = comparator.clone();
+                        let mut elems = arr.borrow().clone();
+                        for i in 1..elems.len() {
+                            let mut j = i;
+                            while j > 0 {
+                                let cmp = self.invoke_lambda(&comparator, &[elems[j-1].clone(), elems[j].clone()])?;
+                                if cmp.as_int() > 0 { elems.swap(j-1, j); j -= 1; } else { break; }
+                            }
+                        }
+                        *arr.borrow_mut() = elems;
+                        return Ok(RVal::Void);
+                    }
+                }
+            }
+            // forEach on array with lambda
+            if mname == "forEach" {
+                if let RVal::Array(arr) = &receiver {
+                    if let Some(lambda) = args.first() {
+                        let lambda = lambda.clone();
+                        let items = arr.borrow().clone();
+                        for item in &items {
+                            self.invoke_lambda(&lambda, &[item.clone()])?;
+                        }
+                        return Ok(RVal::Void);
+                    }
+                }
+            }
+        }
+        // sort(comparator) on ArrayList — fallback for unknown method name
         if let RVal::Array(arr) = &receiver {
-            if args.len() == 1 {
+            if args.len() == 1 && method_name.as_deref() != Some("forEach") {
                 let comparator = args[0].clone();
                 let mut elems = arr.borrow().clone();
                 for i in 1..elems.len() {
                     let mut j = i;
                     while j > 0 {
                         let cmp = self.invoke_lambda(&comparator, &[elems[j-1].clone(), elems[j].clone()])?;
-                        if cmp.as_int() > 0 {
-                            elems.swap(j-1, j);
-                            j -= 1;
-                        } else { break; }
+                        if cmp.as_int() > 0 { elems.swap(j-1, j); j -= 1; } else { break; }
                     }
                 }
                 *arr.borrow_mut() = elems;
@@ -1025,23 +1158,47 @@ impl RirInterpreter {
                 loop {
                     let prefix = format!("{}.", cur);
                     let idx = self.module.functions.iter()
-                        .position(|f| f.name.starts_with(&prefix)
-                            && !f.flags.is_constructor && !f.flags.is_clinit
-                            && f.params.len() == effective_count)
+                        .position(|f| {
+                            let name_ok = if let Some(ref mname) = method_name {
+                                f.name == format!("{}{}", prefix, mname)
+                            } else {
+                                f.name.starts_with(&prefix)
+                            };
+                            name_ok && !f.flags.is_constructor && !f.flags.is_clinit
+                                && f.params.len() == effective_count
+                        })
                         .or_else(|| self.module.functions.iter()
-                            .position(|f| f.name.starts_with(&prefix)
-                                && !f.flags.is_constructor && !f.flags.is_clinit));
+                            .position(|f| {
+                                let name_ok = if let Some(ref mname) = method_name {
+                                    f.name == format!("{}{}", prefix, mname)
+                                } else {
+                                    f.name.starts_with(&prefix)
+                                };
+                                name_ok && !f.flags.is_constructor && !f.flags.is_clinit
+                            }));
                     if idx.is_some() { found = idx; break; }
                     for (key, iface) in &self.module.class_hierarchy {
                         if key.starts_with(&format!("{}:", cur)) {
                             let iface_prefix = format!("{}.", iface);
                             let idx = self.module.functions.iter()
-                                .position(|f| f.name.starts_with(&iface_prefix)
-                                    && !f.flags.is_constructor && !f.flags.is_clinit
-                                    && f.params.len() == effective_count)
+                                .position(|f| {
+                                    let name_ok = if let Some(ref mname) = method_name {
+                                        f.name == format!("{}{}", iface_prefix, mname)
+                                    } else {
+                                        f.name.starts_with(&iface_prefix)
+                                    };
+                                    name_ok && !f.flags.is_constructor && !f.flags.is_clinit
+                                        && f.params.len() == effective_count
+                                })
                                 .or_else(|| self.module.functions.iter()
-                                    .position(|f| f.name.starts_with(&iface_prefix)
-                                        && !f.flags.is_constructor && !f.flags.is_clinit));
+                                    .position(|f| {
+                                        let name_ok = if let Some(ref mname) = method_name {
+                                            f.name == format!("{}{}", iface_prefix, mname)
+                                        } else {
+                                            f.name.starts_with(&iface_prefix)
+                                        };
+                                        name_ok && !f.flags.is_constructor && !f.flags.is_clinit
+                                    }));
                             if idx.is_some() { found = idx; break; }
                         }
                     }
@@ -1088,9 +1245,158 @@ impl RirInterpreter {
 
     pub(super) fn invoke_lambda(&self, lambda: &RVal, args: &[RVal]) -> Result<RVal> {
         match lambda {
+            RVal::Str(s) if s.starts_with("__composed_andThen__") => {
+                let captures = super::LAMBDA_CAPTURES.with(|lc| lc.borrow().get(s.as_str()).cloned());
+                if let Some(caps) = captures {
+                    let f = caps.get("__f__").cloned().unwrap_or(RVal::Null);
+                    let after = caps.get("__after__").cloned().unwrap_or(RVal::Null);
+                    let mid = self.invoke_lambda(&f, args)?;
+                    return self.invoke_lambda(&after, &[mid]);
+                }
+                Ok(RVal::Null)
+            }
+            RVal::Str(s) if s.starts_with("__composed_compose__") => {
+                let captures = super::LAMBDA_CAPTURES.with(|lc| lc.borrow().get(s.as_str()).cloned());
+                if let Some(caps) = captures {
+                    let f = caps.get("__f__").cloned().unwrap_or(RVal::Null);
+                    let before = caps.get("__before__").cloned().unwrap_or(RVal::Null);
+                    let mid = self.invoke_lambda(&before, args)?;
+                    return self.invoke_lambda(&f, &[mid]);
+                }
+                Ok(RVal::Null)
+            }
+            RVal::Str(s) if s.starts_with("__composed_and__") => {
+                let captures = super::LAMBDA_CAPTURES.with(|lc| lc.borrow().get(s.as_str()).cloned());
+                if let Some(caps) = captures {
+                    let f = caps.get("__f__").cloned().unwrap_or(RVal::Null);
+                    let other = caps.get("__other__").cloned().unwrap_or(RVal::Null);
+                    let r1 = self.invoke_lambda(&f, args)?;
+                    if !r1.is_truthy() { return Ok(RVal::Bool(false)); }
+                    return self.invoke_lambda(&other, args);
+                }
+                Ok(RVal::Bool(false))
+            }
+            RVal::Str(s) if s.starts_with("__composed_or__") => {
+                let captures = super::LAMBDA_CAPTURES.with(|lc| lc.borrow().get(s.as_str()).cloned());
+                if let Some(caps) = captures {
+                    let f = caps.get("__f__").cloned().unwrap_or(RVal::Null);
+                    let other = caps.get("__other__").cloned().unwrap_or(RVal::Null);
+                    let r1 = self.invoke_lambda(&f, args)?;
+                    if r1.is_truthy() { return Ok(RVal::Bool(true)); }
+                    return self.invoke_lambda(&other, args);
+                }
+                Ok(RVal::Bool(false))
+            }
+            RVal::Str(s) if s.starts_with("__composed_negate__") => {
+                let captures = super::LAMBDA_CAPTURES.with(|lc| lc.borrow().get(s.as_str()).cloned());
+                if let Some(caps) = captures {
+                    let f = caps.get("__f__").cloned().unwrap_or(RVal::Null);
+                    let r = self.invoke_lambda(&f, args)?;
+                    return Ok(RVal::Bool(!r.is_truthy()));
+                }
+                Ok(RVal::Bool(false))
+            }
+            // Comparator sentinels — natural/reverse order
+            RVal::Str(s) if s == "__comparator__natural__" => {
+                let a = args.first().cloned().unwrap_or(RVal::Null);
+                let b = args.get(1).cloned().unwrap_or(RVal::Null);
+                Ok(RVal::Int(crate::builtins::rval_cmp(&a, &b) as i64))
+            }
+            RVal::Str(s) if s == "__comparator__reverse__" => {
+                let a = args.first().cloned().unwrap_or(RVal::Null);
+                let b = args.get(1).cloned().unwrap_or(RVal::Null);
+                Ok(RVal::Int(crate::builtins::rval_cmp(&b, &a) as i64))
+            }
+            // Comparator.comparingInt(keyFn) — compare by extracted key
+            RVal::Str(s) if s.starts_with("__comparator__by__") => {
+                let captures = super::LAMBDA_CAPTURES.with(|lc| lc.borrow().get(s.as_str()).cloned());
+                if let Some(caps) = captures {
+                    let key_fn = caps.get("__keyfn__").cloned().unwrap_or(RVal::Null);
+                    let a = args.first().cloned().unwrap_or(RVal::Null);
+                    let b = args.get(1).cloned().unwrap_or(RVal::Null);
+                    let ka = self.invoke_lambda(&key_fn, &[a])?;
+                    let kb = self.invoke_lambda(&key_fn, &[b])?;
+                    return Ok(RVal::Int(crate::builtins::rval_cmp(&ka, &kb) as i64));
+                }
+                Ok(RVal::Int(0))
+            }
+            // Comparator.thenComparing — chain two comparators
+            RVal::Str(s) if s.starts_with("__comparator__then__") => {
+                let captures = super::LAMBDA_CAPTURES.with(|lc| lc.borrow().get(s.as_str()).cloned());
+                if let Some(caps) = captures {
+                    let primary = caps.get("__primary__").cloned().unwrap_or(RVal::Null);
+                    let secondary = caps.get("__secondary__").cloned().unwrap_or(RVal::Null);
+                    let r1 = self.invoke_lambda(&primary, args)?;
+                    if r1.as_int() != 0 { return Ok(r1); }
+                    return self.invoke_lambda(&secondary, args);
+                }
+                Ok(RVal::Int(0))
+            }
+            // Comparator.reversed()
+            RVal::Str(s) if s.starts_with("__comparator__reversed__") => {
+                let captures = super::LAMBDA_CAPTURES.with(|lc| lc.borrow().get(s.as_str()).cloned());
+                if let Some(caps) = captures {
+                    let f = caps.get("__f__").cloned().unwrap_or(RVal::Null);
+                    let r = self.invoke_lambda(&f, args)?;
+                    return Ok(RVal::Int(-r.as_int()));
+                }
+                Ok(RVal::Int(0))
+            }
             RVal::Str(s) if s.starts_with("__lambda_") => self.call_lambda_by_name(s, args),
+            RVal::Str(s) if s.starts_with("__bound_methodref__") => {
+                // Instance method reference: obj::method where obj was a variable.
+                // The receiver was captured via __capture_bound_methodref__.
+                let rest = s.strip_prefix("__bound_methodref__").unwrap();
+                let receiver = super::LAMBDA_CAPTURES.with(|lc| {
+                    lc.borrow().get(s.as_str())
+                        .and_then(|caps| caps.get("__receiver__").cloned())
+                });
+                if let (Some((_var, meth)), Some(recv)) = (rest.split_once("::"), receiver) {
+                    if let Some(result) = crate::builtins::dispatch_named_method(&recv, meth, args) {
+                        return result;
+                    }
+                    // Try user-defined method on object
+                    if let RVal::Object(id) = &recv {
+                        let class_name = self.heap.borrow().get(id)
+                            .map(|o| o.class_name.clone())
+                            .unwrap_or_default();
+                        if let Some(idx) = self.find_method_in_chain(&class_name, meth, args.len() + 1) {
+                            let func = &self.module.functions[idx];
+                            let mut call_env: HashMap<String, RVal> = HashMap::new();
+                            let mut all_args = vec![recv.clone()];
+                            all_args.extend_from_slice(args);
+                            for ((param_name, _), val) in func.params.iter().zip(all_args.iter()) {
+                                call_env.insert(param_name.0.clone(), val.clone());
+                            }
+                            return self.exec_function_idx(idx, call_env);
+                        }
+                    }
+                }
+                Ok(RVal::Null)
+            }
             RVal::Str(s) if s.starts_with("__methodref__") => {
                 let rest = s.strip_prefix("__methodref__").unwrap();
+                // System.out::println / System.out::print
+                if rest == "System.out::println" {
+                    let val = args.first().cloned().unwrap_or(RVal::Null);
+                    super::write_output(&self.obj_to_string(&val));
+                    return Ok(RVal::Void);
+                }
+                if rest == "System.out::print" {
+                    let val = args.first().cloned().unwrap_or(RVal::Null);
+                    super::write_output_no_nl(&self.obj_to_string(&val));
+                    return Ok(RVal::Void);
+                }
+                // Static method refs: Integer::parseInt, String::valueOf, etc.
+                // These are called with args as the method arguments (no receiver)
+                {
+                    use crate::lowerer_hash::encode_builtin;
+                    let full_static = rest.replace("::", ".");
+                    let static_id = encode_builtin(&full_static);
+                    if let Some(result) = crate::builtins::dispatch(static_id, args) {
+                        return result;
+                    }
+                }
                 let full = rest.replace("::", ".");
                 if let Some(idx) = self.module.functions.iter().position(|f| f.name == full) {
                     let func = &self.module.functions[idx];
@@ -1107,7 +1413,6 @@ impl RirInterpreter {
                             if let Some(result) = crate::builtins::dispatch_named_method(receiver, meth, method_args) {
                                 return result;
                             }
-                            // Identity-like methods: intValue, doubleValue, longValue, etc.
                             match meth {
                                 "intValue" | "longValue" | "shortValue" | "byteValue" => {
                                     return Ok(RVal::Int(receiver.as_int()));

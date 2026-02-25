@@ -40,7 +40,7 @@ pub fn dispatch_named(s: &str, method: &str, args: &[RVal]) -> Option<Result<RVa
         "toString"       => Some(Ok(RVal::Str(s.to_string()))),
         "charAt" => {
             let i = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
-            Some(Ok(RVal::Int(s.chars().nth(i).unwrap_or('\0') as i64)))
+            Some(Ok(RVal::Str(s.chars().nth(i).unwrap_or('\0').to_string())))
         }
         "codePointAt" => {
             let i = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
@@ -125,10 +125,11 @@ pub fn dispatch_named(s: &str, method: &str, args: &[RVal]) -> Option<Result<RVa
             Some(Ok(RVal::Int(h as i64)))
         }
         "toCharArray" => {
-            let chars: Vec<RVal> = s.chars().map(|c| RVal::Int(c as i64)).collect();
+            let chars: Vec<RVal> = s.chars().map(|c| RVal::Str(c.to_string())).collect();
             Some(Ok(RVal::Array(Rc::new(RefCell::new(chars)))))
         }
         "chars" => {
+            // chars() returns int code points (used in stream operations like indexOf)
             let chars: Vec<RVal> = s.chars().map(|c| RVal::Int(c as i64)).collect();
             Some(Ok(RVal::Array(Rc::new(RefCell::new(chars)))))
         }

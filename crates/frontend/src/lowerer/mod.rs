@@ -181,6 +181,7 @@ impl Lowerer {
             let func_id = self.next_func_id();
             let name = format!("{}.<init>", class.name);
             let flags = FuncFlags { is_constructor: true, ..Default::default() };
+            let params = vec![(Value("this".into()), RirType::Ref(ClassId(encode_builtin(&class.name))))];
             let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
             ctx.vars.insert("this".into(), Value("this".into()));
             for (field_name, init_expr) in &field_inits {
@@ -193,7 +194,7 @@ impl Lowerer {
             }
             ctx.emit(RirInstr::Return(None));
             let func = RirFunction {
-                id: func_id, name, params: vec![],
+                id: func_id, name, params,
                 return_type: RirType::Void, basic_blocks: ctx.finish(), flags,
             };
             self.module.functions.push(func);

@@ -38,7 +38,10 @@ impl RirInterpreter {
         let func = &self.module.functions[func_idx];
         let mut env = args;
         let mut block_idx = 0usize;
+        // (catch_block_id, exception_types, finally_block_id_opt)
         let mut exception_handlers: Vec<(u32, Vec<String>)> = Vec::new();
+        // finally handlers: (finally_block_id, exit_block_id)
+        let mut finally_handlers: Vec<(u32, u32)> = Vec::new();
 
         loop {
             let block = func.basic_blocks.get(block_idx)
@@ -49,11 +52,10 @@ impl RirInterpreter {
             let mut thrown: Option<(String, String, Option<RVal>)> = None;
 
             for instr in &block.instrs {
-                let result = self.exec_instr(instr, &mut env, func, &mut next_block, &mut returned, &mut exception_handlers);
+                let result = self.exec_instr(instr, &mut env, func, &mut next_block, &mut returned, &mut exception_handlers, &mut finally_handlers);
                 match result {
                     Ok(()) => {}
                     Err(RavaError::JavaException { exception_type, message }) => {
-                        // Preserve the original thrown object if it's in env as the last Throw operand
                         let obj = env.get("__last_thrown__").cloned();
                         thrown = Some((exception_type, message, obj));
                         break;
@@ -72,7 +74,6 @@ impl RirInterpreter {
                     }
                 }
                 if let Some(catch_block_id) = matched {
-                    // Use original thrown object if available, otherwise create a new one
                     let orig_obj = super::THROWN_OBJ.with(|t: &RefCell<Option<RVal>>| t.borrow_mut().take());
                     let exc_rval = if let Some(RVal::Object(_)) = orig_obj {
                         orig_obj.unwrap()
@@ -90,6 +91,20 @@ impl RirInterpreter {
                     env.insert("__exception_type__".into(), RVal::Str(exc_type));
                     next_block = self.find_block_idx(func, catch_block_id);
                 } else {
+                    // No catch handler — run finally block if any, then re-throw
+                    if let Some(&(finally_block_id, _exit_id)) = finally_handlers.last() {
+                        finally_handlers.pop();
+                        if let Some(fbb_idx) = self.find_block_idx(func, finally_block_id) {
+                            let fblock = &func.basic_blocks[fbb_idx];
+                            let mut dummy_next: Option<usize> = None;
+                            let mut dummy_ret: Option<RVal> = None;
+                            let mut dummy_exc: Vec<(u32, Vec<String>)> = Vec::new();
+                            let mut dummy_fin: Vec<(u32, u32)> = Vec::new();
+                            for instr in &fblock.instrs {
+                                let _ = self.exec_instr(instr, &mut env, func, &mut dummy_next, &mut dummy_ret, &mut dummy_exc, &mut dummy_fin);
+                            }
+                        }
+                    }
                     return Err(RavaError::JavaException {
                         exception_type: exc_type,
                         message: exc_msg,
@@ -113,6 +128,7 @@ impl RirInterpreter {
         next_block: &mut Option<usize>,
         returned: &mut Option<RVal>,
         exception_handlers: &mut Vec<(u32, Vec<String>)>,
+        finally_handlers: &mut Vec<(u32, u32)>,
     ) -> Result<()> {
         match instr {
             RirInstr::ConstInt { ret, value } => {
@@ -138,6 +154,14 @@ impl RirInterpreter {
                     } else if let Ok(id) = rest.parse::<u32>() {
                         exception_handlers.push((id, vec![]));
                     }
+                } else if let Some(rest) = value.strip_prefix("__try_finally__") {
+                    if let Some((fbb_str, ebb_str)) = rest.split_once(':') {
+                        if let (Ok(fbb), Ok(ebb)) = (fbb_str.parse::<u32>(), ebb_str.parse::<u32>()) {
+                            finally_handlers.push((fbb, ebb));
+                        }
+                    }
+                } else if value == "__try_finally_end__" {
+                    finally_handlers.pop();
                 } else if value == "__try_end__" {
                     exception_handlers.pop();
                 } else if value == "__exception__" {
@@ -420,14 +444,14 @@ impl RirInterpreter {
                 };
                 env.insert(ret.0.clone(), RVal::Bool(result));
             }
-            RirInstr::CallVirtual { receiver, args: arg_vals, ret, .. } => {
+            RirInstr::CallVirtual { receiver, method, args: arg_vals, ret } => {
                 let recv = self.resolve(env, receiver);
-                let result = self.dispatch_virtual(recv, arg_vals, env)?;
+                let result = self.dispatch_virtual(recv, method.0, arg_vals, env)?;
                 if let Some(r) = ret { env.insert(r.0.clone(), result); }
             }
-            RirInstr::CallInterface { receiver, args: arg_vals, ret, .. } => {
+            RirInstr::CallInterface { receiver, method, args: arg_vals, ret } => {
                 let recv = self.resolve(env, receiver);
-                let result = self.dispatch_virtual(recv, arg_vals, env)?;
+                let result = self.dispatch_virtual(recv, method.0, arg_vals, env)?;
                 if let Some(r) = ret { env.insert(r.0.clone(), result); }
             }
             RirInstr::Unreachable => {

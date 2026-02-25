@@ -103,6 +103,15 @@ fn dispatch_array_iter(
             idx.set(i + 1);
             Some(Ok(val))
         }
+        "remove" => {
+            // Remove the last element returned by next()
+            let i = idx.get();
+            if i > 0 && i <= arr.borrow().len() {
+                arr.borrow_mut().remove(i - 1);
+                idx.set(i - 1);
+            }
+            Some(Ok(RVal::Void))
+        }
         _ => None,
     }
 }
