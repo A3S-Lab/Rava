@@ -3128,3 +3128,218 @@ class Main {
 "#);
     assert_eq!(out.trim(), "H\no\n72\n5\nIfmmp");
 }
+
+#[test]
+fn iterator_remove() {
+    let out = run(r#"
+import java.util.ArrayList;
+import java.util.Iterator;
+class Main {
+    public static void main(String[] args) {
+        ArrayList<Integer> list = new ArrayList<>();
+        list.add(1); list.add(2); list.add(3); list.add(4); list.add(5);
+        Iterator<Integer> it = list.iterator();
+        while (it.hasNext()) {
+            int v = it.next();
+            if (v % 2 == 0) it.remove();
+        }
+        System.out.println(list);
+        System.out.println(list.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[1, 3, 5]\n3");
+}
+
+#[test]
+fn comparable_sort_custom() {
+    let out = run(r#"
+import java.util.ArrayList;
+import java.util.Collections;
+class Student implements Comparable<Student> {
+    String name;
+    int grade;
+    Student(String n, int g) { this.name = n; this.grade = g; }
+    public int compareTo(Student other) { return this.grade - other.grade; }
+    public String toString() { return name + ":" + grade; }
+}
+class Main {
+    public static void main(String[] args) {
+        ArrayList<Student> list = new ArrayList<>();
+        list.add(new Student("Alice", 85));
+        list.add(new Student("Bob", 72));
+        list.add(new Student("Carol", 91));
+        Collections.sort(list);
+        for (Student s : list) System.out.println(s);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Bob:72\nAlice:85\nCarol:91");
+}
+
+#[test]
+fn string_split_and_join() {
+    let out = run(r#"
+import java.util.Arrays;
+class Main {
+    public static void main(String[] args) {
+        String csv = "a,b,c,d,e";
+        String[] parts = csv.split(",");
+        System.out.println(parts.length);
+        System.out.println(parts[2]);
+        String joined = String.join("-", parts);
+        System.out.println(joined);
+        // split with limit
+        String[] limited = csv.split(",", 3);
+        System.out.println(limited.length);
+        System.out.println(limited[2]);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "5\nc\na-b-c-d-e\n3\nc,d,e");
+}
+
+#[test]
+fn map_iteration_patterns() {
+    let out = run(r#"
+import java.util.HashMap;
+import java.util.TreeMap;
+import java.util.Map;
+class Main {
+    public static void main(String[] args) {
+        TreeMap<String, Integer> map = new TreeMap<>();
+        map.put("banana", 2);
+        map.put("apple", 5);
+        map.put("cherry", 1);
+        // entrySet iteration (sorted by key in TreeMap)
+        int total = 0;
+        for (Map.Entry<String, Integer> e : map.entrySet()) {
+            total += e.getValue();
+        }
+        System.out.println(total);
+        System.out.println(map.size());
+        System.out.println(map.containsKey("apple"));
+        System.out.println(map.get("banana"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "8\n3\ntrue\n2");
+}
+
+#[test]
+fn inheritance_method_override() {
+    let out = run(r#"
+class Animal {
+    String name;
+    Animal(String n) { this.name = n; }
+    String sound() { return "..."; }
+    String describe() { return name + " says " + sound(); }
+}
+class Dog extends Animal {
+    Dog(String n) { super(n); }
+    String sound() { return "woof"; }
+}
+class Cat extends Animal {
+    Cat(String n) { super(n); }
+    String sound() { return "meow"; }
+}
+class Main {
+    static void makeSound(Animal a) { System.out.println(a.describe()); }
+    public static void main(String[] args) {
+        makeSound(new Dog("Rex"));
+        makeSound(new Cat("Whiskers"));
+        makeSound(new Animal("Unknown"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Rex says woof\nWhiskers says meow\nUnknown says ...");
+}
+
+#[test]
+fn stream_reduce_and_collect() {
+    let out = run(r#"
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5);
+        int sum = nums.stream().reduce(0, (a, b) -> a + b);
+        System.out.println(sum);
+        int product = nums.stream().reduce(1, (a, b) -> a * b);
+        System.out.println(product);
+        List<Integer> evens = nums.stream()
+            .filter(n -> n % 2 == 0)
+            .collect(Collectors.toList());
+        System.out.println(evens);
+        long count = nums.stream().filter(n -> n > 2).count();
+        System.out.println(count);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "15\n120\n[2, 4]\n3");
+}
+
+#[test]
+fn generic_interface_impl() {
+    let out = run(r#"
+interface Mapper<T, R> {
+    R map(T input);
+}
+class DoubleMapper implements Mapper<Integer, Integer> {
+    public Integer map(Integer input) { return input * 2; }
+}
+class StringMapper implements Mapper<Integer, String> {
+    public String map(Integer input) { return "val=" + input; }
+}
+class Main {
+    static <T, R> R apply(Mapper<T, R> m, T val) { return m.map(val); }
+    public static void main(String[] args) {
+        System.out.println(apply(new DoubleMapper(), 5));
+        System.out.println(apply(new StringMapper(), 42));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "10\nval=42");
+}
+
+#[test]
+fn exception_custom_hierarchy() {
+    let out = run(r#"
+class AppException extends RuntimeException {
+    int code;
+    AppException(String msg, int code) {
+        this.code = code;
+    }
+    public String getMessage() { return "AppException code=" + code; }
+}
+class ValidationException extends AppException {
+    String field;
+    ValidationException(String f) {
+        super("invalid", 400);
+        this.field = f;
+    }
+    public String getMessage() { return "Invalid: " + field; }
+}
+class Main {
+    static void validate(String s) {
+        if (s == null || s.isEmpty()) throw new ValidationException("name");
+    }
+    public static void main(String[] args) {
+        try {
+            validate("");
+        } catch (ValidationException e) {
+            System.out.println(e.getMessage());
+            System.out.println(e.code);
+        }
+        try {
+            validate("ok");
+            System.out.println("valid");
+        } catch (AppException e) {
+            System.out.println("error");
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Invalid: name\n400\nvalid");
+}
