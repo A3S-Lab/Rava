@@ -741,8 +741,8 @@ impl RirInterpreter {
             "min" => {
                 let arr = self.as_array(receiver)?;
                 let items = arr.borrow();
-                if items.is_empty() { return Some(Ok(RVal::Null)); }
-                if let Some(comparator) = args.first() {
+                if items.is_empty() { return Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![]))))); }
+                let result = if let Some(comparator) = args.first() {
                     let comp = comparator.clone();
                     let mut min = items[0].clone();
                     for item in items.iter().skip(1) {
@@ -751,21 +751,23 @@ impl RirInterpreter {
                             Err(e) => return Some(Err(e)),
                         }
                     }
-                    Some(Ok(min))
+                    min
                 } else {
                     let all_int = items.iter().all(|v| matches!(v, RVal::Int(_)));
                     if all_int {
-                        Some(Ok(items.iter().min_by_key(|v| v.as_int()).cloned().unwrap_or(RVal::Null)))
+                        items.iter().min_by_key(|v| v.as_int()).cloned().unwrap_or(RVal::Null)
                     } else {
-                        Some(Ok(items.iter().min_by(|a, b| a.to_display().cmp(&b.to_display())).cloned().unwrap_or(RVal::Null)))
+                        items.iter().min_by(|a, b| a.to_display().cmp(&b.to_display())).cloned().unwrap_or(RVal::Null)
                     }
-                }
+                };
+                // Wrap in Optional (single-element array) so .get() works
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![result])))))
             }
             "max" => {
                 let arr = self.as_array(receiver)?;
                 let items = arr.borrow();
-                if items.is_empty() { return Some(Ok(RVal::Null)); }
-                if let Some(comparator) = args.first() {
+                if items.is_empty() { return Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![]))))); }
+                let result = if let Some(comparator) = args.first() {
                     let comp = comparator.clone();
                     let mut max = items[0].clone();
                     for item in items.iter().skip(1) {
@@ -774,15 +776,17 @@ impl RirInterpreter {
                             Err(e) => return Some(Err(e)),
                         }
                     }
-                    Some(Ok(max))
+                    max
                 } else {
                     let all_int = items.iter().all(|v| matches!(v, RVal::Int(_)));
                     if all_int {
-                        Some(Ok(items.iter().max_by_key(|v| v.as_int()).cloned().unwrap_or(RVal::Null)))
+                        items.iter().max_by_key(|v| v.as_int()).cloned().unwrap_or(RVal::Null)
                     } else {
-                        Some(Ok(items.iter().max_by(|a, b| a.to_display().cmp(&b.to_display())).cloned().unwrap_or(RVal::Null)))
+                        items.iter().max_by(|a, b| a.to_display().cmp(&b.to_display())).cloned().unwrap_or(RVal::Null)
                     }
-                }
+                };
+                // Wrap in Optional (single-element array) so .get() works
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![result])))))
             }
             // Function.andThen(after) — compose: apply this, then after
             "andThen" => {

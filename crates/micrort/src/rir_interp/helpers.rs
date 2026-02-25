@@ -537,6 +537,22 @@ impl RirInterpreter {
                         }
                     }
                     if class_name == "HashMap" || class_name == "TreeMap" || class_name == "LinkedHashMap" {
+                        // TreeMap firstKey/lastKey
+                        if class_name == "TreeMap" && (method_name == "firstKey" || method_name == "lastKey") {
+                            let mut keys: Vec<String> = {
+                                let heap = self.heap.borrow();
+                                heap.get(id).map(|o| o.fields.keys()
+                                    .filter(|k| !k.starts_with("__"))
+                                    .cloned().collect())
+                                    .unwrap_or_default()
+                            };
+                            keys.sort();
+                            let key = if method_name == "firstKey" { keys.first() } else { keys.last() };
+                            return Ok(key.map(|k| {
+                                // Try to parse as int for numeric keys
+                                k.parse::<i64>().map(RVal::Int).unwrap_or_else(|_| RVal::Str(k.clone()))
+                            }).unwrap_or(RVal::Null));
+                        }
                         // TreeMap forEach must iterate in sorted key order
                         if class_name == "TreeMap" && method_name == "forEach" {
                             let mut pairs: Vec<(String, RVal)> = {
@@ -661,8 +677,24 @@ impl RirInterpreter {
                         if let Some(result) = self.dispatch_stream(&receiver, &method_name, method_args) {
                             return result;
                         }
-                        // Default: invoke the lambda directly
-                        if method_name == "apply" || method_name == "test" || method_name == "accept" || method_name == "run" {
+                        // Default: invoke the lambda/method-ref directly for any functional interface method
+                        if method_name == "apply" || method_name == "test" || method_name == "accept"
+                            || method_name == "run" || method_name == "get" || method_name == "execute"
+                            || method_name == "call" || method_name == "invoke" || method_name == "transform"
+                            || method_name == "compare" || method_name == "compareTo"
+                        {
+                            // For method refs, call the builtin method on the first arg
+                            if s.starts_with("__methodref__") {
+                                if let Some(rest) = s.strip_prefix("__methodref__") {
+                                    if let Some((_cls, meth)) = rest.split_once("::") {
+                                        if let Some(first_arg) = method_args.first() {
+                                            if let Some(result) = builtins::dispatch_named_method(first_arg, meth, &method_args[1..]) {
+                                                return result;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             return self.invoke_lambda(&receiver, method_args);
                         }
                     }
@@ -1031,6 +1063,14 @@ impl RirInterpreter {
                         call_env.insert(param_name.0.clone(), val.clone());
                     }
                     return self.exec_function_idx(idx, call_env);
+                }
+                // Builtin instance method ref: Class::method — call method on first arg
+                if let Some((_cls, meth)) = rest.split_once("::") {
+                    if let Some(first_arg) = args.first() {
+                        if let Some(result) = builtins::dispatch_named_method(first_arg, meth, &args[1..]) {
+                            return result;
+                        }
+                    }
                 }
             }
             // java.time and other tagged-string instance methods

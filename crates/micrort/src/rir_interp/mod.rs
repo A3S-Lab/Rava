@@ -72,6 +72,7 @@ const KNOWN_METHODS: &[&str] = &[
     "put", "get", "getOrDefault", "containsKey", "containsValue",
     "keySet", "values", "entrySet", "remove", "replace", "putIfAbsent",
     "computeIfAbsent", "merge", "compute", "putAll", "forEach",
+    "firstKey", "lastKey", "firstEntry", "lastEntry",
     // PriorityQueue / Queue / Deque
     "offer", "poll", "peek", "push", "pop",
     "addFirst", "addLast", "removeFirst", "removeLast",

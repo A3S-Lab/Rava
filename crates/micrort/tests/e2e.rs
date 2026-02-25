@@ -3719,3 +3719,194 @@ class Main {
 "#);
     assert_eq!(out.trim(), "6\n100\n0\na, b, c\nx-y");
 }
+
+#[test]
+fn generic_bounded_extends() {
+    let out = run(r#"
+class Box<T extends Comparable<T>> {
+    T value;
+    Box(T v) { this.value = v; }
+    T get() { return value; }
+    boolean isGreaterThan(Box<T> other) { return value.compareTo(other.value) > 0; }
+}
+class Main {
+    public static void main(String[] args) {
+        Box<Integer> a = new Box<>(10);
+        Box<Integer> b = new Box<>(5);
+        System.out.println(a.get());
+        System.out.println(a.isGreaterThan(b));
+        System.out.println(b.isGreaterThan(a));
+        Box<String> s1 = new Box<>("banana");
+        Box<String> s2 = new Box<>("apple");
+        System.out.println(s1.isGreaterThan(s2));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "10\ntrue\nfalse\ntrue");
+}
+
+#[test]
+fn static_nested_class() {
+    let out = run(r#"
+class Outer {
+    static int x = 10;
+    static class Inner {
+        int y;
+        Inner(int y) { this.y = y; }
+        int getY() { return y; }
+    }
+    static Inner create(int y) { return new Inner(y); }
+    static int sumWith(Inner inner) { return x + inner.getY(); }
+}
+class Main {
+    public static void main(String[] args) {
+        Outer.Inner inner = new Outer.Inner(5);
+        System.out.println(Outer.sumWith(inner));
+        Outer.Inner inner2 = Outer.create(20);
+        System.out.println(Outer.sumWith(inner2));
+        System.out.println(Outer.x);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "15\n30\n10");
+}
+
+#[test]
+fn collections_reverse_and_shuffle_seed() {
+    let out = run(r#"
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Arrays;
+import java.util.List;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> list = new ArrayList<>(Arrays.asList(1, 2, 3, 4, 5));
+        Collections.reverse(list);
+        System.out.println(list);
+        Collections.sort(list);
+        System.out.println(list);
+        List<String> words = new ArrayList<>(Arrays.asList("c", "a", "b"));
+        Collections.sort(words);
+        System.out.println(words);
+        Collections.reverse(words);
+        System.out.println(words);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[5, 4, 3, 2, 1]\n[1, 2, 3, 4, 5]\n[a, b, c]\n[c, b, a]");
+}
+
+#[test]
+fn string_regex_matches_and_replace() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String s = "Hello World 123";
+        System.out.println(s.matches(".*\\d+.*"));
+        System.out.println(s.matches("Hello.*"));
+        System.out.println(s.replaceAll("\\d+", "NUM"));
+        System.out.println(s.replaceFirst("[A-Z]", "X"));
+        System.out.println("a1b2c3".replaceAll("[0-9]", ""));
+        System.out.println("  hello  ".trim());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\ntrue\nHello World NUM\nXello World 123\nabc\nhello");
+}
+
+#[test]
+fn interface_functional_lambda() {
+    let out = run(r#"
+@FunctionalInterface
+interface Transformer<T> {
+    T transform(T input);
+}
+class Main {
+    static <T> T apply(Transformer<T> t, T val) { return t.transform(val); }
+    public static void main(String[] args) {
+        Transformer<String> upper = s -> s.toUpperCase();
+        Transformer<Integer> double_ = n -> n * 2;
+        System.out.println(apply(upper, "hello"));
+        System.out.println(apply(double_, 21));
+        Transformer<String> trim = String::trim;
+        System.out.println(apply(trim, "  hi  "));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "HELLO\n42\nhi");
+}
+
+#[test]
+fn map_treemap_navigation() {
+    let out = run(r#"
+import java.util.TreeMap;
+class Main {
+    public static void main(String[] args) {
+        TreeMap<Integer, String> map = new TreeMap<>();
+        map.put(1, "one");
+        map.put(3, "three");
+        map.put(5, "five");
+        map.put(7, "seven");
+        System.out.println(map.firstKey());
+        System.out.println(map.lastKey());
+        System.out.println(map.size());
+        System.out.println(map.containsKey(3));
+        System.out.println(map.containsKey(4));
+        System.out.println(map.get(5));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1\n7\n4\ntrue\nfalse\nfive");
+}
+
+#[test]
+fn exception_rethrowing() {
+    let out = run(r#"
+class Main {
+    static int divide(int a, int b) {
+        if (b == 0) throw new ArithmeticException("division by zero");
+        return a / b;
+    }
+    static int safeDivide(int a, int b) {
+        try {
+            return divide(a, b);
+        } catch (ArithmeticException e) {
+            System.out.println("caught: " + e.getMessage());
+            return -1;
+        }
+    }
+    public static void main(String[] args) {
+        System.out.println(safeDivide(10, 2));
+        System.out.println(safeDivide(10, 0));
+        try {
+            divide(5, 0);
+        } catch (ArithmeticException e) {
+            System.out.println("outer: " + e.getMessage());
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "5\ncaught: division by zero\n-1\nouter: division by zero");
+}
+
+#[test]
+fn stream_anyof_allof_noneof() {
+    let out = run(r#"
+import java.util.Arrays;
+import java.util.List;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5);
+        System.out.println(nums.stream().anyMatch(n -> n > 4));
+        System.out.println(nums.stream().anyMatch(n -> n > 10));
+        System.out.println(nums.stream().allMatch(n -> n > 0));
+        System.out.println(nums.stream().allMatch(n -> n > 2));
+        System.out.println(nums.stream().noneMatch(n -> n > 10));
+        System.out.println(nums.stream().noneMatch(n -> n > 4));
+        System.out.println(nums.stream().min((a, b) -> a - b).get());
+        System.out.println(nums.stream().max((a, b) -> a - b).get());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\nfalse\ntrue\nfalse\ntrue\nfalse\n1\n5");
+}
