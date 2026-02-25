@@ -46,14 +46,16 @@ impl RirInterpreter {
 
             let mut next_block: Option<usize> = None;
             let mut returned:   Option<RVal>  = None;
-            let mut thrown: Option<(String, String)> = None;
+            let mut thrown: Option<(String, String, Option<RVal>)> = None;
 
             for instr in &block.instrs {
                 let result = self.exec_instr(instr, &mut env, func, &mut next_block, &mut returned, &mut exception_handlers);
                 match result {
                     Ok(()) => {}
                     Err(RavaError::JavaException { exception_type, message }) => {
-                        thrown = Some((exception_type, message));
+                        // Preserve the original thrown object if it's in env as the last Throw operand
+                        let obj = env.get("__last_thrown__").cloned();
+                        thrown = Some((exception_type, message, obj));
                         break;
                     }
                     Err(e) => return Err(e),
@@ -61,7 +63,7 @@ impl RirInterpreter {
                 if next_block.is_some() || returned.is_some() { break; }
             }
 
-            if let Some((exc_type, exc_msg)) = thrown {
+            if let Some((exc_type, exc_msg, orig_obj)) = thrown {
                 let mut matched = None;
                 while let Some((block_id, types)) = exception_handlers.pop() {
                     if types.is_empty() || types.iter().any(|t| self.exception_matches(&exc_type, t)) {
@@ -70,14 +72,21 @@ impl RirInterpreter {
                     }
                 }
                 if let Some(catch_block_id) = matched {
-                    let exc_obj_id = self.alloc_object(&exc_type);
-                    {
-                        let mut heap = self.heap.borrow_mut();
-                        if let Some(obj) = heap.get_mut(&exc_obj_id) {
-                            obj.fields.insert("message".into(), RVal::Str(exc_msg.clone()));
+                    // Use original thrown object if available, otherwise create a new one
+                    let orig_obj = super::THROWN_OBJ.with(|t: &RefCell<Option<RVal>>| t.borrow_mut().take());
+                    let exc_rval = if let Some(RVal::Object(_)) = orig_obj {
+                        orig_obj.unwrap()
+                    } else {
+                        let exc_obj_id = self.alloc_object(&exc_type);
+                        {
+                            let mut heap = self.heap.borrow_mut();
+                            if let Some(obj) = heap.get_mut(&exc_obj_id) {
+                                obj.fields.insert("message".into(), RVal::Str(exc_msg.clone()));
+                            }
                         }
-                    }
-                    env.insert("__exception__".into(), RVal::Object(exc_obj_id));
+                        RVal::Object(exc_obj_id)
+                    };
+                    env.insert("__exception__".into(), exc_rval);
                     env.insert("__exception_type__".into(), RVal::Str(exc_type));
                     next_block = self.find_block_idx(func, catch_block_id);
                 } else {
@@ -140,6 +149,25 @@ impl RirInterpreter {
                 } else if let Some(resolved) = self.resolve_synthetic(value, env) {
                     env.insert(ret.0.clone(), resolved);
                 } else {
+                    // If this is a lambda, store the current env as its captures
+                    if value.starts_with("__lambda_") {
+                        if let Some(func) = self.module.functions.iter().find(|f| f.name == *value) {
+                            // Captures are params that aren't in the lambda's declared params
+                            // They're stored as Value(name) in the function body
+                            let param_names: std::collections::HashSet<&str> =
+                                func.params.iter().map(|(v, _)| v.0.as_str()).collect();
+                            // Find all vars referenced in the function that aren't params
+                            let captures: HashMap<String, RVal> = env.iter()
+                                .filter(|(k, _)| !param_names.contains(k.as_str())
+                                    && !k.starts_with("__")
+                                    && k.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false))
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                                .collect();
+                            super::LAMBDA_CAPTURES.with(|lc| {
+                                lc.borrow_mut().insert(value.clone(), captures);
+                            });
+                        }
+                    }
                     env.insert(ret.0.clone(), RVal::Str(value.clone()));
                 }
             }
@@ -178,6 +206,16 @@ impl RirInterpreter {
                 let class_name = self.class_name_for(class.0);
                 if class_name == "ArrayList" || class_name == "LinkedList" {
                     env.insert(ret.0.clone(), RVal::Array(Rc::new(RefCell::new(Vec::new()))));
+                } else if class_name == "HashSet" || class_name == "TreeSet" || class_name == "LinkedHashSet" {
+                    let id = self.alloc_object(&class_name);
+                    {
+                        let mut heap = self.heap.borrow_mut();
+                        if let Some(obj) = heap.get_mut(&id) {
+                            obj.fields.insert("__items__".into(), RVal::Array(Rc::new(RefCell::new(vec![]))));
+                            obj.fields.insert("__type__".into(), RVal::Str("set".into()));
+                        }
+                    }
+                    env.insert(ret.0.clone(), RVal::Object(id));
                 } else if class_name == "PriorityQueue" {
                     let id = self.alloc_object("PriorityQueue");
                     {
@@ -342,6 +380,8 @@ impl RirInterpreter {
             }
             RirInstr::Throw(val) => {
                 let thrown_val = self.resolve(env, val);
+                // Store the original thrown object in thread-local so catch handlers can use it
+                super::THROWN_OBJ.with(|t: &RefCell<Option<RVal>>| { *t.borrow_mut() = Some(thrown_val.clone()); });
                 let (exc_type, msg) = match &thrown_val {
                     RVal::Object(id) => {
                         let class_name = self.heap.borrow().get(id)
@@ -371,8 +411,11 @@ impl RirInterpreter {
                             .unwrap_or_default();
                         self.is_instance_of(&obj_class, &class_name)
                     }
-                    RVal::Str(_)   => class_name == "String" || class_name == "Object",
+                    RVal::Str(_)   => class_name == "String" || class_name == "Object" || class_name == "CharSequence" || class_name == "Comparable",
                     RVal::Array(_) => class_name.ends_with("[]") || class_name == "Object",
+                    RVal::Int(_)   => matches!(class_name.as_str(), "Integer" | "Long" | "Short" | "Byte" | "Number" | "Object" | "Comparable"),
+                    RVal::Float(_) => matches!(class_name.as_str(), "Double" | "Float" | "Number" | "Object" | "Comparable"),
+                    RVal::Bool(_)  => matches!(class_name.as_str(), "Boolean" | "Object" | "Comparable"),
                     _ => false,
                 };
                 env.insert(ret.0.clone(), RVal::Bool(result));

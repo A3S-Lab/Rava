@@ -4,6 +4,15 @@ use rava_common::error::Result;
 use crate::rir_interp::RVal;
 use super::format::fnv;
 
+/// Extract a char from an RVal — handles both string chars and int code points.
+fn rval_to_char(v: Option<&RVal>) -> char {
+    match v {
+        Some(RVal::Str(s)) => s.chars().next().unwrap_or('\0'),
+        Some(other) => other.as_int() as u8 as char,
+        None => '\0',
+    }
+}
+
 pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
     match func_id {
         // ── Integer ───────────────────────────────────────────────────────────
@@ -11,9 +20,15 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
             let s = args.first().map(|v| v.to_display()).unwrap_or_default();
             // Support radix: parseInt(s, radix)
             let radix = args.get(1).map(|v| v.as_int()).unwrap_or(10) as u32;
-            let n = if radix == 10 { s.trim().parse::<i64>().unwrap_or(0) }
-                    else { i64::from_str_radix(s.trim(), radix).unwrap_or(0) };
-            Some(Ok(RVal::Int(n)))
+            let result = if radix == 10 { s.trim().parse::<i64>() }
+                         else { i64::from_str_radix(s.trim(), radix).map_err(|e| e.to_string().parse::<i64>().unwrap_err()) };
+            match result {
+                Ok(n) => Some(Ok(RVal::Int(n))),
+                Err(_) => Some(Err(rava_common::error::RavaError::JavaException {
+                    exception_type: "NumberFormatException".into(),
+                    message: format!("For input string: \"{}\"", s),
+                })),
+            }
         }
         id if id == fnv("Integer.toString") => {
             let n = args.first().map(|v| v.as_int()).unwrap_or(0);
@@ -98,20 +113,26 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         id if id == fnv("Boolean.toString") => Some(Ok(RVal::Str(args.first().map(|v| v.is_truthy().to_string()).unwrap_or_else(|| "false".into())))),
 
         // ── Character ─────────────────────────────────────────────────────────
-        id if id == fnv("Character.isDigit")       => Some(Ok(RVal::Bool((args.first().map(|v| v.as_int()).unwrap_or(0) as u8 as char).is_ascii_digit()))),
-        id if id == fnv("Character.isLetter")      => Some(Ok(RVal::Bool((args.first().map(|v| v.as_int()).unwrap_or(0) as u8 as char).is_alphabetic()))),
-        id if id == fnv("Character.isLetterOrDigit")=> Some(Ok(RVal::Bool((args.first().map(|v| v.as_int()).unwrap_or(0) as u8 as char).is_alphanumeric()))),
-        id if id == fnv("Character.isWhitespace") || id == fnv("Character.isSpaceChar") => Some(Ok(RVal::Bool((args.first().map(|v| v.as_int()).unwrap_or(0) as u8 as char).is_whitespace()))),
-        id if id == fnv("Character.isUpperCase")   => Some(Ok(RVal::Bool((args.first().map(|v| v.as_int()).unwrap_or(0) as u8 as char).is_uppercase()))),
-        id if id == fnv("Character.isLowerCase")   => Some(Ok(RVal::Bool((args.first().map(|v| v.as_int()).unwrap_or(0) as u8 as char).is_lowercase()))),
-        id if id == fnv("Character.isAlphabetic")  => Some(Ok(RVal::Bool((args.first().map(|v| v.as_int()).unwrap_or(0) as u8 as char).is_alphabetic()))),
+        id if id == fnv("Character.isDigit")       => Some(Ok(RVal::Bool(rval_to_char(args.first()).is_ascii_digit()))),
+        id if id == fnv("Character.isLetter")      => Some(Ok(RVal::Bool(rval_to_char(args.first()).is_alphabetic()))),
+        id if id == fnv("Character.isLetterOrDigit")=> Some(Ok(RVal::Bool(rval_to_char(args.first()).is_alphanumeric()))),
+        id if id == fnv("Character.isWhitespace") || id == fnv("Character.isSpaceChar") => Some(Ok(RVal::Bool(rval_to_char(args.first()).is_whitespace()))),
+        id if id == fnv("Character.isUpperCase")   => Some(Ok(RVal::Bool(rval_to_char(args.first()).is_uppercase()))),
+        id if id == fnv("Character.isLowerCase")   => Some(Ok(RVal::Bool(rval_to_char(args.first()).is_lowercase()))),
+        id if id == fnv("Character.isAlphabetic")  => Some(Ok(RVal::Bool(rval_to_char(args.first()).is_alphabetic()))),
         id if id == fnv("Character.toUpperCase") => {
-            let c = args.first().map(|v| v.as_int()).unwrap_or(0) as u8 as char;
-            Some(Ok(RVal::Int(c.to_uppercase().next().unwrap_or(c) as i64)))
+            let c = args.first().map(|v| match v {
+                RVal::Str(s) => s.chars().next().unwrap_or('\0'),
+                _ => v.as_int() as u8 as char,
+            }).unwrap_or('\0');
+            Some(Ok(RVal::Str(c.to_uppercase().next().unwrap_or(c).to_string())))
         }
         id if id == fnv("Character.toLowerCase") => {
-            let c = args.first().map(|v| v.as_int()).unwrap_or(0) as u8 as char;
-            Some(Ok(RVal::Int(c.to_lowercase().next().unwrap_or(c) as i64)))
+            let c = args.first().map(|v| match v {
+                RVal::Str(s) => s.chars().next().unwrap_or('\0'),
+                _ => v.as_int() as u8 as char,
+            }).unwrap_or('\0');
+            Some(Ok(RVal::Str(c.to_lowercase().next().unwrap_or(c).to_string())))
         }
         id if id == fnv("Character.toString") => {
             let c = args.first().map(|v| v.as_int()).unwrap_or(0) as u8 as char;

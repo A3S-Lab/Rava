@@ -601,3 +601,1514 @@ class Main {
 "#);
     assert_eq!(out.trim(), "apple\ncherry\ncherry");
 }
+
+#[test]
+fn do_while_loop() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int i = 0, sum = 0;
+        do {
+            sum += i;
+            i++;
+        } while (i < 5);
+        System.out.println(sum);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "10");
+}
+
+#[test]
+fn string_switch() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String[] days = {"MON", "SAT", "WED"};
+        for (String d : days) {
+            switch (d) {
+                case "SAT": case "SUN":
+                    System.out.println("weekend");
+                    break;
+                default:
+                    System.out.println("weekday");
+            }
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "weekday\nweekend\nweekday");
+}
+
+#[test]
+fn string_builder() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Hello");
+        sb.append(", ");
+        sb.append("World");
+        sb.append("!");
+        System.out.println(sb.toString());
+        System.out.println(sb.length());
+        sb.reverse();
+        System.out.println(sb.toString());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Hello, World!\n13\n!dlroW ,olleH");
+}
+
+#[test]
+fn multi_catch() {
+    let out = run(r#"
+class Main {
+    static int parse(String s) { return Integer.parseInt(s); }
+    public static void main(String[] args) {
+        String[] inputs = {"42", "abc", null};
+        for (String s : inputs) {
+            try {
+                int n = parse(s);
+                System.out.println(n);
+            } catch (NumberFormatException | NullPointerException e) {
+                System.out.println("error");
+            }
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "42\nerror\nerror");
+}
+
+#[test]
+fn try_with_resources() {
+    let out = run(r#"
+class Resource {
+    String name;
+    Resource(String name) { this.name = name; System.out.println("open " + name); }
+    void close() { System.out.println("close " + name); }
+    void use() { System.out.println("use " + name); }
+}
+class Main {
+    public static void main(String[] args) {
+        try (Resource r = new Resource("A")) {
+            r.use();
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "open A\nuse A\nclose A");
+}
+
+#[test]
+fn labeled_break() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int count = 0;
+        outer:
+        for (int i = 0; i < 5; i++) {
+            for (int j = 0; j < 5; j++) {
+                if (i + j == 6) break outer;
+                count++;
+            }
+        }
+        System.out.println(count);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "14");
+}
+
+#[test]
+fn var_type_inference() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        var x = 42;
+        var s = "hello";
+        var list = new ArrayList<String>();
+        list.add("a");
+        list.add("b");
+        System.out.println(x);
+        System.out.println(s.toUpperCase());
+        System.out.println(list.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "42\nHELLO\n2");
+}
+
+#[test]
+fn instanceof_pattern() {
+    let out = run(r#"
+class Main {
+    static String describe(Object obj) {
+        if (obj instanceof String s) {
+            return "string of length " + s.length();
+        } else if (obj instanceof Integer i) {
+            return "integer " + i;
+        }
+        return "other";
+    }
+    public static void main(String[] args) {
+        System.out.println(describe("hello"));
+        System.out.println(describe(42));
+        System.out.println(describe(3.14));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "string of length 5\ninteger 42\nother");
+}
+
+#[test]
+fn record_class() {
+    let out = run(r#"
+record Point(int x, int y) {
+    int sum() { return x + y; }
+}
+class Main {
+    public static void main(String[] args) {
+        Point p = new Point(3, 4);
+        System.out.println(p.x());
+        System.out.println(p.y());
+        System.out.println(p.sum());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n4\n7");
+}
+
+#[test]
+fn switch_type_pattern() {
+    let out = run(r#"
+class Main {
+    static String format(Object obj) {
+        return switch (obj) {
+            case Integer i -> "int:" + i;
+            case String s -> "str:" + s;
+            default -> "other";
+        };
+    }
+    public static void main(String[] args) {
+        System.out.println(format(42));
+        System.out.println(format("hi"));
+        System.out.println(format(3.14));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "int:42\nstr:hi\nother");
+}
+
+#[test]
+fn enum_with_fields_and_methods() {
+    let out = run(r#"
+enum Color {
+    RED(255, 0, 0),
+    GREEN(0, 255, 0),
+    BLUE(0, 0, 255);
+
+    private final int r;
+    private final int g;
+    private final int b;
+
+    Color(int r, int g, int b) {
+        this.r = r;
+        this.g = g;
+        this.b = b;
+    }
+
+    int brightness() { return r + g + b; }
+}
+class Main {
+    public static void main(String[] args) {
+        System.out.println(Color.values().length);
+        System.out.println(Color.GREEN.name());
+        System.out.println(Color.RED.ordinal());
+        System.out.println(Color.BLUE.brightness());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\nGREEN\n0\n255");
+}
+
+#[test]
+fn varargs() {
+    let out = run(r#"
+class Main {
+    static int sum(int... nums) {
+        int total = 0;
+        for (int n : nums) total += n;
+        return total;
+    }
+    static String join(String sep, String... parts) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) sb.append(sep);
+            sb.append(parts[i]);
+        }
+        return sb.toString();
+    }
+    public static void main(String[] args) {
+        System.out.println(sum(1, 2, 3, 4, 5));
+        System.out.println(join(", ", "a", "b", "c"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "15\na, b, c");
+}
+
+#[test]
+fn static_initializer() {
+    let out = run(r#"
+class Config {
+    static int MAX;
+    static String PREFIX;
+    static {
+        MAX = 100;
+        PREFIX = "cfg_";
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        System.out.println(Config.MAX);
+        System.out.println(Config.PREFIX);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "100\ncfg_");
+}
+
+#[test]
+fn constructor_delegation() {
+    let out = run(r#"
+class Point {
+    int x, y, z;
+    Point(int x, int y) { this(x, y, 0); }
+    Point(int x, int y, int z) { this.x = x; this.y = y; this.z = z; }
+    public String toString() { return x + "," + y + "," + z; }
+}
+class Main {
+    public static void main(String[] args) {
+        Point p1 = new Point(1, 2);
+        Point p2 = new Point(3, 4, 5);
+        System.out.println(p1);
+        System.out.println(p2);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1,2,0\n3,4,5");
+}
+
+#[test]
+fn multi_dimensional_array() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int[][] grid = new int[3][3];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                grid[i][j] = i * 3 + j + 1;
+        System.out.println(grid[0][0]);
+        System.out.println(grid[1][1]);
+        System.out.println(grid[2][2]);
+        System.out.println(grid.length);
+        System.out.println(grid[0].length);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1\n5\n9\n3\n3");
+}
+
+#[test]
+fn assert_statement() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        try {
+            int x = 5;
+            assert x > 0 : "x must be positive";
+            System.out.println("ok");
+            assert x < 0 : "x must be negative";
+            System.out.println("should not reach");
+        } catch (AssertionError e) {
+            System.out.println("assertion failed");
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "ok\nassertion failed");
+}
+
+#[test]
+fn inner_class() {
+    let out = run(r#"
+class Outer {
+    int value;
+    Outer(int v) { this.value = v; }
+    class Inner {
+        int doubled() { return value * 2; }
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        Outer o = new Outer(21);
+        System.out.println(o.value);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "21");
+}
+
+#[test]
+fn comparable_and_sorting() {
+    let out = run(r#"
+import java.util.*;
+class Student implements Comparable<Student> {
+    String name;
+    int grade;
+    Student(String name, int grade) { this.name = name; this.grade = grade; }
+    public int compareTo(Student other) { return Integer.compare(this.grade, other.grade); }
+    public String toString() { return name + ":" + grade; }
+}
+class Main {
+    public static void main(String[] args) {
+        List<Student> students = new ArrayList<>();
+        students.add(new Student("Alice", 85));
+        students.add(new Student("Bob", 92));
+        students.add(new Student("Charlie", 78));
+        Collections.sort(students);
+        for (Student s : students) System.out.println(s);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Charlie:78\nAlice:85\nBob:92");
+}
+
+#[test]
+fn string_operations_advanced() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String s = "  Hello, World!  ";
+        System.out.println(s.strip());
+        System.out.println(s.trim());
+        System.out.println("abc".repeat(3));
+        System.out.println(String.join("-", "a", "b", "c"));
+        System.out.println("hello".indexOf("ll"));
+        System.out.println("hello world".replace("world", "Java"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Hello, World!\nHello, World!\nabcabcabc\na-b-c\n2\nhello Java");
+}
+
+#[test]
+fn exception_hierarchy() {
+    let out = run(r#"
+class AppException extends RuntimeException {
+    int code;
+    AppException(String msg, int code) {
+        super(msg);
+        this.code = code;
+    }
+}
+class Main {
+    static void risky(int x) {
+        if (x < 0) throw new AppException("negative", -1);
+        if (x == 0) throw new ArithmeticException("zero");
+        System.out.println("ok: " + x);
+    }
+    public static void main(String[] args) {
+        try { risky(5); } catch (Exception e) { System.out.println("err"); }
+        try { risky(-1); } catch (AppException e) { System.out.println("app:" + e.code); }
+        try { risky(0); } catch (ArithmeticException e) { System.out.println("arith"); }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "ok: 5\napp:-1\narith");
+}
+
+#[test]
+fn optional() {
+    let out = run(r#"
+import java.util.Optional;
+class Main {
+    static Optional<String> find(String[] arr, String target) {
+        for (String s : arr) {
+            if (s.equals(target)) return Optional.of(s);
+        }
+        return Optional.empty();
+    }
+    public static void main(String[] args) {
+        String[] words = {"hello", "world", "java"};
+        Optional<String> found = find(words, "world");
+        System.out.println(found.isPresent());
+        System.out.println(found.get());
+        Optional<String> missing = find(words, "rust");
+        System.out.println(missing.isPresent());
+        System.out.println(missing.orElse("not found"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\nworld\nfalse\nnot found");
+}
+
+#[test]
+fn hashset_and_treeset() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        Set<String> set = new HashSet<>();
+        set.add("banana");
+        set.add("apple");
+        set.add("banana");
+        System.out.println(set.size());
+        System.out.println(set.contains("apple"));
+        System.out.println(set.contains("cherry"));
+        set.remove("apple");
+        System.out.println(set.size());
+
+        TreeSet<Integer> ts = new TreeSet<>();
+        ts.add(5); ts.add(1); ts.add(3); ts.add(2); ts.add(4);
+        System.out.println(ts.first());
+        System.out.println(ts.last());
+        System.out.println(ts.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "2\ntrue\nfalse\n1\n1\n5\n5");
+}
+
+#[test]
+fn arraydeque() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        Deque<Integer> dq = new ArrayDeque<>();
+        dq.addFirst(2);
+        dq.addFirst(1);
+        dq.addLast(3);
+        dq.addLast(4);
+        System.out.println(dq.peekFirst());
+        System.out.println(dq.peekLast());
+        System.out.println(dq.pollFirst());
+        System.out.println(dq.pollLast());
+        System.out.println(dq.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1\n4\n1\n4\n2");
+}
+
+#[test]
+fn comparator_comparing() {
+    let out = run(r#"
+import java.util.*;
+import java.util.stream.*;
+class Person {
+    String name;
+    int age;
+    Person(String name, int age) { this.name = name; this.age = age; }
+    String getName() { return name; }
+    int getAge() { return age; }
+    public String toString() { return name + ":" + age; }
+}
+class Main {
+    public static void main(String[] args) {
+        List<Person> people = new ArrayList<>();
+        people.add(new Person("Charlie", 30));
+        people.add(new Person("Alice", 25));
+        people.add(new Person("Bob", 35));
+        people.sort((a, b) -> Integer.compare(a.getAge(), b.getAge()));
+        for (Person p : people) System.out.println(p);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Alice:25\nCharlie:30\nBob:35");
+}
+
+#[test]
+fn map_entry_iteration() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> scores = new TreeMap<>();
+        scores.put("Alice", 95);
+        scores.put("Bob", 87);
+        scores.put("Charlie", 92);
+        int total = 0;
+        for (Map.Entry<String, Integer> e : scores.entrySet()) {
+            System.out.println(e.getKey() + "=" + e.getValue());
+            total += e.getValue();
+        }
+        System.out.println(total);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Alice=95\nBob=87\nCharlie=92\n274");
+}
+
+#[test]
+fn functional_interfaces() {
+    let out = run(r#"
+import java.util.function.*;
+import java.util.*;
+import java.util.stream.*;
+class Main {
+    static <T, R> List<R> transform(List<T> list, Function<T, R> fn) {
+        List<R> result = new ArrayList<>();
+        for (T item : list) result.add(fn.apply(item));
+        return result;
+    }
+    static <T> List<T> filterList(List<T> list, Predicate<T> pred) {
+        List<T> result = new ArrayList<>();
+        for (T item : list) if (pred.test(item)) result.add(item);
+        return result;
+    }
+    public static void main(String[] args) {
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5);
+        List<Integer> doubled = transform(nums, x -> x * 2);
+        System.out.println(doubled.get(0));
+        System.out.println(doubled.get(4));
+        List<Integer> evens = filterList(nums, x -> x % 2 == 0);
+        System.out.println(evens.size());
+        System.out.println(evens.get(0));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "2\n10\n2\n2");
+}
+
+#[test]
+fn math_methods() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println((int) Math.sqrt(16));
+        System.out.println((int) Math.floor(3.9));
+        System.out.println((int) Math.ceil(3.1));
+        System.out.println(Math.round(3.5));
+        System.out.println(Math.min(10, 20));
+        System.out.println(Math.max(10, 20));
+        System.out.println(Math.abs(-42));
+        System.out.println((int) Math.pow(2, 10));
+        System.out.println(Math.log(Math.E) > 0.99);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "4\n3\n4\n4\n10\n20\n42\n1024\ntrue");
+}
+
+#[test]
+fn nested_lambda_capture() {
+    let out = run(r#"
+import java.util.*;
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        int multiplier = 3;
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5);
+        List<Integer> result = nums.stream()
+            .filter(n -> n % 2 != 0)
+            .map(n -> n * multiplier)
+            .collect(Collectors.toList());
+        for (int n : result) System.out.println(n);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n9\n15");
+}
+
+#[test]
+fn multi_level_inheritance() {
+    let out = run(r#"
+class A {
+    String name() { return "A"; }
+    String greet() { return "Hello from " + name(); }
+}
+class B extends A {
+    String name() { return "B"; }
+}
+class C extends B {
+    String name() { return "C"; }
+    String extra() { return super.greet() + " via C"; }
+}
+class Main {
+    public static void main(String[] args) {
+        A a = new A();
+        A b = new B();
+        A c = new C();
+        System.out.println(a.greet());
+        System.out.println(b.greet());
+        System.out.println(c.greet());
+        System.out.println(((C)c).extra());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Hello from A\nHello from B\nHello from C\nHello from C via C");
+}
+
+#[test]
+fn interface_static_method() {
+    let out = run(r#"
+interface MathOp {
+    int apply(int a, int b);
+    static MathOp add() { return (a, b) -> a + b; }
+    static MathOp multiply() { return (a, b) -> a * b; }
+    default MathOp andThen(MathOp next) {
+        return (a, b) -> next.apply(this.apply(a, b), b);
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        MathOp add = MathOp.add();
+        MathOp mul = MathOp.multiply();
+        System.out.println(add.apply(3, 4));
+        System.out.println(mul.apply(3, 4));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "7\n12");
+}
+
+#[test]
+fn annotations_basic() {
+    let out = run(r#"
+import java.lang.annotation.*;
+@interface MyAnnotation {
+    String value() default "default";
+}
+@MyAnnotation("hello")
+class Greeter {
+    @MyAnnotation("world")
+    String greet() { return "hi"; }
+}
+class Main {
+    public static void main(String[] args) {
+        Greeter g = new Greeter();
+        System.out.println(g.greet());
+        System.out.println("done");
+    }
+}
+"#);
+    assert_eq!(out.trim(), "hi\ndone");
+}
+
+#[test]
+fn regex_operations() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String s = "hello world 123";
+        System.out.println(s.matches(".*\\d+.*"));
+        System.out.println(s.replaceAll("\\d+", "NUM"));
+        System.out.println(s.replaceFirst("[a-z]+", "X"));
+        String[] parts = "a,b,,c".split(",");
+        System.out.println(parts.length);
+        System.out.println(parts[0]);
+        System.out.println(parts[1]);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\nhello world NUM\nX world 123\n4\na\nb");
+}
+
+#[test]
+fn java_time_basic() {
+    let out = run(r#"
+import java.time.*;
+class Main {
+    public static void main(String[] args) {
+        LocalDate d = LocalDate.of(2024, 3, 15);
+        System.out.println(d.getYear());
+        System.out.println(d.getMonthValue());
+        System.out.println(d.getDayOfMonth());
+        LocalDate d2 = d.plusDays(10);
+        System.out.println(d2.getDayOfMonth());
+        System.out.println(d.isBefore(d2));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "2024\n3\n15\n25\ntrue");
+}
+
+#[test]
+fn stream_generate_and_iterate() {
+    let out = run(r#"
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        // Stream.iterate: 0,1,2,3,4 — take first 5
+        Stream.iterate(0, n -> n + 1)
+            .limit(5)
+            .forEach(n -> System.out.println(n));
+        // Stream.generate: constant supplier, take 3
+        int[] count = {0};
+        Stream.generate(() -> 42)
+            .limit(3)
+            .forEach(n -> System.out.println(n));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "0\n1\n2\n3\n4\n42\n42\n42");
+}
+
+#[test]
+fn intstream_range() {
+    let out = run(r#"
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        int sum = IntStream.range(1, 6).sum();
+        System.out.println(sum);
+        int sumClosed = IntStream.rangeClosed(1, 5).sum();
+        System.out.println(sumClosed);
+        IntStream.range(0, 3).forEach(i -> System.out.println(i));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "15\n15\n0\n1\n2");
+}
+
+#[test]
+fn linkedlist_as_deque() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        LinkedList<Integer> list = new LinkedList<>();
+        list.add(1);
+        list.add(2);
+        list.add(3);
+        System.out.println(list.size());
+        System.out.println(list.get(0));
+        list.addFirst(0);
+        System.out.println(list.getFirst());
+        list.addLast(4);
+        System.out.println(list.getLast());
+        list.removeFirst();
+        System.out.println(list.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n1\n0\n4\n4");
+}
+
+#[test]
+fn collections_addall_and_copy() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        List<String> list = new ArrayList<>();
+        Collections.addAll(list, "a", "b", "c");
+        System.out.println(list.size());
+        System.out.println(list.get(1));
+        Collections.sort(list, Collections.reverseOrder());
+        System.out.println(list.get(0));
+        List<String> copy = new ArrayList<>(list);
+        Collections.reverse(copy);
+        System.out.println(copy.get(0));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\nb\nc\na");
+}
+
+#[test]
+fn string_join_and_format() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        List<String> words = Arrays.asList("foo", "bar", "baz");
+        String joined = String.join(", ", words);
+        System.out.println(joined);
+        System.out.println(String.join("-", "a", "b", "c"));
+        System.out.printf("%.2f%n", 3.14159);
+        System.out.printf("%05d%n", 42);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "foo, bar, baz\na-b-c\n3.14\n00042");
+}
+
+#[test]
+fn map_compute_and_merge() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> freq = new HashMap<>();
+        String[] words = {"a", "b", "a", "c", "b", "a"};
+        for (String w : words) {
+            freq.merge(w, 1, (old, v) -> old + v);
+        }
+        System.out.println(freq.get("a"));
+        System.out.println(freq.get("b"));
+        System.out.println(freq.get("c"));
+        freq.computeIfAbsent("d", k -> k.length());
+        System.out.println(freq.get("d"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n2\n1\n1");
+}
+
+#[test]
+fn iterator_explicit() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        List<String> list = new ArrayList<>(Arrays.asList("x", "y", "z"));
+        Iterator<String> it = list.iterator();
+        while (it.hasNext()) {
+            System.out.println(it.next());
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "x\ny\nz");
+}
+
+#[test]
+fn collections_frequency_and_disjoint() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        List<String> list = Arrays.asList("a", "b", "a", "c", "a");
+        System.out.println(Collections.frequency(list, "a"));
+        List<String> a = Arrays.asList("1", "2", "3");
+        List<String> b = Arrays.asList("4", "5", "6");
+        List<String> c = Arrays.asList("3", "4");
+        System.out.println(Collections.disjoint(a, b));
+        System.out.println(Collections.disjoint(a, c));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\ntrue\nfalse");
+}
+
+#[test]
+fn map_foreach_and_replaceall() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> map = new TreeMap<>();
+        map.put("a", 1);
+        map.put("b", 2);
+        map.put("c", 3);
+        map.forEach((k, v) -> System.out.println(k + "=" + v));
+        map.replaceAll((k, v) -> v * 10);
+        System.out.println(map.get("b"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "a=1\nb=2\nc=3\n20");
+}
+
+#[test]
+fn string_strip_and_repeat() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String s = "  hello  ";
+        System.out.println(s.strip());
+        System.out.println(s.stripLeading());
+        System.out.println(s.stripTrailing());
+        System.out.println("ab".repeat(3));
+        System.out.println("".isEmpty());
+        System.out.println("x".isEmpty());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "hello\nhello  \n  hello\nababab\ntrue\nfalse");
+}
+
+#[test]
+fn nested_class_static() {
+    let out = run(r#"
+class Outer {
+    static int x = 10;
+    static class Inner {
+        int y;
+        Inner(int y) { this.y = y; }
+        int sum() { return Outer.x + y; }
+    }
+    public static void main(String[] args) {
+        Inner i = new Inner(5);
+        System.out.println(i.sum());
+        Outer.x = 20;
+        System.out.println(i.sum());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "15\n25");
+}
+
+#[test]
+fn ternary_and_conditional() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int x = 5;
+        String s = x > 3 ? "big" : "small";
+        System.out.println(s);
+        int abs = x < 0 ? -x : x;
+        System.out.println(abs);
+        // nested ternary
+        int y = 10;
+        String cat = y < 5 ? "low" : y < 15 ? "mid" : "high";
+        System.out.println(cat);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "big\n5\nmid");
+}
+
+#[test]
+fn bitwise_operations() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int a = 0b1010;  // 10
+        int b = 0b1100;  // 12
+        System.out.println(a & b);   // 8
+        System.out.println(a | b);   // 14
+        System.out.println(a ^ b);   // 6
+        System.out.println(~a);      // -11
+        System.out.println(a << 1);  // 20
+        System.out.println(a >> 1);  // 5
+        System.out.println(-1 >>> 28); // 15
+    }
+}
+"#);
+    assert_eq!(out.trim(), "8\n14\n6\n-11\n20\n5\n15");
+}
+
+#[test]
+fn string_builder_chaining() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String result = new StringBuilder()
+            .append("Hello")
+            .append(", ")
+            .append("World")
+            .append("!")
+            .toString();
+        System.out.println(result);
+        StringBuilder sb = new StringBuilder("abc");
+        sb.insert(1, "X");
+        System.out.println(sb.toString());
+        sb.reverse();
+        System.out.println(sb.toString());
+        System.out.println(sb.length());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Hello, World!\naXbc\ncbXa\n4");
+}
+
+#[test]
+fn array_operations() {
+    let out = run(r#"
+import java.util.Arrays;
+class Main {
+    public static void main(String[] args) {
+        int[] arr = {5, 2, 8, 1, 9, 3};
+        Arrays.sort(arr);
+        System.out.println(Arrays.toString(arr));
+        int idx = Arrays.binarySearch(arr, 8);
+        System.out.println(idx);
+        int[] copy = Arrays.copyOf(arr, 4);
+        System.out.println(Arrays.toString(copy));
+        int[] range = Arrays.copyOfRange(arr, 2, 5);
+        System.out.println(Arrays.toString(range));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[1, 2, 3, 5, 8, 9]\n4\n[1, 2, 3, 5]\n[3, 5, 8]");
+}
+
+#[test]
+fn generic_bounded_type() {
+    let out = run(r#"
+class Box<T extends Comparable<T>> {
+    private T value;
+    Box(T value) { this.value = value; }
+    T getValue() { return value; }
+    boolean isGreaterThan(Box<T> other) {
+        return value.compareTo(other.getValue()) > 0;
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        Box<Integer> a = new Box<>(10);
+        Box<Integer> b = new Box<>(5);
+        System.out.println(a.getValue());
+        System.out.println(a.isGreaterThan(b));
+        System.out.println(b.isGreaterThan(a));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "10\ntrue\nfalse");
+}
+
+#[test]
+fn interface_default_method() {
+    let out = run(r#"
+interface Greeter {
+    String name();
+    default String greet() {
+        return "Hello, " + name() + "!";
+    }
+}
+class Person implements Greeter {
+    private String n;
+    Person(String n) { this.n = n; }
+    public String name() { return n; }
+}
+class Main {
+    public static void main(String[] args) {
+        Person p = new Person("Alice");
+        System.out.println(p.greet());
+        System.out.println(p.name());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Hello, Alice!\nAlice");
+}
+
+#[test]
+fn exception_message_and_type() {
+    let out = run(r#"
+class Main {
+    static int divide(int a, int b) {
+        if (b == 0) throw new ArithmeticException("division by zero");
+        return a / b;
+    }
+    public static void main(String[] args) {
+        try {
+            System.out.println(divide(10, 2));
+            System.out.println(divide(10, 0));
+        } catch (ArithmeticException e) {
+            System.out.println("caught: " + e.getMessage());
+        }
+        try {
+            String s = null;
+            s.length();
+        } catch (NullPointerException e) {
+            System.out.println("npe caught");
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "5\ncaught: division by zero\nnpe caught");
+}
+
+#[test]
+fn map_of_and_list_of() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> list = List.of(1, 2, 3, 4, 5);
+        System.out.println(list.size());
+        System.out.println(list.get(2));
+        Set<String> set = Set.of("a", "b", "c");
+        System.out.println(set.size());
+        System.out.println(set.contains("b"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "5\n3\n3\ntrue");
+}
+
+#[test]
+fn type_casting_and_autoboxing() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        // Narrowing cast
+        double pi = 3.14;
+        int truncated = (int) pi;
+        System.out.println(truncated);
+        // Autoboxing
+        Integer boxed = 100;
+        int unboxed = boxed;
+        System.out.println(unboxed);
+        // String conversion
+        String s = String.valueOf(42);
+        System.out.println(s.length());
+        int parsed = Integer.parseInt("123");
+        System.out.println(parsed + 1);
+        // double literal
+        double d = 3.0;
+        System.out.println(d);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n100\n2\n124\n3.0");
+}
+
+#[test]
+fn while_and_break_continue() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int sum = 0;
+        int i = 0;
+        while (i < 10) {
+            i++;
+            if (i % 2 == 0) continue;
+            if (i > 7) break;
+            sum += i;
+        }
+        System.out.println(sum); // 1+3+5+7 = 16
+        // do-while
+        int n = 5;
+        int fact = 1;
+        do {
+            fact *= n;
+            n--;
+        } while (n > 0);
+        System.out.println(fact); // 120
+    }
+}
+"#);
+    assert_eq!(out.trim(), "16\n120");
+}
+
+#[test]
+fn string_number_conversions() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println(Integer.parseInt("42"));
+        System.out.println(Double.parseDouble("3.14"));
+        System.out.println(Integer.toString(255, 16));
+        System.out.println(Integer.toBinaryString(10));
+        System.out.println(Integer.toHexString(255));
+        System.out.println(Integer.toOctalString(8));
+        System.out.println(Integer.max(3, 7));
+        System.out.println(Integer.min(3, 7));
+        System.out.println(Integer.sum(3, 7));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "42\n3.14\nff\n1010\nff\n10\n7\n3\n10");
+}
+
+#[test]
+fn abstract_class_template_method() {
+    let out = run(r#"
+abstract class Shape {
+    abstract double area();
+    String describe() {
+        return "Shape with area " + area();
+    }
+}
+class Circle extends Shape {
+    double r;
+    Circle(double r) { this.r = r; }
+    double area() { return Math.PI * r * r; }
+}
+class Rectangle extends Shape {
+    double w, h;
+    Rectangle(double w, double h) { this.w = w; this.h = h; }
+    double area() { return w * h; }
+}
+class Main {
+    public static void main(String[] args) {
+        Shape c = new Circle(1.0);
+        Shape r = new Rectangle(3.0, 4.0);
+        System.out.printf("%.4f%n", c.area());
+        System.out.println(r.area());
+        System.out.println(r.describe());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3.1416\n12.0\nShape with area 12.0");
+}
+
+#[test]
+fn varargs_and_overloading() {
+    let out = run(r#"
+class Calc {
+    static int sum(int... nums) {
+        int total = 0;
+        for (int n : nums) total += n;
+        return total;
+    }
+    static String join(String sep, String... parts) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) sb.append(sep);
+            sb.append(parts[i]);
+        }
+        return sb.toString();
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        System.out.println(Calc.sum(1, 2, 3));
+        System.out.println(Calc.sum(10, 20));
+        System.out.println(Calc.join(", ", "a", "b", "c"));
+        System.out.println(Calc.join("-", "x", "y"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "6\n30\na, b, c\nx-y");
+}
+
+#[test]
+fn static_factory_pattern() {
+    let out = run(r#"
+class Color {
+    private int r, g, b;
+    private Color(int r, int g, int b) { this.r = r; this.g = g; this.b = b; }
+    static Color of(int r, int g, int b) { return new Color(r, g, b); }
+    static Color red()   { return new Color(255, 0, 0); }
+    static Color green() { return new Color(0, 255, 0); }
+    public String toString() { return "(" + r + "," + g + "," + b + ")"; }
+}
+class Main {
+    public static void main(String[] args) {
+        Color c = Color.of(100, 150, 200);
+        System.out.println(c);
+        System.out.println(Color.red());
+        System.out.println(Color.green());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "(100,150,200)\n(255,0,0)\n(0,255,0)");
+}
+
+#[test]
+fn sealed_interface_simulation() {
+    let out = run(r#"
+interface Expr {}
+class Num implements Expr {
+    int val;
+    Num(int val) { this.val = val; }
+}
+class Add implements Expr {
+    Expr left, right;
+    Add(Expr left, Expr right) { this.left = left; this.right = right; }
+}
+class Mul implements Expr {
+    Expr left, right;
+    Mul(Expr left, Expr right) { this.left = left; this.right = right; }
+}
+class Eval {
+    static int eval(Expr e) {
+        if (e instanceof Num n) return n.val;
+        if (e instanceof Add a) return eval(a.left) + eval(a.right);
+        if (e instanceof Mul m) return eval(m.left) * eval(m.right);
+        return 0;
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        // (2 + 3) * 4
+        Expr e = new Mul(new Add(new Num(2), new Num(3)), new Num(4));
+        System.out.println(Eval.eval(e));
+        // 1 + 2 + 3
+        Expr e2 = new Add(new Add(new Num(1), new Num(2)), new Num(3));
+        System.out.println(Eval.eval(e2));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "20\n6");
+}
+
+#[test]
+fn string_tokenizer_split() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        String csv = "name,age,city";
+        String[] parts = csv.split(",");
+        for (String p : parts) System.out.println(p);
+        // split with limit
+        String s = "a:b:c:d";
+        String[] limited = s.split(":", 2);
+        System.out.println(limited.length);
+        System.out.println(limited[0]);
+        System.out.println(limited[1]);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "name\nage\ncity\n2\na\nb:c:d");
+}
+
+#[test]
+fn math_advanced() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println(Math.abs(-5));
+        System.out.println(Math.abs(-3.14));
+        System.out.printf("%.4f%n", Math.sqrt(2.0));
+        System.out.printf("%.4f%n", Math.log(Math.E));
+        System.out.printf("%.4f%n", Math.sin(Math.PI / 2));
+        System.out.println(Math.pow(2, 10));
+        System.out.println(Math.max(3, 7));
+        System.out.println(Math.min(3, 7));
+        System.out.println(Math.floor(3.9));
+        System.out.println(Math.ceil(3.1));
+        System.out.println(Math.round(3.5));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "5\n3.14\n1.4142\n1.0000\n1.0000\n1024.0\n7\n3\n3.0\n4.0\n4");
+}
+
+#[test]
+fn comparable_natural_order() {
+    let out = run(r#"
+import java.util.*;
+class Student implements Comparable<Student> {
+    String name;
+    int grade;
+    Student(String name, int grade) { this.name = name; this.grade = grade; }
+    public int compareTo(Student other) { return Integer.compare(this.grade, other.grade); }
+    public String toString() { return name + ":" + grade; }
+}
+class Main {
+    public static void main(String[] args) {
+        List<Student> students = new ArrayList<>();
+        students.add(new Student("Alice", 85));
+        students.add(new Student("Bob", 92));
+        students.add(new Student("Charlie", 78));
+        Collections.sort(students);
+        for (Student s : students) System.out.println(s);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Charlie:78\nAlice:85\nBob:92");
+}
+
+#[test]
+fn stack_operations() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        Deque<Integer> stack = new ArrayDeque<>();
+        stack.push(1);
+        stack.push(2);
+        stack.push(3);
+        System.out.println(stack.peek());
+        System.out.println(stack.pop());
+        System.out.println(stack.size());
+        stack.push(10);
+        while (!stack.isEmpty()) {
+            System.out.println(stack.pop());
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n3\n2\n10\n2\n1");
+}
+
+#[test]
+fn optional_chaining() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    static Optional<String> findName(boolean found) {
+        return found ? Optional.of("Alice") : Optional.empty();
+    }
+    public static void main(String[] args) {
+        Optional<String> name = findName(true);
+        System.out.println(name.isPresent());
+        System.out.println(name.get());
+        Optional<String> empty = findName(false);
+        System.out.println(empty.isPresent());
+        System.out.println(empty.orElse("default"));
+        System.out.println(name.map(s -> s.toUpperCase()).orElse("none"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\nAlice\nfalse\ndefault\nALICE");
+}
+
+#[test]
+fn multiline_string_and_char_ops() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        char c = 'A';
+        System.out.println(c);
+        System.out.println((int) c);
+        System.out.println(Character.isLetter(c));
+        System.out.println(Character.isDigit(c));
+        System.out.println(Character.toLowerCase(c));
+        System.out.println(Character.toUpperCase('z'));
+        System.out.println(Character.isWhitespace(' '));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "A\n65\ntrue\nfalse\na\nZ\ntrue");
+}
+
+#[test]
+fn two_dimensional_list() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        List<List<Integer>> matrix = new ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            List<Integer> row = new ArrayList<>();
+            for (int j = 0; j < 3; j++) {
+                row.add(i * 3 + j + 1);
+            }
+            matrix.add(row);
+        }
+        for (List<Integer> row : matrix) {
+            for (int j = 0; j < row.size(); j++) {
+                if (j > 0) System.out.print(" ");
+                System.out.print(row.get(j));
+            }
+            System.out.println();
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1 2 3\n4 5 6\n7 8 9");
+}
+
+#[test]
+fn stream_collectors_grouping() {
+    let out = run(r#"
+import java.util.*;
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        List<String> words = Arrays.asList("apple", "banana", "avocado", "blueberry", "cherry");
+        // group by first letter
+        Map<String, List<String>> grouped = words.stream()
+            .collect(Collectors.groupingBy(w -> w.substring(0, 1)));
+        // print sorted keys
+        new TreeMap<>(grouped).forEach((k, v) -> {
+            Collections.sort(v);
+            System.out.println(k + ": " + v.size());
+        });
+    }
+}
+"#);
+    assert_eq!(out.trim(), "a: 2\nb: 2\nc: 1");
+}

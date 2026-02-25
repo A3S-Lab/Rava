@@ -4,7 +4,7 @@ use rava_common::error::Result;
 use crate::rir_interp::RVal;
 use std::cell::RefCell;
 use std::rc::Rc;
-use super::format::{fnv, format_java_string, regex_lite_match};
+use super::format::{fnv, format_java_string, regex_lite_match, regex_replace, regex_split};
 
 /// Static String methods dispatched by func_id.
 pub fn dispatch_static(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
@@ -71,10 +71,15 @@ pub fn dispatch_named(s: &str, method: &str, args: &[RVal]) -> Option<Result<RVa
             let to   = args.get(1).map(|v| v.to_display()).unwrap_or_default();
             Some(Ok(RVal::Str(s.replace(from.as_str(), to.as_str()))))
         }
-        "replaceAll" | "replaceFirst" => {
+        "replaceAll" => {
             let pat = args.first().map(|v| v.to_display()).unwrap_or_default();
             let to  = args.get(1).map(|v| v.to_display()).unwrap_or_default();
-            Some(Ok(RVal::Str(s.replace(pat.as_str(), to.as_str()))))
+            Some(Ok(RVal::Str(regex_replace(&pat, s, &to, true))))
+        }
+        "replaceFirst" => {
+            let pat = args.first().map(|v| v.to_display()).unwrap_or_default();
+            let to  = args.get(1).map(|v| v.to_display()).unwrap_or_default();
+            Some(Ok(RVal::Str(regex_replace(&pat, s, &to, false))))
         }
         "indexOf" => {
             let arg = args.first().cloned().unwrap_or(RVal::Null);
@@ -143,7 +148,9 @@ pub fn dispatch_named(s: &str, method: &str, args: &[RVal]) -> Option<Result<RVa
         }
         "matches" => {
             let pat = args.first().map(|v| v.to_display()).unwrap_or_default();
-            Some(Ok(RVal::Bool(regex_lite_match(&pat, s))))
+            // Java String.matches() anchors the full string implicitly
+            let anchored = format!("^(?:{})$", pat);
+            Some(Ok(RVal::Bool(regex_lite_match(&anchored, s))))
         }
         "formatted" => {
             let fmt_args: Vec<RVal> = std::iter::once(RVal::Str(s.to_string()))

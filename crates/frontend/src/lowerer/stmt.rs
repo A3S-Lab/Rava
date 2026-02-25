@@ -3,6 +3,83 @@
 use super::*;
 
 impl<'a> FuncCtx<'a> {
+    /// Lower a single switch case label against `switch_val`, returning a boolean Value.
+    /// For type patterns and guarded patterns, also populates `bindings` with the bound name.
+    pub(super) fn lower_switch_label(
+        &mut self,
+        label: &Expr,
+        switch_val: &Value,
+        bindings: &mut Vec<(String, Value)>,
+    ) -> Result<Value> {
+        // case null — emit null-equality check
+        if matches!(label, Expr::Null) {
+            let null_val = self.fresh_value();
+            self.emit(RirInstr::ConstNull { ret: null_val.clone() });
+            let cmp = self.fresh_value();
+            self.emit(RirInstr::BinOp {
+                op: RirBinOp::Eq, lhs: switch_val.clone(), rhs: null_val, ret: cmp.clone(),
+            });
+            return Ok(cmp);
+        }
+        // Plain type pattern: __type_pattern__Type#name
+        if let Expr::Ident(s) = label {
+            if let Some(rest) = s.strip_prefix("__type_pattern__") {
+                if let Some((type_name, bind_name)) = rest.split_once('#') {
+                    let cmp = self.fresh_value();
+                    self.emit(RirInstr::Instanceof {
+                        obj: switch_val.clone(),
+                        class: ClassId(encode_builtin(type_name)),
+                        ret: cmp.clone(),
+                    });
+                    bindings.push((bind_name.to_string(), switch_val.clone()));
+                    return Ok(cmp);
+                }
+            }
+        }
+        // Guarded pattern: Ternary { cond: InstanceofPattern { .. }, then: guard, else_: false }
+        if let Expr::Ternary { cond, then: guard, .. } = label {
+            if let Expr::InstanceofPattern { ty, name, .. } = cond.as_ref() {
+                let instanceof = self.fresh_value();
+                self.emit(RirInstr::Instanceof {
+                    obj: switch_val.clone(),
+                    class: ClassId(encode_builtin(&ty.name)),
+                    ret: instanceof.clone(),
+                });
+                bindings.push((name.clone(), switch_val.clone()));
+                // Short-circuit: only eval guard if instanceof passes
+                let pre = self.current;
+                let guard_bb  = self.new_block();
+                let merge_bb  = self.new_block();
+                let false_bb  = self.new_block();
+                let result    = self.fresh_value();
+                self.blocks[pre].instrs.push(RirInstr::Branch {
+                    cond: instanceof, then_bb: guard_bb, else_bb: false_bb,
+                });
+                self.switch_to(guard_bb);
+                // Temporarily bind the pattern variable so the guard can reference it
+                self.vars.insert(name.clone(), switch_val.clone());
+                let guard_val = self.lower_expr(guard)?;
+                self.emit(RirInstr::ConstStr {
+                    ret: result.clone(),
+                    value: format!("__copy__{}", guard_val.0),
+                });
+                self.emit(RirInstr::Jump(merge_bb));
+                self.switch_to(false_bb);
+                self.emit(RirInstr::ConstBool { ret: result.clone(), value: false });
+                self.emit(RirInstr::Jump(merge_bb));
+                self.switch_to(merge_bb);
+                return Ok(result);
+            }
+        }
+        // Default: plain equality check
+        let label_val = self.lower_expr(label)?;
+        let cmp = self.fresh_value();
+        self.emit(RirInstr::BinOp {
+            op: RirBinOp::Eq, lhs: switch_val.clone(), rhs: label_val, ret: cmp.clone(),
+        });
+        Ok(cmp)
+    }
+
     pub(super) fn lower_block(&mut self, block: &Block) -> Result<()> {
         for stmt in &block.0 {
             self.lower_stmt(stmt)?;
@@ -257,18 +334,20 @@ impl<'a> FuncCtx<'a> {
 
                 self.loop_stack.push((exit_bb, exit_bb));
 
-                for case in cases {
+                // Pre-allocate body blocks so fall-through can reference the next one
+                let body_bbs: Vec<BlockId> = cases.iter().map(|_| self.new_block()).collect();
+
+                for (case_idx, case) in cases.iter().enumerate() {
+                    let body_bb = body_bbs[case_idx];
+                    let next_body_bb = body_bbs.get(case_idx + 1).copied().unwrap_or(exit_bb);
+
                     match &case.labels {
                         Some(labels) => {
                             self.switch_to(self.blocks[check].id);
                             let mut or_val = None;
+                            let mut pattern_bindings: Vec<(String, Value)> = Vec::new();
                             for label_expr in labels {
-                                let label_val = self.lower_expr(label_expr)?;
-                                let cmp = self.fresh_value();
-                                self.emit(RirInstr::BinOp {
-                                    op: RirBinOp::Eq, lhs: switch_val.clone(),
-                                    rhs: label_val, ret: cmp.clone(),
-                                });
+                                let cmp = self.lower_switch_label(label_expr, &switch_val, &mut pattern_bindings)?;
                                 or_val = Some(match or_val {
                                     None => cmp,
                                     Some(prev) => {
@@ -281,20 +360,25 @@ impl<'a> FuncCtx<'a> {
                                 });
                             }
                             let cond_ret = or_val.unwrap();
-                            let body_bb = self.new_block();
                             let next_bb = self.new_block();
                             self.blocks[check].instrs.push(
                                 RirInstr::Branch { cond: cond_ret, then_bb: body_bb, else_bb: next_bb }
                             );
                             self.switch_to(body_bb);
+                            for (name, val) in pattern_bindings {
+                                self.vars.insert(name, val);
+                            }
                             for stmt in &case.body { self.lower_stmt(stmt)?; }
                             if !self.current_block_ends_with_terminator() {
-                                self.emit(RirInstr::Jump(exit_bb));
+                                // Fall through to next case body (colon-syntax) or exit (arrow-syntax)
+                                self.emit(RirInstr::Jump(next_body_bb));
                             }
                             check = self.blocks.iter().position(|b| b.id == next_bb).unwrap();
                         }
                         None => {
                             self.switch_to(self.blocks[check].id);
+                            self.emit(RirInstr::Jump(body_bb));
+                            self.switch_to(body_bb);
                             for stmt in &case.body { self.lower_stmt(stmt)?; }
                             if !self.current_block_ends_with_terminator() {
                                 self.emit(RirInstr::Jump(exit_bb));
@@ -328,7 +412,18 @@ impl<'a> FuncCtx<'a> {
                     self.emit(RirInstr::ConstStr { ret: v.clone(), value: "Assertion failed".into() });
                     v
                 };
-                self.emit(RirInstr::Throw(msg));
+                // Throw as AssertionError object so catch(AssertionError e) works
+                let err_obj = self.fresh_value();
+                self.emit(RirInstr::New {
+                    class: ClassId(encode_builtin("AssertionError")),
+                    ret: err_obj.clone(),
+                });
+                self.emit(RirInstr::Call {
+                    func: FuncId(encode_builtin("AssertionError.<init>")),
+                    args: vec![err_obj.clone(), msg],
+                    ret: None,
+                });
+                self.emit(RirInstr::Throw(err_obj));
                 self.switch_to(cont_bb);
             }
             Stmt::Yield(expr) => {

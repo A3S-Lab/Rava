@@ -7,6 +7,7 @@
 //!   string      — String instance + static methods
 //!   system      — System.out, System.exit, System.arraycopy, etc.
 //!   collections — ArrayList, Collections, Arrays, List/Set/Map factories
+//!   time        — java.time (LocalDate, LocalTime, LocalDateTime, Instant, Duration, Period)
 //!   io          — java.io / java.nio.file
 //!   concurrent  — Thread, Atomic*, Lock stubs
 //!   reflect     — Class.forName, reflection stubs
@@ -22,6 +23,7 @@ pub mod numbers;
 pub mod reflect;
 pub mod string;
 pub mod system;
+pub mod time;
 
 use rava_common::error::Result;
 use crate::rir_interp::RVal;
@@ -38,6 +40,7 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         .or_else(|| numbers::dispatch(func_id, args))
         .or_else(|| string::dispatch_static(func_id, args))
         .or_else(|| collections::dispatch(func_id, args))
+        .or_else(|| time::dispatch(func_id, args))
         .or_else(|| io::dispatch(func_id, args))
         .or_else(|| concurrent::dispatch(func_id, args))
         .or_else(|| reflect::dispatch(func_id, args))
@@ -53,7 +56,16 @@ pub fn dispatch_method(receiver: &RVal, args: &[RVal]) -> Option<Result<RVal>> {
 /// Dispatch a named instance method on a receiver value.
 pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
     match receiver {
-        RVal::Str(s)                    => string::dispatch_named(s, method, args),
+        RVal::Str(s) => {
+            // java.time objects are encoded as tagged strings
+            if s.starts_with("__date__") || s.starts_with("__time__")
+                || s.starts_with("__datetime__") || s.starts_with("__instant__")
+                || s.starts_with("__duration__") || s.starts_with("__period__")
+            {
+                return time::dispatch_named(s, method, args);
+            }
+            string::dispatch_named(s, method, args)
+        }
         RVal::Array(arr)                => collections::dispatch_array_named(arr, method, args),
         RVal::ArrayIter(arr, idx)       => dispatch_array_iter(arr, idx, method),
         RVal::Int(n) => match method {
@@ -70,8 +82,7 @@ pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Op
             }
             _ => None,
         },
-        RVal::Object(_)                 => {
-            // Try concurrent instance methods (AtomicInteger, Lock, etc.)
+        RVal::Object(_) => {
             concurrent::dispatch_named(method, args)
                 .or_else(|| reflect::dispatch_named(method, args))
         }

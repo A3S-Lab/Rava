@@ -71,6 +71,45 @@ impl Parser {
         }
     }
 
+    /// Parse zero or more annotations: `@Name`, `@Name(value)`, `@Name(key=value, ...)`.
+    pub(crate) fn parse_annotations(&mut self) -> Result<Vec<crate::ast::Annotation>> {
+        let mut annotations = Vec::new();
+        while self.peek() == &Token::At {
+            self.advance(); // consume @
+            // @interface is an annotation type declaration — skip it entirely
+            if self.peek() == &Token::Interface {
+                self.advance(); // consume 'interface'
+                let _name = self.expect_ident()?; // annotation type name
+                self.skip_balanced(Token::LBrace, Token::RBrace);
+                continue;
+            }
+            let name = self.expect_ident()?;
+            let mut attrs = Vec::new();
+            if self.peek() == &Token::LParen {
+                self.advance(); // consume (
+                if self.peek() != &Token::RParen {
+                    loop {
+                        // key=value or just value
+                        let (key, val) = if matches!(self.peek(), Token::Ident(_)) && self.peek2() == &Token::Assign {
+                            let k = self.expect_ident()?;
+                            self.advance(); // consume =
+                            let v = self.parse_expr()?;
+                            (k, v)
+                        } else {
+                            let v = self.parse_expr()?;
+                            (String::new(), v)
+                        };
+                        attrs.push((key, val));
+                        if !self.eat(&Token::Comma) { break; }
+                    }
+                }
+                self.expect(&Token::RParen)?;
+            }
+            annotations.push(crate::ast::Annotation { name, attrs });
+        }
+        Ok(annotations)
+    }
+
     // ── Top-level ───────────────────────────────────────────────────────────��─
 
     pub fn parse_file(&mut self) -> Result<SourceFile> {

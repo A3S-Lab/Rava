@@ -198,6 +198,126 @@ impl RirInterpreter {
                 } else { vec![] };
                 Some(Ok(RVal::Array(Rc::new(RefCell::new(items)))))
             }
+            "forEach" => {
+                // forEach((k, v) -> ...)
+                let pairs: Vec<(String, RVal)> = {
+                    let heap = self.heap.borrow();
+                    if let Some(obj) = heap.get(&id) {
+                        obj.fields.iter()
+                            .filter(|(k, _)| !k.starts_with("__"))
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect()
+                    } else { vec![] }
+                };
+                let lambda = args.first().cloned().unwrap_or(RVal::Null);
+                for (k, v) in pairs {
+                    match self.invoke_lambda(&lambda, &[RVal::Str(k), v]) {
+                        Ok(_) => {}
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                Some(Ok(RVal::Void))
+            }
+            "replaceAll" => {
+                // replaceAll((k, v) -> newV)
+                let pairs: Vec<(String, RVal)> = {
+                    let heap = self.heap.borrow();
+                    if let Some(obj) = heap.get(&id) {
+                        obj.fields.iter()
+                            .filter(|(k, _)| !k.starts_with("__"))
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect()
+                    } else { vec![] }
+                };
+                let lambda = args.first().cloned().unwrap_or(RVal::Null);
+                for (k, v) in pairs {
+                    let new_v = match self.invoke_lambda(&lambda, &[RVal::Str(k.clone()), v]) {
+                        Ok(v) => v,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    let mut heap = self.heap.borrow_mut();
+                    if let Some(obj) = heap.get_mut(&id) {
+                        obj.fields.insert(k, new_v);
+                    }
+                }
+                Some(Ok(RVal::Void))
+            }
+            "merge" => {
+                // merge(key, value, remappingFunction)
+                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let new_val = args.get(1).cloned().unwrap_or(RVal::Null);
+                let func = args.get(2).cloned();
+                let old_val = {
+                    let heap = self.heap.borrow();
+                    heap.get(&id).and_then(|o| o.fields.get(&key).cloned())
+                };
+                let result = match (old_val, func) {
+                    (Some(old), Some(f)) if !matches!(old, RVal::Null) => {
+                        match self.invoke_lambda(&f, &[old, new_val]) {
+                            Ok(v) => v,
+                            Err(e) => return Some(Err(e)),
+                        }
+                    }
+                    _ => new_val,
+                };
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    obj.fields.insert(key, result.clone());
+                }
+                Some(Ok(result))
+            }
+            "computeIfAbsent" => {
+                // computeIfAbsent(key, mappingFunction)
+                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let existing = {
+                    let heap = self.heap.borrow();
+                    heap.get(&id).and_then(|o| o.fields.get(&key).cloned())
+                };
+                if let Some(v) = existing {
+                    return Some(Ok(v));
+                }
+                let func = args.get(1).cloned().unwrap_or(RVal::Null);
+                let computed = match self.invoke_lambda(&func, &[RVal::Str(key.clone())]) {
+                    Ok(v) => v,
+                    Err(e) => return Some(Err(e)),
+                };
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    obj.fields.insert(key, computed.clone());
+                }
+                Some(Ok(computed))
+            }
+            "compute" => {
+                // compute(key, remappingFunction(key, oldVal))
+                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let old_val = {
+                    let heap = self.heap.borrow();
+                    heap.get(&id).and_then(|o| o.fields.get(&key).cloned()).unwrap_or(RVal::Null)
+                };
+                let func = args.get(1).cloned().unwrap_or(RVal::Null);
+                let computed = match self.invoke_lambda(&func, &[RVal::Str(key.clone()), old_val]) {
+                    Ok(v) => v,
+                    Err(e) => return Some(Err(e)),
+                };
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    obj.fields.insert(key, computed.clone());
+                }
+                Some(Ok(computed))
+            }
+            "putIfAbsent" => {
+                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let val = args.get(1).cloned().unwrap_or(RVal::Null);
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    if !obj.fields.contains_key(&key) {
+                        obj.fields.insert(key, val);
+                        return Some(Ok(RVal::Null));
+                    }
+                    return Some(Ok(obj.fields.get(&key).cloned().unwrap_or(RVal::Null)));
+                }
+                Some(Ok(RVal::Null))
+            }
             "toString" => {
                 let heap = self.heap.borrow();
                 let s = if let Some(obj) = heap.get(&id) {
@@ -491,6 +611,126 @@ impl RirInterpreter {
                 }
                 Some(Ok(RVal::Bool(true)))
             }
+            "peek" => {
+                let arr = self.as_array(receiver)?;
+                let lambda = args.first()?;
+                let items = arr.borrow().clone();
+                for item in &items {
+                    match self.invoke_lambda(lambda, &[item.clone()]) {
+                        Ok(_) => {}
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(items)))))
+            }
+            "takeWhile" => {
+                let arr = self.as_array(receiver)?;
+                let lambda = args.first()?;
+                let items = arr.borrow();
+                let mut result = Vec::new();
+                for item in items.iter() {
+                    match self.invoke_lambda(lambda, &[item.clone()]) {
+                        Ok(v) => { if v.is_truthy() { result.push(item.clone()); } else { break; } }
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(result)))))
+            }
+            "dropWhile" => {
+                let arr = self.as_array(receiver)?;
+                let lambda = args.first()?;
+                let items = arr.borrow();
+                let mut dropping = true;
+                let mut result = Vec::new();
+                for item in items.iter() {
+                    if dropping {
+                        match self.invoke_lambda(lambda, &[item.clone()]) {
+                            Ok(v) => { if !v.is_truthy() { dropping = false; result.push(item.clone()); } }
+                            Err(e) => return Some(Err(e)),
+                        }
+                    } else {
+                        result.push(item.clone());
+                    }
+                }
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(result)))))
+            }
+            "min" => {
+                let arr = self.as_array(receiver)?;
+                let items = arr.borrow();
+                if items.is_empty() { return Some(Ok(RVal::Null)); }
+                if let Some(comparator) = args.first() {
+                    let comp = comparator.clone();
+                    let mut min = items[0].clone();
+                    for item in items.iter().skip(1) {
+                        match self.invoke_lambda(&comp, &[item.clone(), min.clone()]) {
+                            Ok(v) => { if v.as_int() < 0 { min = item.clone(); } }
+                            Err(e) => return Some(Err(e)),
+                        }
+                    }
+                    Some(Ok(min))
+                } else {
+                    let all_int = items.iter().all(|v| matches!(v, RVal::Int(_)));
+                    if all_int {
+                        Some(Ok(items.iter().min_by_key(|v| v.as_int()).cloned().unwrap_or(RVal::Null)))
+                    } else {
+                        Some(Ok(items.iter().min_by(|a, b| a.to_display().cmp(&b.to_display())).cloned().unwrap_or(RVal::Null)))
+                    }
+                }
+            }
+            "max" => {
+                let arr = self.as_array(receiver)?;
+                let items = arr.borrow();
+                if items.is_empty() { return Some(Ok(RVal::Null)); }
+                if let Some(comparator) = args.first() {
+                    let comp = comparator.clone();
+                    let mut max = items[0].clone();
+                    for item in items.iter().skip(1) {
+                        match self.invoke_lambda(&comp, &[item.clone(), max.clone()]) {
+                            Ok(v) => { if v.as_int() > 0 { max = item.clone(); } }
+                            Err(e) => return Some(Err(e)),
+                        }
+                    }
+                    Some(Ok(max))
+                } else {
+                    let all_int = items.iter().all(|v| matches!(v, RVal::Int(_)));
+                    if all_int {
+                        Some(Ok(items.iter().max_by_key(|v| v.as_int()).cloned().unwrap_or(RVal::Null)))
+                    } else {
+                        Some(Ok(items.iter().max_by(|a, b| a.to_display().cmp(&b.to_display())).cloned().unwrap_or(RVal::Null)))
+                    }
+                }
+            }
+            // Deque / LinkedList front/back operations
+            "addFirst" | "offerFirst" | "push" => {
+                let arr = self.as_array(receiver)?;
+                let val = args.first().cloned().unwrap_or(RVal::Null);
+                arr.borrow_mut().insert(0, val);
+                Some(Ok(RVal::Void))
+            }
+            "addLast" | "offerLast" => {
+                let arr = self.as_array(receiver)?;
+                let val = args.first().cloned().unwrap_or(RVal::Null);
+                arr.borrow_mut().push(val);
+                Some(Ok(RVal::Void))
+            }
+            "getFirst" | "peekFirst" | "element" => {
+                let arr = self.as_array(receiver)?;
+                Some(Ok(arr.borrow().first().cloned().unwrap_or(RVal::Null)))
+            }
+            "getLast" | "peekLast" => {
+                let arr = self.as_array(receiver)?;
+                Some(Ok(arr.borrow().last().cloned().unwrap_or(RVal::Null)))
+            }
+            "removeFirst" | "pollFirst" | "pop" => {
+                let arr = self.as_array(receiver)?;
+                let mut b = arr.borrow_mut();
+                if b.is_empty() { Some(Ok(RVal::Null)) } else { Some(Ok(b.remove(0))) }
+            }
+            "removeLast" | "pollLast" => {
+                let arr = self.as_array(receiver)?;
+                let mut b = arr.borrow_mut();
+                Some(Ok(b.pop().unwrap_or(RVal::Null)))
+            }
             _ => None,
         }
     }
@@ -500,7 +740,132 @@ impl RirInterpreter {
         if let RVal::Array(arr) = val { Some(arr) } else { None }
     }
 
-    // ── PriorityQueue methods ─────────────────────────────────────────────────
+    // ── HashSet / TreeSet methods ─────────────────────────────────────────────
+
+    pub(super) fn dispatch_set(&self, id: ObjId, class_name: &str, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
+        let sorted = class_name == "TreeSet";
+        match method {
+            "add" => {
+                let val = args.first().cloned().unwrap_or(RVal::Null);
+                let key = val.to_display();
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    if let Some(RVal::Array(arr)) = obj.fields.get("__items__") {
+                        let arr = arr.clone(); // clone Rc to release heap borrow
+                        drop(heap);
+                        let already = arr.borrow().iter().any(|v| v.to_display() == key);
+                        if !already {
+                            arr.borrow_mut().push(val);
+                            if sorted {
+                                arr.borrow_mut().sort_by(|a, b| crate::builtins::rval_cmp(a, b));
+                            }
+                        }
+                        return Some(Ok(RVal::Bool(!already)));
+                    }
+                }
+                Some(Ok(RVal::Bool(false)))
+            }
+            "remove" => {
+                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    if let Some(RVal::Array(arr)) = obj.fields.get("__items__") {
+                        let mut v = arr.borrow_mut();
+                        if let Some(pos) = v.iter().position(|x| x.to_display() == key) {
+                            v.remove(pos);
+                            return Some(Ok(RVal::Bool(true)));
+                        }
+                    }
+                }
+                Some(Ok(RVal::Bool(false)))
+            }
+            "contains" => {
+                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let heap = self.heap.borrow();
+                let found = heap.get(&id)
+                    .and_then(|o| o.fields.get("__items__"))
+                    .map(|v| if let RVal::Array(a) = v { a.borrow().iter().any(|x| x.to_display() == key) } else { false })
+                    .unwrap_or(false);
+                Some(Ok(RVal::Bool(found)))
+            }
+            "size" => {
+                let heap = self.heap.borrow();
+                let n = heap.get(&id)
+                    .and_then(|o| o.fields.get("__items__"))
+                    .map(|v| if let RVal::Array(a) = v { a.borrow().len() as i64 } else { 0 })
+                    .unwrap_or(0);
+                Some(Ok(RVal::Int(n)))
+            }
+            "isEmpty" => {
+                let heap = self.heap.borrow();
+                let empty = heap.get(&id)
+                    .and_then(|o| o.fields.get("__items__"))
+                    .map(|v| if let RVal::Array(a) = v { a.borrow().is_empty() } else { true })
+                    .unwrap_or(true);
+                Some(Ok(RVal::Bool(empty)))
+            }
+            "first" => {
+                let heap = self.heap.borrow();
+                let val = heap.get(&id)
+                    .and_then(|o| o.fields.get("__items__"))
+                    .and_then(|v| if let RVal::Array(a) = v { a.borrow().first().cloned() } else { None })
+                    .unwrap_or(RVal::Null);
+                Some(Ok(val))
+            }
+            "last" => {
+                let heap = self.heap.borrow();
+                let val = heap.get(&id)
+                    .and_then(|o| o.fields.get("__items__"))
+                    .and_then(|v| if let RVal::Array(a) = v { a.borrow().last().cloned() } else { None })
+                    .unwrap_or(RVal::Null);
+                Some(Ok(val))
+            }
+            "clear" => {
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    obj.fields.insert("__items__".into(), RVal::Array(Rc::new(RefCell::new(vec![]))));
+                }
+                Some(Ok(RVal::Void))
+            }
+            "iterator" | "stream" | "toList" => {
+                let heap = self.heap.borrow();
+                let items = heap.get(&id)
+                    .and_then(|o| o.fields.get("__items__"))
+                    .map(|v| if let RVal::Array(a) = v { a.borrow().clone() } else { vec![] })
+                    .unwrap_or_default();
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(items)))))
+            }
+            "forEach" => {
+                let items = {
+                    let heap = self.heap.borrow();
+                    heap.get(&id)
+                        .and_then(|o| o.fields.get("__items__"))
+                        .map(|v| if let RVal::Array(a) = v { a.borrow().clone() } else { vec![] })
+                        .unwrap_or_default()
+                };
+                let lambda = args.first().cloned().unwrap_or(RVal::Null);
+                for item in &items {
+                    match self.invoke_lambda(&lambda, &[item.clone()]) {
+                        Ok(_) => {}
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                Some(Ok(RVal::Void))
+            }
+            "toString" => {
+                let heap = self.heap.borrow();
+                let s = heap.get(&id)
+                    .and_then(|o| o.fields.get("__items__"))
+                    .map(|v| if let RVal::Array(a) = v {
+                        let items: Vec<String> = a.borrow().iter().map(|x| x.to_display()).collect();
+                        format!("[{}]", items.join(", "))
+                    } else { "[]".into() })
+                    .unwrap_or_else(|| "[]".into());
+                Some(Ok(RVal::Str(s)))
+            }
+            _ => None,
+        }
+    }
 
     pub(super) fn dispatch_priority_queue(&self, id: ObjId, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
         match method {

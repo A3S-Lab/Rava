@@ -27,7 +27,8 @@ impl<'a> FuncCtx<'a> {
             }
             Expr::CharLit(c) => {
                 let ret = self.named_value(name);
-                self.emit(RirInstr::ConstInt { ret: ret.clone(), value: *c });
+                let ch = char::from_u32(*c as u32).unwrap_or('\0');
+                self.emit(RirInstr::ConstStr { ret: ret.clone(), value: ch.to_string() });
                 Ok(ret)
             }
             Expr::BinOp { op, lhs, rhs } => {
@@ -70,7 +71,9 @@ impl<'a> FuncCtx<'a> {
             }
             Expr::CharLit(c) => {
                 let ret = self.fresh_value();
-                self.emit(RirInstr::ConstInt { ret: ret.clone(), value: *c });
+                // Store chars as single-character strings so println displays 'A' not 65
+                let ch = char::from_u32(*c as u32).unwrap_or('\0');
+                self.emit(RirInstr::ConstStr { ret: ret.clone(), value: ch.to_string() });
                 Ok(ret)
             }
             Expr::BoolLit(b) => {
@@ -153,6 +156,21 @@ impl<'a> FuncCtx<'a> {
                         return Ok(ret);
                     }
 
+                    // super.method(...) — non-virtual dispatch to parent class method
+                    if matches!(obj.as_ref(), Expr::Super) {
+                        let arg_vals: Vec<Value> = args.iter()
+                            .map(|a| self.lower_expr(a))
+                            .collect::<Result<_>>()?;
+                        let mut super_args = vec![Value("this".into())];
+                        super_args.extend(arg_vals);
+                        self.emit(RirInstr::Call {
+                            func: FuncId(encode_builtin(&format!("super.{}", method_name))),
+                            args: super_args,
+                            ret: Some(ret.clone()),
+                        });
+                        return Ok(ret);
+                    }
+
                     let receiver_val = self.lower_expr(obj)?;
                     let mut arg_vals = vec![receiver_val];
                     for a in args { arg_vals.push(self.lower_expr(a)?); }
@@ -212,6 +230,19 @@ impl<'a> FuncCtx<'a> {
                 }
 
                 let receiver = self.lower_expr(callee)?;
+                // super.method(...) — non-virtual dispatch to parent class method
+                if let Expr::Field { obj, name: method_name } = callee.as_ref() {
+                    if matches!(obj.as_ref(), Expr::Super) {
+                        let mut super_args = vec![Value("this".into())];
+                        super_args.extend(arg_vals);
+                        self.emit(RirInstr::Call {
+                            func: FuncId(encode_builtin(&format!("super.{}", method_name))),
+                            args: super_args,
+                            ret: Some(ret.clone()),
+                        });
+                        return Ok(ret);
+                    }
+                }
                 // Extract method name from `obj.method(...)` callee for virtual dispatch
                 let method_hash = if let Expr::Field { name: method_name, .. } = callee.as_ref() {
                     encode_builtin(method_name)
@@ -382,6 +413,22 @@ impl<'a> FuncCtx<'a> {
                     args: ctor_args,
                     ret:  None,
                 });
+                // For anonymous classes, store captured local variables as __cap__xxx fields
+                if class_name.starts_with("__anon_") {
+                    let captures: Vec<(String, Value)> = self.vars.iter()
+                        .filter(|(k, _)| k.as_str() != "this")
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    for (var_name, var_val) in captures {
+                        let field_name = format!("__cap__{}", var_name);
+                        let field_id = FieldId(encode_builtin(&format!("{}.{}", class_name, field_name)));
+                        self.emit(RirInstr::SetField {
+                            obj: ret.clone(),
+                            field: field_id,
+                            val: var_val,
+                        });
+                    }
+                }
                 Ok(ret)
             }
 
@@ -558,13 +605,9 @@ impl<'a> FuncCtx<'a> {
                         Some(labels) => {
                             self.switch_to(self.blocks[check].id);
                             let mut or_val = None;
+                            let mut pattern_bindings: Vec<(String, Value)> = Vec::new();
                             for label_expr in labels {
-                                let label_val = self.lower_expr(label_expr)?;
-                                let cmp = self.fresh_value();
-                                self.emit(RirInstr::BinOp {
-                                    op: RirBinOp::Eq, lhs: switch_val.clone(),
-                                    rhs: label_val, ret: cmp.clone(),
-                                });
+                                let cmp = self.lower_switch_label(label_expr, &switch_val, &mut pattern_bindings)?;
                                 or_val = Some(match or_val {
                                     None => cmp,
                                     Some(prev) => {
@@ -583,6 +626,9 @@ impl<'a> FuncCtx<'a> {
                                 RirInstr::Branch { cond: cond_ret, then_bb: body_bb, else_bb: next_bb }
                             );
                             self.switch_to(body_bb);
+                            for (name, val) in pattern_bindings {
+                                self.vars.insert(name, val);
+                            }
                             for stmt in &case.body { self.lower_stmt(stmt)?; }
                             if !self.current_block_ends_with_terminator() {
                                 self.emit(RirInstr::Jump(exit_bb));

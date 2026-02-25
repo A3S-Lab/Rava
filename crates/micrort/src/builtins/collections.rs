@@ -69,6 +69,17 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
             }
             Some(Ok(RVal::Str("[]".into())))
         }
+        id if id == fnv("Arrays.binarySearch") => {
+            if let Some(RVal::Array(arr)) = args.first() {
+                let target = args.get(1).map(|v| v.to_display()).unwrap_or_default();
+                let v = arr.borrow();
+                let idx = v.iter().position(|x| x.to_display() == target)
+                    .map(|i| i as i64)
+                    .unwrap_or(-1);
+                return Some(Ok(RVal::Int(idx)));
+            }
+            Some(Ok(RVal::Int(-1)))
+        }
         id if id == fnv("Arrays.copyOf") => {
             if let Some(RVal::Array(arr)) = args.first() {
                 let len = args.get(1).map(|v| v.as_int()).unwrap_or(0) as usize;
@@ -112,9 +123,35 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         }
 
         // ── Collections ───────────────────────────────────────────────────────
+        id if id == fnv("Collections.addAll") => {
+            // Collections.addAll(collection, elements...)
+            if let Some(RVal::Array(arr)) = args.first() {
+                for item in args.iter().skip(1) {
+                    arr.borrow_mut().push(item.clone());
+                }
+            }
+            Some(Ok(RVal::Bool(true)))
+        }
+        id if id == fnv("Collections.reverseOrder") => {
+            Some(Ok(RVal::Str("__comparator__reverse__".into())))
+        }
         id if id == fnv("Collections.sort") => {
             if let Some(RVal::Array(arr)) = args.first() {
-                arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+                match args.get(1) {
+                    Some(RVal::Str(s)) if s == "__comparator__reverse__" => {
+                        arr.borrow_mut().sort_by(|a, b| rval_cmp(b, a));
+                    }
+                    Some(RVal::Str(s)) if s == "__comparator__natural__" => {
+                        arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+                    }
+                    None => {
+                        arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+                    }
+                    _ => {
+                        // lambda comparator — handled in helpers.rs with interpreter access
+                        arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+                    }
+                }
             }
             Some(Ok(RVal::Void))
         }
@@ -238,6 +275,40 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
             Some(Ok(RVal::Bool(true)))
         }
 
+        // ── ArrayDeque / LinkedList (as Deque) ────────────────────────────────
+        id if id == fnv("ArrayDeque") || id == fnv("ArrayDeque.<init>")
+           || id == fnv("LinkedList") || id == fnv("LinkedList.<init>") =>
+        {
+            if let Some(RVal::Array(src)) = args.first() {
+                return Some(Ok(RVal::Array(Rc::new(RefCell::new(src.borrow().clone())))));
+            }
+            Some(Ok(RVal::Array(Rc::new(RefCell::new(Vec::new())))))
+        }
+
+        // ── Optional ──────────────────────────────────────────────────────────
+        id if id == fnv("Optional.of") || id == fnv("Optional.ofNullable") => {
+            let val = args.first().cloned().unwrap_or(RVal::Null);
+            // Wrap in a 1-element array tagged as Optional
+            Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![val])))))
+        }
+        id if id == fnv("Optional.empty") => {
+            Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![RVal::Null])))))
+        }
+
+        // ── Stream factory ────────────────────────────────────────────────────
+        id if id == fnv("Stream.of") => {
+            Some(Ok(RVal::Array(Rc::new(RefCell::new(args.to_vec())))))
+        }
+        id if id == fnv("Stream.empty") => {
+            Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![])))))
+        }
+        id if id == fnv("Stream.concat") => {
+            let mut result = Vec::new();
+            if let Some(RVal::Array(a)) = args.first() { result.extend(a.borrow().clone()); }
+            if let Some(RVal::Array(b)) = args.get(1) { result.extend(b.borrow().clone()); }
+            Some(Ok(RVal::Array(Rc::new(RefCell::new(result)))))
+        }
+
         _ => None,
     }
 }
@@ -321,7 +392,15 @@ pub fn dispatch_array_named(arr: &Rc<RefCell<Vec<RVal>>>, method: &str, args: &[
             Some(Ok(RVal::Int(v.iter().rposition(|v| v.to_display() == target).map(|i| i as i64).unwrap_or(-1))))
         }
         "clear"    => { arr.borrow_mut().clear(); Some(Ok(RVal::Void)) }
-        "sort"     => { arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b)); Some(Ok(RVal::Void)) }
+        "sort" => {
+            if args.is_empty() {
+                arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+                Some(Ok(RVal::Void))
+            } else {
+                // Has comparator — signal to interpreter to handle it
+                None
+            }
+        }
         "reverse"  => { arr.borrow_mut().reverse(); Some(Ok(RVal::Void)) }
         "toString" => {
             let s = arr.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>().join(", ");
@@ -336,6 +415,64 @@ pub fn dispatch_array_named(arr: &Rc<RefCell<Vec<RVal>>>, method: &str, args: &[
             let v = arr.borrow();
             let sub = v.get(from..to.min(v.len())).unwrap_or(&[]).to_vec();
             Some(Ok(RVal::Array(Rc::new(RefCell::new(sub)))))
+        }
+        // ── Optional methods (stored as 1-element array: [value] or [Null]) ──
+        "isPresent" => {
+            let v = arr.borrow();
+            Some(Ok(RVal::Bool(!matches!(v.first(), Some(RVal::Null) | None))))
+        }
+        "get" | "orElseThrow" if arr.borrow().len() == 1 => {
+            let v = arr.borrow();
+            match v.first() {
+                Some(RVal::Null) | None => Some(Err(rava_common::error::RavaError::JavaException {
+                    exception_type: "NoSuchElementException".into(),
+                    message: "No value present".into(),
+                })),
+                Some(val) => Some(Ok(val.clone())),
+            }
+        }
+        "orElse" => {
+            let v = arr.borrow();
+            match v.first() {
+                Some(RVal::Null) | None => Some(Ok(args.first().cloned().unwrap_or(RVal::Null))),
+                Some(val) => Some(Ok(val.clone())),
+            }
+        }
+        // ── Deque methods ─────────────────────────────────────────────────────
+        "addFirst" | "offerFirst" | "push" => {
+            let val = args.first().cloned().unwrap_or(RVal::Null);
+            arr.borrow_mut().insert(0, val);
+            Some(Ok(RVal::Void))
+        }
+        "addLast" | "offerLast" | "offer" => {
+            let val = args.first().cloned().unwrap_or(RVal::Null);
+            arr.borrow_mut().push(val);
+            Some(Ok(RVal::Bool(true)))
+        }
+        "peekFirst" | "peek" | "element" => {
+            Some(Ok(arr.borrow().first().cloned().unwrap_or(RVal::Null)))
+        }
+        "peekLast" => {
+            Some(Ok(arr.borrow().last().cloned().unwrap_or(RVal::Null)))
+        }
+        "pollFirst" | "poll" | "pop" | "removeFirst" => {
+            let mut b = arr.borrow_mut();
+            if b.is_empty() { Some(Ok(RVal::Null)) } else { Some(Ok(b.remove(0))) }
+        }
+        "pollLast" | "removeLast" => {
+            let mut b = arr.borrow_mut();
+            Some(Ok(b.pop().unwrap_or(RVal::Null)))
+        }
+        // ── TreeSet-specific ──────────────────────────────────────────────────
+        "first" => {
+            let mut b = arr.borrow().clone();
+            b.sort_by(rval_cmp);
+            Some(Ok(b.first().cloned().unwrap_or(RVal::Null)))
+        }
+        "last" => {
+            let mut b = arr.borrow().clone();
+            b.sort_by(rval_cmp);
+            Some(Ok(b.last().cloned().unwrap_or(RVal::Null)))
         }
         _ => None,
     }

@@ -13,15 +13,23 @@ pub struct SourceFile {
     pub classes:  Vec<ClassDecl>,
 }
 
+/// An annotation instance, e.g. `@Override`, `@SuppressWarnings("unchecked")`.
+#[derive(Debug, Clone)]
+pub struct Annotation {
+    pub name:  String,
+    pub attrs: Vec<(String, Expr)>,   // key=value pairs; unnamed value stored as key ""
+}
+
 /// A class, interface, or enum declaration.
 #[derive(Debug, Clone)]
 pub struct ClassDecl {
-    pub name:       String,
-    pub kind:       ClassKind,
-    pub modifiers:  Vec<Modifier>,
-    pub superclass: Option<String>,
-    pub interfaces: Vec<String>,
-    pub members:    Vec<Member>,
+    pub name:        String,
+    pub kind:        ClassKind,
+    pub modifiers:   Vec<Modifier>,
+    pub annotations: Vec<Annotation>,
+    pub superclass:  Option<String>,
+    pub interfaces:  Vec<String>,
+    pub members:     Vec<Member>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,27 +69,30 @@ pub enum Member {
 
 #[derive(Debug, Clone)]
 pub struct MethodDecl {
-    pub name:       String,
-    pub modifiers:  Vec<Modifier>,
-    pub return_ty:  TypeExpr,
-    pub params:     Vec<Param>,
-    pub body:       Option<Block>,
+    pub name:        String,
+    pub modifiers:   Vec<Modifier>,
+    pub annotations: Vec<Annotation>,
+    pub return_ty:   TypeExpr,
+    pub params:      Vec<Param>,
+    pub body:        Option<Block>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ConstructorDecl {
-    pub name:      String,
-    pub modifiers: Vec<Modifier>,
-    pub params:    Vec<Param>,
-    pub body:      Block,
+    pub name:        String,
+    pub modifiers:   Vec<Modifier>,
+    pub annotations: Vec<Annotation>,
+    pub params:      Vec<Param>,
+    pub body:        Block,
 }
 
 #[derive(Debug, Clone)]
 pub struct FieldDecl {
-    pub name:      String,
-    pub modifiers: Vec<Modifier>,
-    pub ty:        TypeExpr,
-    pub init:      Option<Expr>,
+    pub name:        String,
+    pub modifiers:   Vec<Modifier>,
+    pub annotations: Vec<Annotation>,
+    pub ty:          TypeExpr,
+    pub init:        Option<Expr>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,9 +103,10 @@ pub struct EnumConstant {
 
 #[derive(Debug, Clone)]
 pub struct Param {
-    pub name:     String,
-    pub ty:       TypeExpr,
-    pub variadic: bool,
+    pub name:        String,
+    pub ty:          TypeExpr,
+    pub variadic:    bool,
+    pub annotations: Vec<Annotation>,
 }
 
 /// A type expression (e.g. `int`, `String`, `List<String>`, `int[]`).

@@ -294,6 +294,19 @@ impl Parser {
                         Some(self.parse_expr()?)
                     }
                 } else { None };
+                // multi-var decl: int a, b, c; or int a = 1, b = 2;
+                if self.peek() == &Token::Comma {
+                    let mut stmts = vec![Stmt::LocalVar { ty: ty.clone(), name, init }];
+                    while self.eat(&Token::Comma) {
+                        let extra_name = self.expect_ident()?;
+                        let extra_init = if self.eat(&Token::Assign) {
+                            Some(self.parse_expr()?)
+                        } else { None };
+                        stmts.push(Stmt::LocalVar { ty: ty.clone(), name: extra_name, init: extra_init });
+                    }
+                    self.expect(&Token::Semi)?;
+                    return Ok(Stmt::Block(crate::ast::Block(stmts)));
+                }
                 self.expect(&Token::Semi)?;
                 Ok(Stmt::LocalVar { ty, name, init })
             }
@@ -415,8 +428,17 @@ impl Parser {
             if matches!(self.peek(), Token::Ident(w) if w == "when") {
                 self.advance(); // consume 'when'
                 let guard = self.parse_expr()?;
-                return Ok(Expr::Ident(format!("__guarded_pattern__{}#{}#{}", ty.name, name,
-                    "__guard__")));
+                // Encode as InstanceofPattern with guard stored in a Ternary wrapper:
+                // the guard is preserved as the condition of a ternary so the lowerer can extract it.
+                return Ok(Expr::Ternary {
+                    cond: Box::new(Expr::InstanceofPattern {
+                        expr: Box::new(Expr::Ident("__switch_val__".into())),
+                        ty,
+                        name,
+                    }),
+                    then: Box::new(guard),
+                    else_: Box::new(Expr::BoolLit(false)),
+                });
             }
             // Plain type pattern in switch: case Type name ->
             return Ok(Expr::Ident(format!("__type_pattern__{}#{}", ty.name, name)));

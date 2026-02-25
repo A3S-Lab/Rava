@@ -132,6 +132,7 @@ impl Lowerer {
                     let name = format!("{}.<clinit>", class.name);
                     let flags = FuncFlags { is_clinit: true, ..Default::default() };
                     let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
+                    ctx.class_name = class.name.clone();
                     ctx.lower_block(block)?;
                     if !ctx.current_block_ends_with_terminator() {
                         ctx.emit(RirInstr::Return(None));
@@ -468,6 +469,7 @@ impl Lowerer {
                 name: anon.name.clone(),
                 kind: ClassKind::Class,
                 modifiers: vec![],
+                annotations: vec![],
                 superclass: Some(anon.parent.clone()),
                 interfaces: vec![],
                 members: anon.members,

@@ -5,6 +5,7 @@ use super::Parser;
 
 impl Parser {
     pub(crate) fn parse_class(&mut self) -> Result<ClassDecl> {
+        let annotations = self.parse_annotations()?;
         let modifiers = self.parse_modifiers();
 
         let kind = match self.peek().clone() {
@@ -59,13 +60,14 @@ impl Parser {
                 members.push(Member::Field(FieldDecl {
                     name: fname.clone(),
                     modifiers: vec![Modifier::Private, Modifier::Final],
+                    annotations: vec![],
                     ty: ty.clone(),
                     init: None,
                 }));
             }
 
             let params: Vec<Param> = record_components.iter().map(|(ty, fname)| {
-                Param { name: fname.clone(), ty: ty.clone(), variadic: false }
+                Param { name: fname.clone(), ty: ty.clone(), variadic: false, annotations: vec![] }
             }).collect();
             let assign_stmts: Vec<Stmt> = record_components.iter().map(|(_, fname)| {
                 Stmt::Expr(Expr::Assign {
@@ -79,11 +81,7 @@ impl Parser {
             let mut compact_body: Option<Block> = None;
 
             while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
-                // skip annotations
-                while self.peek() == &Token::At {
-                    self.advance(); self.expect_ident()?;
-                    if self.peek() == &Token::LParen { self.skip_balanced(Token::LParen, Token::RParen); }
-                }
+                self.parse_annotations()?; // consume any annotations
                 if self.peek() == &Token::RBrace { break; }
 
                 // Compact constructor: `ClassName {` (no LParen)
@@ -112,6 +110,7 @@ impl Parser {
                 members.push(Member::Constructor(ConstructorDecl {
                     name: name.clone(),
                     modifiers: vec![Modifier::Public],
+                    annotations: vec![],
                     params: params.clone(),
                     body: Block(assign_stmts.clone()),
                 }));
@@ -122,6 +121,7 @@ impl Parser {
                 members.push(Member::Constructor(ConstructorDecl {
                     name: name.clone(),
                     modifiers: vec![Modifier::Public],
+                    annotations: vec![],
                     params: params.clone(),
                     body: Block(body_stmts),
                 }));
@@ -136,6 +136,7 @@ impl Parser {
                     members.push(Member::Method(MethodDecl {
                         name: fname.clone(),
                         modifiers: vec![Modifier::Public],
+                        annotations: vec![],
                         return_ty: ty.clone(),
                         params: vec![],
                         body: Some(Block(vec![
@@ -148,7 +149,7 @@ impl Parser {
                 }
             }
 
-            return Ok(ClassDecl { name, kind, modifiers, superclass, interfaces, members });
+            return Ok(ClassDecl { name, kind, modifiers, annotations, superclass, interfaces, members });
         }
 
         if kind == ClassKind::Enum {
@@ -156,13 +157,7 @@ impl Parser {
             while self.peek() != &Token::RBrace && self.peek() != &Token::Semi
                 && self.peek() != &Token::Eof
             {
-                // skip annotations
-                while self.peek() == &Token::At {
-                    self.advance(); self.expect_ident()?;
-                    if self.peek() == &Token::LParen {
-                        self.skip_balanced(Token::LParen, Token::RParen);
-                    }
-                }
+                self.parse_annotations()?; // consume any annotations on enum constants
                 if matches!(self.peek(), Token::RBrace | Token::Semi) { break; }
                 let const_name = self.expect_ident()?;
                 let args = if self.peek() == &Token::LParen {
@@ -179,14 +174,7 @@ impl Parser {
         }
 
         while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
-            // skip annotations
-            while self.peek() == &Token::At {
-                self.advance();
-                self.expect_ident()?;
-                if self.peek() == &Token::LParen {
-                    self.skip_balanced(Token::LParen, Token::RParen);
-                }
-            }
+            self.parse_annotations()?; // consume any member annotations
             if self.peek() == &Token::RBrace { break; }
             if let Some(m) = self.parse_member(&name)? {
                 members.push(m);
@@ -195,7 +183,7 @@ impl Parser {
         }
         self.expect(&Token::RBrace)?;
 
-        Ok(ClassDecl { name, kind, modifiers, superclass, interfaces, members })
+        Ok(ClassDecl { name, kind, modifiers, annotations, superclass, interfaces, members })
     }
 
     pub(crate) fn parse_modifiers(&mut self) -> Vec<Modifier> {
@@ -222,6 +210,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_member(&mut self, class_name: &str) -> Result<Option<Member>> {
+        let annotations = self.parse_annotations()?;
         let modifiers = self.parse_modifiers();
 
         // static initializer block: `static { ... }`
@@ -254,7 +243,7 @@ impl Parser {
                 let params = self.parse_params()?;
                 self.skip_throws();
                 let body = self.parse_block()?;
-                return Ok(Some(Member::Constructor(ConstructorDecl { name, modifiers, params, body })));
+                return Ok(Some(Member::Constructor(ConstructorDecl { name, modifiers, annotations, params, body })));
             }
         }
 
@@ -279,7 +268,7 @@ impl Parser {
                 self.expect(&Token::Semi)?;
                 None
             };
-            Ok(Some(Member::Method(MethodDecl { name, modifiers, return_ty: ty, params, body })))
+            Ok(Some(Member::Method(MethodDecl { name, modifiers, annotations, return_ty: ty, params, body })))
         } else {
             // field — may be comma-separated: `int w, h;`
             let init = if self.eat(&Token::Assign) { Some(self.parse_expr()?) } else { None };
@@ -306,6 +295,7 @@ impl Parser {
                     self.pending_fields.push(Member::Field(FieldDecl {
                         name: extra_name,
                         modifiers: modifiers.clone(),
+                        annotations: vec![],
                         ty: ty.clone(),
                         init: None,
                     }));
@@ -313,7 +303,7 @@ impl Parser {
             } else {
                 self.expect(&Token::Semi)?;
             }
-            Ok(Some(Member::Field(FieldDecl { name, modifiers, ty, init })))
+            Ok(Some(Member::Field(FieldDecl { name, modifiers, annotations, ty, init })))
         }
     }
 }

@@ -113,4 +113,78 @@ mod tests {
         });
         assert!(has_iterator_call, "for-each should use iterator pattern");
     }
+
+    #[test]
+    fn lower_switch_type_pattern() {
+        let src = r#"
+            class T {
+                void f(Object obj) {
+                    switch (obj) {
+                        case String s -> System.out.println(s);
+                        case Integer i -> System.out.println(i);
+                        default -> {}
+                    }
+                }
+            }
+        "#;
+        let module = lower(src);
+        assert_eq!(module.functions.len(), 1);
+        let all_instrs: Vec<_> = module.functions[0].basic_blocks.iter()
+            .flat_map(|b| &b.instrs).collect();
+        // Type pattern must emit Instanceof checks
+        assert!(
+            all_instrs.iter().any(|i| matches!(i, rava_rir::RirInstr::Instanceof { .. })),
+            "type pattern switch should emit Instanceof"
+        );
+    }
+
+    #[test]
+    fn lower_switch_case_null() {
+        let src = r#"
+            class T {
+                void f(String s) {
+                    switch (s) {
+                        case null -> System.out.println("null");
+                        default -> System.out.println(s);
+                    }
+                }
+            }
+        "#;
+        let module = lower(src);
+        assert_eq!(module.functions.len(), 1);
+        let all_instrs: Vec<_> = module.functions[0].basic_blocks.iter()
+            .flat_map(|b| &b.instrs).collect();
+        // case null must emit a ConstNull + Eq check
+        assert!(
+            all_instrs.iter().any(|i| matches!(i, rava_rir::RirInstr::ConstNull { .. })),
+            "case null should emit ConstNull"
+        );
+    }
+
+    #[test]
+    fn lower_switch_guarded_pattern() {
+        let src = r#"
+            class T {
+                void f(Object obj) {
+                    switch (obj) {
+                        case Integer i when i > 0 -> System.out.println("positive");
+                        default -> {}
+                    }
+                }
+            }
+        "#;
+        let module = lower(src);
+        assert_eq!(module.functions.len(), 1);
+        let all_instrs: Vec<_> = module.functions[0].basic_blocks.iter()
+            .flat_map(|b| &b.instrs).collect();
+        // Guarded pattern: Instanceof + Branch for guard short-circuit
+        assert!(
+            all_instrs.iter().any(|i| matches!(i, rava_rir::RirInstr::Instanceof { .. })),
+            "guarded pattern should emit Instanceof"
+        );
+        let branch_count = all_instrs.iter()
+            .filter(|i| matches!(i, rava_rir::RirInstr::Branch { .. }))
+            .count();
+        assert!(branch_count >= 2, "guarded pattern needs at least 2 branches (instanceof + guard)");
+    }
 }

@@ -18,6 +18,14 @@ pub use rval::{ObjId, JavaObject, RVal};
 /// Thread-local output sink — set during tests to capture println output.
 thread_local! {
     pub(crate) static OUTPUT: RefCell<Option<Vec<u8>>> = RefCell::new(None);
+    /// Carries the original thrown object across function call boundaries.
+    pub(crate) static THROWN_OBJ: RefCell<Option<RVal>> = RefCell::new(None);
+    /// Lambda capture table: lambda_name → captured variable values.
+    pub(crate) static LAMBDA_CAPTURES: RefCell<HashMap<String, HashMap<String, RVal>>> =
+        RefCell::new(HashMap::new());
+    /// Annotation registry: "ClassName" or "ClassName::memberName" → list of annotation names.
+    pub(crate) static ANNOTATION_REGISTRY: RefCell<HashMap<String, Vec<String>>> =
+        RefCell::new(HashMap::new());
 }
 
 /// Write a line to the current output sink (or real stdout if none set).
@@ -48,7 +56,8 @@ const KNOWN_METHODS: &[&str] = &[
     // String
     "length", "isEmpty", "toUpperCase", "toLowerCase", "trim",
     "charAt", "substring", "contains", "startsWith", "endsWith",
-    "equals", "equalsIgnoreCase", "replace", "indexOf", "split",
+    "equals", "equalsIgnoreCase", "replace", "replaceAll", "replaceFirst",
+    "indexOf", "split", "matches",
     "toString", "hashCode", "compareTo", "toCharArray", "valueOf",
     "format", "join", "strip", "stripLeading", "stripTrailing",
     "repeat", "chars", "codePointAt", "lastIndexOf",
@@ -78,6 +87,21 @@ const KNOWN_METHODS: &[&str] = &[
     "mapToInt", "mapToLong", "mapToDouble", "sum", "average", "min", "max",
     // Iterable / Iterator
     "of", "iterator", "hasNext", "next",
+    // Optional
+    "isPresent", "isEmpty", "get", "orElse", "orElseGet", "orElseThrow", "ifPresent",
+    // Set / HashSet / TreeSet
+    "contains", "first", "last", "headSet", "tailSet", "subSet",
+    // java.time
+    "getYear", "getMonthValue", "getDayOfMonth", "getHour", "getMinute", "getSecond",
+    "getNano", "getDayOfWeek", "getDayOfYear", "getMonth",
+    "plusDays", "plusMonths", "plusYears", "plusHours", "plusMinutes", "plusSeconds",
+    "minusDays", "minusMonths", "minusYears", "minusHours", "minusMinutes", "minusSeconds",
+    "isBefore", "isAfter", "isEqual", "withDayOfMonth", "withMonth", "withYear",
+    "toLocalDate", "toLocalTime", "toLocalDateTime", "toEpochSecond", "toEpochMilli",
+    "atStartOfDay", "atTime", "atDate",
+    "toDays", "toHours", "toMinutes", "toSeconds", "toNanos", "toMillis",
+    "getSeconds", "getNano",
+    "matches",
 ];
 
 pub struct RirInterpreter {

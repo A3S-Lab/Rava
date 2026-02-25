@@ -79,17 +79,13 @@ impl Parser {
         self.expect(&Token::LParen)?;
         let mut params = Vec::new();
         while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
-            // skip annotations
-            while self.peek() == &Token::At {
-                self.advance(); self.expect_ident()?;
-                if self.peek() == &Token::LParen { self.skip_balanced(Token::LParen, Token::RParen); }
-            }
+            let annotations = self.parse_annotations()?;
             // skip final
             self.eat(&Token::Final);
             let ty = self.parse_type_expr()?;
             let variadic = self.eat(&Token::Ellipsis);
             let name = self.expect_ident()?;
-            params.push(Param { name, ty, variadic });
+            params.push(Param { name, ty, variadic, annotations });
             if !self.eat(&Token::Comma) { break; }
         }
         self.expect(&Token::RParen)?;

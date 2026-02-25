@@ -34,7 +34,14 @@ impl RVal {
             RVal::Int(n)   => *n,
             RVal::Float(f) => *f as i64,
             RVal::Bool(b)  => if *b { 1 } else { 0 },
-            RVal::Str(s)   => s.parse::<i64>().unwrap_or(0),
+            RVal::Str(s)   => {
+                // Single-char string: return the char's code point (for (int) c casts)
+                if s.len() == 1 {
+                    s.chars().next().map(|c| c as i64).unwrap_or(0)
+                } else {
+                    s.parse::<i64>().unwrap_or(0)
+                }
+            }
             _              => 0,
         }
     }
