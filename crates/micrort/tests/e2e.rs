@@ -2636,3 +2636,147 @@ class Main {
     assert_eq!(out.trim(), "7 7 7 7 7 \n7 7 7 \n1 2 3 4 5");
 }
 
+
+#[test]
+fn collectors_partitioning_by() {
+    let out = run(r#"
+import java.util.*;
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5, 6);
+        Map<Boolean, List<Integer>> parts = nums.stream()
+            .collect(Collectors.partitioningBy(n -> n % 2 == 0));
+        List<Integer> evens = parts.get(true);
+        List<Integer> odds = parts.get(false);
+        Collections.sort(evens);
+        Collections.sort(odds);
+        System.out.println(evens);
+        System.out.println(odds);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[2, 4, 6]\n[1, 3, 5]");
+}
+
+#[test]
+fn instanceof_and_cast() {
+    let out = run(r#"
+class Animal {}
+class Dog extends Animal {
+    String name;
+    Dog(String n) { this.name = n; }
+    String speak() { return "Woof"; }
+}
+class Cat extends Animal {
+    String speak() { return "Meow"; }
+}
+class Main {
+    static String describe(Animal a) {
+        if (a instanceof Dog) {
+            Dog d = (Dog) a;
+            return d.speak() + " from " + d.name;
+        } else if (a instanceof Cat) {
+            Cat c = (Cat) a;
+            return c.speak();
+        }
+        return "unknown";
+    }
+    public static void main(String[] args) {
+        System.out.println(describe(new Dog("Rex")));
+        System.out.println(describe(new Cat()));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Woof from Rex\nMeow");
+}
+
+#[test]
+fn abstract_class() {
+    let out = run(r#"
+abstract class Shape {
+    abstract double area();
+    String describe() { return "Shape with area " + area(); }
+}
+class Circle extends Shape {
+    double r;
+    Circle(double r) { this.r = r; }
+    double area() { return Math.PI * r * r; }
+}
+class Rectangle extends Shape {
+    double w, h;
+    Rectangle(double w, double h) { this.w = w; this.h = h; }
+    double area() { return w * h; }
+}
+class Main {
+    public static void main(String[] args) {
+        Shape[] shapes = { new Rectangle(3.0, 4.0), new Circle(0.0) };
+        System.out.println(shapes[0].area());
+        System.out.println(shapes[1].area());
+        System.out.println(shapes[0].describe());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "12.0\n0.0\nShape with area 12.0");
+}
+
+#[test]
+fn generic_pair_and_swap() {
+    let out = run(r#"
+class Pair<A, B> {
+    A first;
+    B second;
+    Pair(A a, B b) { this.first = a; this.second = b; }
+    Pair<B, A> swap() { return new Pair<>(second, first); }
+}
+class Main {
+    public static void main(String[] args) {
+        Pair<String, Integer> p = new Pair<>("hello", 42);
+        System.out.println(p.first);
+        System.out.println(p.second);
+        Pair<Integer, String> swapped = p.swap();
+        System.out.println(swapped.first);
+        System.out.println(swapped.second);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "hello\n42\n42\nhello");
+}
+
+#[test]
+fn string_methods_advanced() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println("abc".repeat(3));
+        System.out.println(String.join("-", "a", "b", "c"));
+        System.out.println("hello".substring(1, 3));
+        System.out.println("hello world".replace("world", "Java"));
+        System.out.println("a,b,,c".split(",").length);
+        System.out.println("Hello World".toLowerCase());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "abcabcabc\na-b-c\nel\nhello Java\n4\nhello world");
+}
+
+#[test]
+fn optional_basic() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        Optional<String> present = Optional.of("hello");
+        Optional<String> empty = Optional.empty();
+        System.out.println(present.isPresent());
+        System.out.println(empty.isPresent());
+        System.out.println(present.get());
+        System.out.println(present.orElse("default"));
+        System.out.println(empty.orElse("default"));
+        String mapped = present.map(s -> s.toUpperCase()).orElse("none");
+        System.out.println(mapped);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\nfalse\nhello\nhello\ndefault\nHELLO");
+}

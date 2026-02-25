@@ -424,6 +424,34 @@ impl RirInterpreter {
                             }
                             return Some(Ok(RVal::Object(map_id)));
                         }
+                        "partitioningBy" => {
+                            let items = arr.borrow().clone();
+                            let map_id = self.alloc_object("HashMap");
+                            let true_arr = RVal::Array(Rc::new(RefCell::new(vec![])));
+                            let false_arr = RVal::Array(Rc::new(RefCell::new(vec![])));
+                            {
+                                let mut heap = self.heap.borrow_mut();
+                                if let Some(map_obj) = heap.get_mut(&map_id) {
+                                    map_obj.fields.insert("true".into(), true_arr);
+                                    map_obj.fields.insert("false".into(), false_arr);
+                                }
+                            }
+                            for item in &items {
+                                let key = if let Some(ref lam) = lambda {
+                                    match self.invoke_lambda(lam, &[item.clone()]) {
+                                        Ok(v) => if v.is_truthy() { "true" } else { "false" },
+                                        Err(_) => continue,
+                                    }
+                                } else { "false" };
+                                let mut heap = self.heap.borrow_mut();
+                                if let Some(map_obj) = heap.get_mut(&map_id) {
+                                    if let Some(RVal::Array(a)) = map_obj.fields.get(key) {
+                                        a.borrow_mut().push(item.clone());
+                                    }
+                                }
+                            }
+                            return Some(Ok(RVal::Object(map_id)));
+                        }
                         "toMap" => {
                             let items = arr.borrow().clone();
                             let map_id = self.alloc_object("HashMap");

@@ -341,6 +341,18 @@ impl RirInterpreter {
                 self.heap.borrow_mut().get_mut(&id).map(|o| o.fields.insert("__ctype__".into(), RVal::Str("counting".into())));
                 return Ok(RVal::Object(id));
             }
+            if func_id == encode_builtin("Collectors.partitioningBy") {
+                let lambda = args.first().cloned().unwrap_or(RVal::Null);
+                let id = self.alloc_object("Collector");
+                {
+                    let mut heap = self.heap.borrow_mut();
+                    if let Some(o) = heap.get_mut(&id) {
+                        o.fields.insert("__ctype__".into(), RVal::Str("partitioningBy".into()));
+                        o.fields.insert("__lambda__".into(), lambda);
+                    }
+                }
+                return Ok(RVal::Object(id));
+            }
             if func_id == encode_builtin("Collectors.toMap") {
                 let key_fn = args.first().cloned().unwrap_or(RVal::Null);
                 let val_fn = args.get(1).cloned().unwrap_or(RVal::Null);
