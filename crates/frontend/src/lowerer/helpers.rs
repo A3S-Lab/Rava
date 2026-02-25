@@ -29,7 +29,8 @@ pub(crate) fn lower_type(ty: &TypeExpr) -> RirType {
 
 pub(crate) fn lower_type_name(name: &str) -> RirType {
     match name {
-        "int" | "short" | "byte" | "char" => RirType::I32,
+        "int" | "short" | "byte" => RirType::I32,
+        "char"    => RirType::I16,
         "long"    => RirType::I64,
         "float"   => RirType::F32,
         "double"  => RirType::F64,

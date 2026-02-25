@@ -78,7 +78,9 @@ const KNOWN_METHODS: &[&str] = &[
     "getFirst", "getLast", "offerFirst", "offerLast",
     "pollFirst", "pollLast", "peekFirst", "peekLast",
     // StringBuilder
-    "append", "insert", "reverse", "deleteCharAt",
+    "append", "insert", "reverse", "deleteCharAt", "delete", "replace",
+    // Number boxing
+    "intValue", "longValue", "shortValue", "byteValue", "doubleValue", "floatValue", "booleanValue",
     // Object
     "getClass", "notify", "wait", "getMessage", "getCause",
     // Map.Entry

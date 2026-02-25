@@ -2940,3 +2940,191 @@ class Main {
 "#);
     assert_eq!(out.trim(), "13\n27\n15");
 }
+
+#[test]
+fn enum_ordinal_and_values() {
+    let out = run(r#"
+enum Season { SPRING, SUMMER, FALL, WINTER }
+class Main {
+    public static void main(String[] args) {
+        Season s = Season.SUMMER;
+        System.out.println(s.ordinal());
+        System.out.println(s.name());
+        Season[] all = Season.values();
+        System.out.println(all.length);
+        for (Season x : all) System.out.println(x);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1\nSUMMER\n4\nSPRING\nSUMMER\nFALL\nWINTER");
+}
+
+#[test]
+fn string_builder_delete_and_replace() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        StringBuilder sb = new StringBuilder("Hello World");
+        sb.delete(5, 11);
+        System.out.println(sb.toString());
+        sb.replace(0, 5, "Hi");
+        System.out.println(sb.toString());
+        sb.insert(2, " there");
+        System.out.println(sb.toString());
+        System.out.println(sb.length());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Hello\nHi\nHi there\n8");
+}
+
+#[test]
+fn collections_stack_and_queue() {
+    let out = run(r#"
+import java.util.Stack;
+import java.util.LinkedList;
+import java.util.Queue;
+class Main {
+    public static void main(String[] args) {
+        Stack<Integer> stack = new Stack<>();
+        stack.push(1);
+        stack.push(2);
+        stack.push(3);
+        System.out.println(stack.peek());
+        System.out.println(stack.pop());
+        System.out.println(stack.size());
+        Queue<String> queue = new LinkedList<>();
+        queue.offer("a");
+        queue.offer("b");
+        queue.offer("c");
+        System.out.println(queue.peek());
+        System.out.println(queue.poll());
+        System.out.println(queue.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n3\n2\na\na\n2");
+}
+
+#[test]
+fn generic_bounded_wildcard() {
+    let out = run(r#"
+class Box<T extends Number> {
+    T value;
+    Box(T v) { this.value = v; }
+    double doubled() { return value.doubleValue() * 2; }
+}
+class Main {
+    static double sumBoxes(Box<? extends Number>[] boxes) {
+        double sum = 0;
+        for (Box<? extends Number> b : boxes) sum += b.value.doubleValue();
+        return sum;
+    }
+    public static void main(String[] args) {
+        Box<Integer> bi = new Box<>(5);
+        Box<Double> bd = new Box<>(3.5);
+        System.out.println(bi.doubled());
+        System.out.println(bd.doubled());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "10.0\n7.0");
+}
+
+#[test]
+fn exception_finally_return() {
+    let out = run(r#"
+class Main {
+    static int test(boolean throwIt) {
+        try {
+            if (throwIt) throw new RuntimeException("oops");
+            return 1;
+        } catch (RuntimeException e) {
+            System.out.println("caught: " + e.getMessage());
+            return 2;
+        } finally {
+            System.out.println("finally");
+        }
+    }
+    public static void main(String[] args) {
+        System.out.println(test(false));
+        System.out.println(test(true));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1\ncaught: oops\n2");
+}
+
+#[test]
+fn array_2d_operations() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int[][] matrix = new int[3][3];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                matrix[i][j] = i * 3 + j + 1;
+        // print diagonal
+        for (int i = 0; i < 3; i++) System.out.println(matrix[i][i]);
+        // transpose check
+        int sum = 0;
+        for (int[] row : matrix) for (int v : row) sum += v;
+        System.out.println(sum);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1\n5\n9\n45");
+}
+
+#[test]
+fn functional_predicate_chain() {
+    let out = run(r#"
+import java.util.function.Predicate;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+class Main {
+    public static void main(String[] args) {
+        Predicate<Integer> isEven = n -> n % 2 == 0;
+        Predicate<Integer> isPositive = n -> n > 0;
+        Predicate<Integer> isEvenAndPositive = isEven.and(isPositive);
+        List<Integer> nums = Arrays.asList(-4, -1, 0, 2, 3, 6);
+        List<Integer> result = nums.stream()
+            .filter(isEvenAndPositive)
+            .collect(Collectors.toList());
+        System.out.println(result);
+        System.out.println(isEven.negate().test(3));
+        System.out.println(isEven.or(isPositive).test(3));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[2, 6]\ntrue\ntrue");
+}
+
+#[test]
+fn string_chars_and_codepoints() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String s = "Hello";
+        // charAt and char arithmetic
+        char first = s.charAt(0);
+        char last = s.charAt(s.length() - 1);
+        System.out.println(first);
+        System.out.println(last);
+        System.out.println((int) first);
+        // toCharArray
+        char[] arr = s.toCharArray();
+        System.out.println(arr.length);
+        // build string from codepoints
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            int code = s.codePointAt(i);
+            sb.append((char)(code + 1));
+        }
+        System.out.println(sb.toString());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "H\no\n72\n5\nIfmmp");
+}

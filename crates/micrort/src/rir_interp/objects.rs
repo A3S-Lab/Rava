@@ -77,6 +77,62 @@ impl RirInterpreter {
                 }
                 Some(Ok(RVal::Object(id)))
             }
+            "delete" => {
+                let start = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
+                let end   = args.get(1).map(|v| v.as_int()).unwrap_or(0) as usize;
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    let current = obj.fields.get("__buf__").map(|v| v.to_display()).unwrap_or_default();
+                    let chars: Vec<char> = current.chars().collect();
+                    let end = end.min(chars.len());
+                    let new_s: String = chars[..start.min(end)].iter().chain(chars[end..].iter()).collect();
+                    obj.fields.insert("__buf__".into(), RVal::Str(new_s));
+                }
+                Some(Ok(RVal::Object(id)))
+            }
+            "replace" => {
+                let start = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
+                let end   = args.get(1).map(|v| v.as_int()).unwrap_or(0) as usize;
+                let repl  = args.get(2).map(|v| v.to_display()).unwrap_or_default();
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    let current = obj.fields.get("__buf__").map(|v| v.to_display()).unwrap_or_default();
+                    let chars: Vec<char> = current.chars().collect();
+                    let end = end.min(chars.len());
+                    let new_s: String = chars[..start.min(end)].iter().collect::<String>()
+                        + &repl
+                        + &chars[end..].iter().collect::<String>();
+                    obj.fields.insert("__buf__".into(), RVal::Str(new_s));
+                }
+                Some(Ok(RVal::Object(id)))
+            }
+            "charAt" => {
+                let idx = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
+                let heap = self.heap.borrow();
+                let s = heap.get(&id).and_then(|o| o.fields.get("__buf__")).map(|v| v.to_display()).unwrap_or_default();
+                let ch = s.chars().nth(idx).unwrap_or('\0');
+                Some(Ok(RVal::Int(ch as i64)))
+            }
+            "substring" => {
+                let start = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
+                let heap = self.heap.borrow();
+                let s = heap.get(&id).and_then(|o| o.fields.get("__buf__")).map(|v| v.to_display()).unwrap_or_default();
+                let chars: Vec<char> = s.chars().collect();
+                let result: String = if let Some(end_val) = args.get(1) {
+                    let end = end_val.as_int() as usize;
+                    chars[start.min(chars.len())..end.min(chars.len())].iter().collect()
+                } else {
+                    chars[start.min(chars.len())..].iter().collect()
+                };
+                Some(Ok(RVal::Str(result)))
+            }
+            "indexOf" => {
+                let target = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let heap = self.heap.borrow();
+                let s = heap.get(&id).and_then(|o| o.fields.get("__buf__")).map(|v| v.to_display()).unwrap_or_default();
+                let idx = s.find(&target).map(|i| i as i64).unwrap_or(-1);
+                Some(Ok(RVal::Int(idx)))
+            }
             _ => None,
         }
     }
@@ -832,11 +888,18 @@ impl RirInterpreter {
                 }
             }
             // Deque / LinkedList front/back operations
-            "addFirst" | "offerFirst" | "push" => {
+            "addFirst" | "offerFirst" => {
                 let arr = self.as_array(receiver)?;
                 let val = args.first().cloned().unwrap_or(RVal::Null);
                 arr.borrow_mut().insert(0, val);
                 Some(Ok(RVal::Void))
+            }
+            // Java Stack.push — LIFO, adds to back
+            "push" => {
+                let arr = self.as_array(receiver)?;
+                let val = args.first().cloned().unwrap_or(RVal::Null);
+                arr.borrow_mut().push(val.clone());
+                Some(Ok(val))
             }
             "addLast" | "offerLast" => {
                 let arr = self.as_array(receiver)?;
@@ -852,7 +915,18 @@ impl RirInterpreter {
                 let arr = self.as_array(receiver)?;
                 Some(Ok(arr.borrow().last().cloned().unwrap_or(RVal::Null)))
             }
-            "removeFirst" | "pollFirst" | "pop" => {
+            // Java Stack.peek — LIFO, peeks from back
+            "peek" if matches!(receiver, RVal::Array(_)) && args.is_empty() => {
+                let arr = self.as_array(receiver)?;
+                Some(Ok(arr.borrow().last().cloned().unwrap_or(RVal::Null)))
+            }
+            // Java Stack.pop — LIFO, removes from back
+            "pop" => {
+                let arr = self.as_array(receiver)?;
+                let mut b = arr.borrow_mut();
+                if b.is_empty() { Some(Ok(RVal::Null)) } else { Some(Ok(b.pop().unwrap())) }
+            }
+            "removeFirst" | "pollFirst" => {
                 let arr = self.as_array(receiver)?;
                 let mut b = arr.borrow_mut();
                 if b.is_empty() { Some(Ok(RVal::Null)) } else { Some(Ok(b.remove(0))) }

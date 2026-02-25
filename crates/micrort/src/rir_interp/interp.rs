@@ -230,6 +230,16 @@ impl RirInterpreter {
                 let class_name = self.class_name_for(class.0);
                 if class_name == "ArrayList" || class_name == "LinkedList" {
                     env.insert(ret.0.clone(), RVal::Array(Rc::new(RefCell::new(Vec::new()))));
+                } else if class_name == "Stack" {
+                    let id = self.alloc_object("Stack");
+                    {
+                        let mut heap = self.heap.borrow_mut();
+                        if let Some(obj) = heap.get_mut(&id) {
+                            obj.fields.insert("__items__".into(), RVal::Array(Rc::new(RefCell::new(vec![]))));
+                            obj.fields.insert("__type__".into(), RVal::Str("stack".into()));
+                        }
+                    }
+                    env.insert(ret.0.clone(), RVal::Object(id));
                 } else if class_name == "HashSet" || class_name == "TreeSet" || class_name == "LinkedHashSet" {
                     let id = self.alloc_object(&class_name);
                     {
@@ -352,6 +362,18 @@ impl RirInterpreter {
                 let v = self.resolve(env, val);
                 let converted = match to {
                     rava_rir::RirType::I32 | rava_rir::RirType::I64 => RVal::Int(v.as_int()),
+                    // I8 = byte (mask to 8-bit signed)
+                    rava_rir::RirType::I8  => RVal::Int((v.as_int() as i8) as i64),
+                    // I16 = char — convert to single-char string for display
+                    rava_rir::RirType::I16 => {
+                        // If input is a single-char string (from charAt), get its code first
+                        let code = match &v {
+                            RVal::Str(s) if s.chars().count() == 1 => s.chars().next().unwrap() as i64,
+                            _ => v.as_int(),
+                        };
+                        let ch = char::from_u32((code as u16) as u32).unwrap_or('\0');
+                        RVal::Str(ch.to_string())
+                    }
                     rava_rir::RirType::F32 | rava_rir::RirType::F64 => RVal::Float(v.as_float()),
                     rava_rir::RirType::Bool => RVal::Bool(v.is_truthy()),
                     _ => v,

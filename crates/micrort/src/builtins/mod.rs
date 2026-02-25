@@ -73,6 +73,10 @@ pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Op
                 let other = args.first().map(|v| v.as_int()).unwrap_or(0);
                 Some(Ok(RVal::Int(n.cmp(&other) as i64)))
             }
+            "intValue" | "longValue" | "shortValue" | "byteValue" => Some(Ok(RVal::Int(*n))),
+            "doubleValue" | "floatValue" => Some(Ok(RVal::Float(*n as f64))),
+            "booleanValue" => Some(Ok(RVal::Bool(*n != 0))),
+            "toString" => Some(Ok(RVal::Str(n.to_string()))),
             _ => None,
         },
         RVal::Float(f) => match method {
@@ -80,6 +84,9 @@ pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Op
                 let other = args.first().map(|v| v.as_float()).unwrap_or(0.0);
                 Some(Ok(RVal::Int(f.partial_cmp(&other).map(|o| o as i64).unwrap_or(0))))
             }
+            "doubleValue" | "floatValue" => Some(Ok(RVal::Float(*f))),
+            "intValue" | "longValue" | "shortValue" | "byteValue" => Some(Ok(RVal::Int(*f as i64))),
+            "toString" => Some(Ok(RVal::Str(f.to_string()))),
             _ => None,
         },
         RVal::Object(_) => {

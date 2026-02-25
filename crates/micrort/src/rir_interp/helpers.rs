@@ -72,7 +72,7 @@ impl RirInterpreter {
         }
         for name in &["String", "Integer", "Long", "Double", "Float", "Boolean",
                        "ArrayList", "HashMap", "TreeMap", "LinkedHashMap",
-                       "PriorityQueue", "LinkedList", "HashSet", "TreeSet",
+                       "PriorityQueue", "LinkedList", "HashSet", "TreeSet", "Stack",
                        "Object", "Exception",
                        "RuntimeException", "NullPointerException",
                        "IllegalArgumentException", "IllegalStateException",
@@ -497,6 +497,45 @@ impl RirInterpreter {
                             return result;
                         }
                     }
+                    // Stack — LIFO operations
+                    if class_name == "Stack" {
+                        let items = self.heap.borrow().get(id)
+                            .and_then(|o| o.fields.get("__items__").cloned())
+                            .unwrap_or(RVal::Null);
+                        match method_name.as_str() {
+                            "push" => {
+                                let val = method_args.first().cloned().unwrap_or(RVal::Null);
+                                if let RVal::Array(a) = &items { a.borrow_mut().push(val.clone()); }
+                                return Ok(val);
+                            }
+                            "pop" => {
+                                if let RVal::Array(a) = &items {
+                                    return Ok(a.borrow_mut().pop().unwrap_or(RVal::Null));
+                                }
+                                return Ok(RVal::Null);
+                            }
+                            "peek" => {
+                                if let RVal::Array(a) = &items {
+                                    return Ok(a.borrow().last().cloned().unwrap_or(RVal::Null));
+                                }
+                                return Ok(RVal::Null);
+                            }
+                            "size" => {
+                                if let RVal::Array(a) = &items { return Ok(RVal::Int(a.borrow().len() as i64)); }
+                                return Ok(RVal::Int(0));
+                            }
+                            "isEmpty" => {
+                                if let RVal::Array(a) = &items { return Ok(RVal::Bool(a.borrow().is_empty())); }
+                                return Ok(RVal::Bool(true));
+                            }
+                            "add" => {
+                                let val = method_args.first().cloned().unwrap_or(RVal::Null);
+                                if let RVal::Array(a) = &items { a.borrow_mut().push(val); }
+                                return Ok(RVal::Bool(true));
+                            }
+                            _ => {}
+                        }
+                    }
                     if class_name == "HashMap" || class_name == "TreeMap" || class_name == "LinkedHashMap" {
                         // TreeMap forEach must iterate in sorted key order
                         if class_name == "TreeMap" && method_name == "forEach" {
@@ -730,6 +769,10 @@ impl RirInterpreter {
                         obj.fields.insert("__buf__".into(), RVal::Str(init_str));
                     }
                 }
+                return Ok(RVal::Void);
+            }
+            // Stack.<init> — no-op, object already initialized by New instruction
+            if func_id == encode_builtin("Stack.<init>") {
                 return Ok(RVal::Void);
             }
             // HashMap/TreeMap/LinkedHashMap copy constructor — copy entries from source map
@@ -1159,8 +1202,50 @@ impl RirInterpreter {
                 .map(|o| o.class_name.clone())
                 .unwrap_or_default();
             if class_name == "StringBuilder" {
-                if let Some(result) = self.dispatch_string_builder(*id, "toString", &args) {
+                let mname = method_name.as_deref().unwrap_or("toString");
+                if let Some(result) = self.dispatch_string_builder(*id, mname, &args) {
                     return result;
+                }
+            }
+            // Stack — LIFO operations on __items__ array
+            if class_name == "Stack" {
+                let items = self.heap.borrow().get(id)
+                    .and_then(|o| o.fields.get("__items__").cloned())
+                    .unwrap_or(RVal::Null);
+                let mname = method_name.as_deref().unwrap_or("");
+                match mname {
+                    "push" => {
+                        let val = args.first().cloned().unwrap_or(RVal::Null);
+                        if let RVal::Array(a) = &items { a.borrow_mut().push(val.clone()); }
+                        return Ok(val);
+                    }
+                    "pop" => {
+                        if let RVal::Array(a) = &items {
+                            let v = a.borrow_mut().pop().unwrap_or(RVal::Null);
+                            return Ok(v);
+                        }
+                        return Ok(RVal::Null);
+                    }
+                    "peek" => {
+                        if let RVal::Array(a) = &items {
+                            return Ok(a.borrow().last().cloned().unwrap_or(RVal::Null));
+                        }
+                        return Ok(RVal::Null);
+                    }
+                    "size" => {
+                        if let RVal::Array(a) = &items { return Ok(RVal::Int(a.borrow().len() as i64)); }
+                        return Ok(RVal::Int(0));
+                    }
+                    "isEmpty" => {
+                        if let RVal::Array(a) = &items { return Ok(RVal::Bool(a.borrow().is_empty())); }
+                        return Ok(RVal::Bool(true));
+                    }
+                    "add" => {
+                        let val = args.first().cloned().unwrap_or(RVal::Null);
+                        if let RVal::Array(a) = &items { a.borrow_mut().push(val); }
+                        return Ok(RVal::Bool(true));
+                    }
+                    _ => {}
                 }
             }
             let effective_count = args.len() + 1;
