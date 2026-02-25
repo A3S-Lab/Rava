@@ -2780,3 +2780,163 @@ class Main {
 "#);
     assert_eq!(out.trim(), "true\nfalse\nhello\nhello\ndefault\nHELLO");
 }
+
+#[test]
+fn interface_with_generics() {
+    let out = run(r#"
+interface Transformer<T, R> {
+    R transform(T input);
+}
+class Main {
+    static <T, R> R apply(T val, Transformer<T, R> t) {
+        return t.transform(val);
+    }
+    public static void main(String[] args) {
+        Transformer<String, Integer> len = s -> s.length();
+        Transformer<Integer, String> str = n -> "num:" + n;
+        System.out.println(apply("hello", len));
+        System.out.println(apply(42, str));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "5\nnum:42");
+}
+
+#[test]
+fn linked_list_user_defined() {
+    let out = run(r#"
+class Node {
+    int val;
+    Node next;
+    Node(int v) { this.val = v; this.next = null; }
+}
+class LinkedList {
+    Node head;
+    void add(int v) {
+        Node n = new Node(v);
+        if (head == null) { head = n; return; }
+        Node cur = head;
+        while (cur.next != null) cur = cur.next;
+        cur.next = n;
+    }
+    int size() {
+        int count = 0;
+        Node cur = head;
+        while (cur != null) { count++; cur = cur.next; }
+        return count;
+    }
+    int get(int idx) {
+        Node cur = head;
+        for (int i = 0; i < idx; i++) cur = cur.next;
+        return cur.val;
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        LinkedList list = new LinkedList();
+        list.add(10);
+        list.add(20);
+        list.add(30);
+        System.out.println(list.size());
+        System.out.println(list.get(0));
+        System.out.println(list.get(2));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n10\n30");
+}
+
+#[test]
+fn string_format_numbers() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.printf("%.2f%n", 3.14159);
+        System.out.printf("%d + %d = %d%n", 3, 4, 7);
+        System.out.printf("%s has %d chars%n", "hello", 5);
+        System.out.println(String.format("%05d", 42));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3.14\n3 + 4 = 7\nhello has 5 chars\n00042");
+}
+
+#[test]
+fn multi_interface_impl() {
+    let out = run(r#"
+interface Printable {
+    void print();
+}
+interface Saveable {
+    String save();
+}
+class Document implements Printable, Saveable {
+    String content;
+    Document(String c) { this.content = c; }
+    public void print() { System.out.println("Doc: " + content); }
+    public String save() { return "saved:" + content; }
+}
+class Main {
+    public static void main(String[] args) {
+        Document doc = new Document("hello");
+        doc.print();
+        System.out.println(doc.save());
+        Printable p = doc;
+        p.print();
+        Saveable s = doc;
+        System.out.println(s.save());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Doc: hello\nsaved:hello\nDoc: hello\nsaved:hello");
+}
+
+#[test]
+fn static_fields_and_methods() {
+    let out = run(r#"
+class Counter {
+    static int count = 0;
+    int id;
+    Counter() { count++; this.id = count; }
+    static int getCount() { return count; }
+    static void reset() { count = 0; }
+}
+class Main {
+    public static void main(String[] args) {
+        Counter a = new Counter();
+        Counter b = new Counter();
+        Counter c = new Counter();
+        System.out.println(Counter.getCount());
+        System.out.println(a.id);
+        System.out.println(c.id);
+        Counter.reset();
+        System.out.println(Counter.getCount());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n1\n3\n0");
+}
+
+#[test]
+fn nested_class_simulation() {
+    let out = run(r#"
+class Outer {
+    int x;
+    Outer(int x) { this.x = x; }
+    int doubled() { return x * 2; }
+}
+class Main {
+    static int process(Outer o, int extra) {
+        return o.doubled() + extra;
+    }
+    public static void main(String[] args) {
+        Outer o1 = new Outer(5);
+        Outer o2 = new Outer(10);
+        System.out.println(process(o1, 3));
+        System.out.println(process(o2, 7));
+        System.out.println(o1.x + o2.x);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "13\n27\n15");
+}

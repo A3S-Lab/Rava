@@ -90,6 +90,16 @@ impl<'a> FuncCtx<'a> {
                 if let Some(v) = self.vars.get(name) {
                     return Ok(v.clone());
                 }
+                // Static field of the current class takes priority over instance field lookup
+                if !self.class_name.is_empty() && self.static_field_names.contains(name.as_str()) {
+                    let key = format!("{}.{}", self.class_name, name);
+                    let ret = self.fresh_value();
+                    self.emit(RirInstr::GetStatic {
+                        field: FieldId(encode_builtin(&key)),
+                        ret: ret.clone(),
+                    });
+                    return Ok(ret);
+                }
                 // Not a local var — check if it's an instance field (this.name)
                 if self.vars.contains_key("this") {
                     let ret = self.fresh_value();

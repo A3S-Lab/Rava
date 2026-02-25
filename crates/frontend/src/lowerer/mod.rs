@@ -118,10 +118,21 @@ impl Lowerer {
         let mut static_field_inits: Vec<&FieldDecl> = Vec::new();
         let mut enum_constants: Vec<&EnumConstant> = Vec::new();
 
+        let static_field_names: std::collections::HashSet<String> = class.members.iter()
+            .filter_map(|m| {
+                if let Member::Field(f) = m {
+                    if f.modifiers.contains(&Modifier::Static) {
+                        return Some(f.name.clone());
+                    }
+                }
+                None
+            })
+            .collect();
+
         for member in &class.members {
             match member {
-                Member::Method(m)      => self.lower_method(&class.name, m)?,
-                Member::Constructor(c) => self.lower_constructor(&class.name, c, &field_inits)?,
+                Member::Method(m)      => self.lower_method(&class.name, m, &static_field_names)?,
+                Member::Constructor(c) => self.lower_constructor(&class.name, c, &field_inits, &static_field_names)?,
                 Member::Field(f)       => {
                     if f.init.is_some() && f.modifiers.contains(&Modifier::Static) {
                         static_field_inits.push(f);
@@ -347,7 +358,7 @@ impl Lowerer {
         Ok(())
     }
 
-    fn lower_method(&mut self, class: &str, method: &MethodDecl) -> Result<()> {
+    fn lower_method(&mut self, class: &str, method: &MethodDecl, static_field_names: &std::collections::HashSet<String>) -> Result<()> {
         let body = match &method.body {
             Some(b) => b,
             None    => return Ok(()),
@@ -365,6 +376,7 @@ impl Lowerer {
         };
         let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
         ctx.class_name = class.to_string();
+        ctx.static_field_names = static_field_names.clone();
         let is_instance = !method.modifiers.contains(&Modifier::Static);
         let params = if is_instance {
             let mut p = vec![(Value("this".into()), RirType::Ref(ClassId(encode_builtin(class))))];
@@ -391,7 +403,7 @@ impl Lowerer {
         Ok(())
     }
 
-    fn lower_constructor(&mut self, class: &str, ctor: &ConstructorDecl, field_inits: &[(String, Expr)]) -> Result<()> {
+    fn lower_constructor(&mut self, class: &str, ctor: &ConstructorDecl, field_inits: &[(String, Expr)], static_field_names: &std::collections::HashSet<String>) -> Result<()> {
         let func_id = self.next_func_id();
         let name = format!("{}.<init>", class);
         let mut params: Vec<(Value, RirType)> = vec![
@@ -401,6 +413,7 @@ impl Lowerer {
         let flags = FuncFlags { is_constructor: true, ..Default::default() };
         let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
         ctx.class_name = class.to_string();
+        ctx.static_field_names = static_field_names.clone();
         ctx.vars.insert("this".into(), Value("this".into()));
         for p in &ctor.params {
             ctx.vars.insert(p.name.clone(), Value(p.name.clone()));
@@ -507,6 +520,8 @@ pub(super) struct FuncCtx<'a> {
     pub(super) anon_counter: &'a mut u32,
     /// The class this function belongs to (for static field resolution).
     pub(super) class_name: String,
+    /// Static field names of the current class — used to distinguish `count` (static) from `this.count` (instance).
+    pub(super) static_field_names: std::collections::HashSet<String>,
 }
 
 impl<'a> FuncCtx<'a> {
@@ -539,6 +554,7 @@ impl<'a> FuncCtx<'a> {
             pending_anon_classes,
             anon_counter,
             class_name: String::new(),
+            static_field_names: std::collections::HashSet::new(),
         }
     }
 
@@ -588,6 +604,9 @@ impl<'a> FuncCtx<'a> {
                     if old != val {
                         self.emit(RirInstr::ConstStr { ret: old, value: format!("__copy__{}", val.0) });
                     }
+                } else if !self.class_name.is_empty() && self.static_field_names.contains(name.as_str()) {
+                    let key = format!("{}.{}", self.class_name, name);
+                    self.emit(RirInstr::SetStatic { field: FieldId(encode_builtin(&key)), val });
                 } else if self.vars.contains_key("this") {
                     self.emit(RirInstr::SetField {
                         obj: Value("this".into()),
