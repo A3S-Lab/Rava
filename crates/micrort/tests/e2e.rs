@@ -3910,3 +3910,211 @@ class Main {
 "#);
     assert_eq!(out.trim(), "true\nfalse\ntrue\nfalse\ntrue\nfalse\n1\n5");
 }
+
+#[test]
+fn string_number_parsing() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println(Integer.parseInt("-42"));
+        System.out.println(Long.parseLong("9876543210"));
+        System.out.println(Double.parseDouble("3.14"));
+        System.out.println(Float.parseFloat("2.5"));
+        System.out.println(Integer.MAX_VALUE);
+        System.out.println(Integer.MIN_VALUE);
+        System.out.println(Integer.compare(3, 5));
+        System.out.println(Integer.compare(5, 3));
+        System.out.println(Integer.compare(3, 3));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "-42\n9876543210\n3.14\n2.5\n2147483647\n-2147483648\n-1\n1\n0");
+}
+
+#[test]
+fn collections_linked_hashmap() {
+    let out = run(r#"
+import java.util.LinkedHashMap;
+import java.util.Map;
+class Main {
+    public static void main(String[] args) {
+        LinkedHashMap<String, Integer> map = new LinkedHashMap<>();
+        map.put("c", 3);
+        map.put("a", 1);
+        map.put("b", 2);
+        // LinkedHashMap preserves insertion order
+        for (Map.Entry<String, Integer> e : map.entrySet()) {
+            System.out.println(e.getKey() + "=" + e.getValue());
+        }
+        System.out.println(map.size());
+        map.remove("a");
+        System.out.println(map.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "c=3\na=1\nb=2\n3\n2");
+}
+
+#[test]
+fn abstract_class_with_state() {
+    let out = run(r#"
+abstract class Shape {
+    String color;
+    Shape(String color) { this.color = color; }
+    abstract double area();
+    String describe() { return color + " shape with area " + String.format("%.1f", area()); }
+}
+class Circle extends Shape {
+    double radius;
+    Circle(String color, double radius) { super(color); this.radius = radius; }
+    public double area() { return Math.PI * radius * radius; }
+}
+class Rectangle extends Shape {
+    double w, h;
+    Rectangle(String color, double w, double h) { super(color); this.w = w; this.h = h; }
+    public double area() { return w * h; }
+}
+class Main {
+    public static void main(String[] args) {
+        Shape[] shapes = { new Circle("red", 5), new Rectangle("blue", 4, 6) };
+        for (Shape s : shapes) System.out.println(s.describe());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "red shape with area 78.5\nblue shape with area 24.0");
+}
+
+#[test]
+fn stream_collect_joining() {
+    let out = run(r#"
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+class Main {
+    public static void main(String[] args) {
+        List<String> words = Arrays.asList("hello", "world", "java");
+        String joined = words.stream().collect(Collectors.joining(", "));
+        System.out.println(joined);
+        String withBrackets = words.stream().collect(Collectors.joining(", ", "[", "]"));
+        System.out.println(withBrackets);
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5);
+        int sum = nums.stream().mapToInt(Integer::intValue).sum();
+        System.out.println(sum);
+        double avg = nums.stream().mapToInt(Integer::intValue).average();
+        System.out.println(avg);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "hello, world, java\n[hello, world, java]\n15\n3.0");
+}
+
+#[test]
+fn generic_wildcard_upper_bound() {
+    let out = run(r#"
+import java.util.ArrayList;
+import java.util.List;
+class Main {
+    static double sumList(List<? extends Number> list) {
+        double sum = 0;
+        for (Number n : list) sum += n.doubleValue();
+        return sum;
+    }
+    static void printAll(List<?> list) {
+        for (Object o : list) System.out.println(o);
+    }
+    public static void main(String[] args) {
+        List<Integer> ints = new ArrayList<>();
+        ints.add(1); ints.add(2); ints.add(3);
+        System.out.println(sumList(ints));
+        List<Double> doubles = new ArrayList<>();
+        doubles.add(1.5); doubles.add(2.5);
+        System.out.println(sumList(doubles));
+        printAll(ints);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "6.0\n4.0\n1\n2\n3");
+}
+
+#[test]
+fn exception_multi_level_catch() {
+    let out = run(r#"
+class Main {
+    static void level3() { throw new IllegalArgumentException("bad arg"); }
+    static void level2() { level3(); }
+    static void level1() {
+        try {
+            level2();
+        } catch (RuntimeException e) {
+            System.out.println("level1 caught: " + e.getMessage());
+            throw new RuntimeException("wrapped: " + e.getMessage());
+        }
+    }
+    public static void main(String[] args) {
+        try {
+            level1();
+        } catch (RuntimeException e) {
+            System.out.println("main caught: " + e.getMessage());
+        }
+        System.out.println("done");
+    }
+}
+"#);
+    assert_eq!(out.trim(), "level1 caught: bad arg\nmain caught: wrapped: bad arg\ndone");
+}
+
+#[test]
+fn collections_set_operations() {
+    let out = run(r#"
+import java.util.HashSet;
+import java.util.TreeSet;
+import java.util.Set;
+class Main {
+    public static void main(String[] args) {
+        Set<Integer> a = new HashSet<>();
+        a.add(1); a.add(2); a.add(3); a.add(4);
+        Set<Integer> b = new HashSet<>();
+        b.add(3); b.add(4); b.add(5); b.add(6);
+        // intersection
+        Set<Integer> inter = new HashSet<>(a);
+        inter.retainAll(b);
+        TreeSet<Integer> sorted = new TreeSet<>(inter);
+        System.out.println(sorted);
+        // union
+        Set<Integer> union = new HashSet<>(a);
+        union.addAll(b);
+        System.out.println(new TreeSet<>(union));
+        System.out.println(a.contains(2));
+        System.out.println(a.contains(5));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[3, 4]\n[1, 2, 3, 4, 5, 6]\ntrue\nfalse");
+}
+
+#[test]
+fn lambda_method_reference_static() {
+    let out = run(r#"
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+class Main {
+    static int doubleIt(int n) { return n * 2; }
+    static boolean isEven(int n) { return n % 2 == 0; }
+    public static void main(String[] args) {
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5);
+        List<Integer> doubled = nums.stream()
+            .map(n -> doubleIt(n))
+            .collect(Collectors.toList());
+        System.out.println(doubled);
+        List<Integer> evens = nums.stream()
+            .filter(n -> isEven(n))
+            .collect(Collectors.toList());
+        System.out.println(evens);
+        long count = nums.stream().filter(n -> isEven(n)).count();
+        System.out.println(count);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[2, 4, 6, 8, 10]\n[2, 4]\n2");
+}

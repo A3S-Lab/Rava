@@ -314,12 +314,16 @@ impl RirInterpreter {
             }
             if func_id == encode_builtin("Collectors.joining") {
                 let delim = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let prefix = args.get(1).map(|v| v.to_display()).unwrap_or_default();
+                let suffix = args.get(2).map(|v| v.to_display()).unwrap_or_default();
                 let id = self.alloc_object("Collector");
                 {
                     let mut heap = self.heap.borrow_mut();
                     if let Some(o) = heap.get_mut(&id) {
                         o.fields.insert("__ctype__".into(), RVal::Str("joining".into()));
                         o.fields.insert("__delim__".into(), RVal::Str(delim));
+                        o.fields.insert("__prefix__".into(), RVal::Str(prefix));
+                        o.fields.insert("__suffix__".into(), RVal::Str(suffix));
                     }
                 }
                 return Ok(RVal::Object(id));
@@ -824,6 +828,31 @@ impl RirInterpreter {
                         if let Some(dst) = heap.get_mut(dst_id) {
                             for (k, v) in src_fields {
                                 dst.fields.insert(k, v);
+                            }
+                        }
+                    }
+                    return Ok(RVal::Void);
+                }
+            }
+            // HashSet/TreeSet/LinkedHashSet copy constructor — copy items from source collection
+            for set_type in &["HashSet", "TreeSet", "LinkedHashSet"] {
+                if func_id == encode_builtin(&format!("{}.<init>", set_type)) {
+                    if let (Some(RVal::Object(dst_id)), Some(src)) = (args.first(), args.get(1)) {
+                        let src_items: Vec<RVal> = match src {
+                            RVal::Array(arr) => arr.borrow().clone(),
+                            RVal::Object(src_id) => {
+                                let heap = self.heap.borrow();
+                                heap.get(src_id)
+                                    .and_then(|o| o.fields.get("__items__"))
+                                    .and_then(|v| if let RVal::Array(a) = v { Some(a.borrow().clone()) } else { None })
+                                    .unwrap_or_default()
+                            }
+                            _ => vec![],
+                        };
+                        let mut heap = self.heap.borrow_mut();
+                        if let Some(dst) = heap.get_mut(dst_id) {
+                            if let Some(RVal::Array(items)) = dst.fields.get("__items__") {
+                                *items.borrow_mut() = src_items;
                             }
                         }
                     }
@@ -1595,6 +1624,36 @@ impl RirInterpreter {
                 if let Some(msg) = obj.fields.get("message") { return msg.to_display(); }
                 if let Some(name) = obj.fields.get("__name__") { return name.to_display(); }
                 if let Some(name) = obj.fields.get("_name") { return name.to_display(); }
+                // Set types: display as sorted [items] for TreeSet, unsorted for others
+                if obj.class_name == "HashSet" || obj.class_name == "TreeSet"
+                    || obj.class_name == "LinkedHashSet"
+                {
+                    if let Some(RVal::Array(items)) = obj.fields.get("__items__") {
+                        let mut strs: Vec<String> = items.borrow().iter()
+                            .map(|v| v.to_display()).collect();
+                        if obj.class_name == "TreeSet" {
+                            strs.sort_by(|a, b| {
+                                match (a.parse::<i64>(), b.parse::<i64>()) {
+                                    (Ok(x), Ok(y)) => x.cmp(&y),
+                                    _ => a.cmp(b),
+                                }
+                            });
+                            strs.dedup();
+                        }
+                        return format!("[{}]", strs.join(", "));
+                    }
+                }
+                // LinkedHashMap: display in insertion order via __keys__
+                if obj.class_name == "LinkedHashMap" {
+                    if let Some(RVal::Array(keys_arr)) = obj.fields.get("__keys__") {
+                        let pairs: Vec<String> = keys_arr.borrow().iter()
+                            .filter_map(|k| {
+                                let ks = k.to_display();
+                                obj.fields.get(&ks).map(|v| format!("{}={}", ks, v.to_display()))
+                            }).collect();
+                        return format!("{{{}}}", pairs.join(", "));
+                    }
+                }
                 return format!("{}@{}", obj.class_name, id);
             }
         }

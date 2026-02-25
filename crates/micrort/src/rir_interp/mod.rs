@@ -66,7 +66,7 @@ const KNOWN_METHODS: &[&str] = &[
     "repeat", "chars", "codePointAt", "lastIndexOf",
     // ArrayList / array
     "size", "add", "get", "set", "remove", "clear",
-    "addAll", "removeAll", "iterator", "toArray", "sort",
+    "addAll", "removeAll", "retainAll", "iterator", "toArray", "sort",
     "subList", "indexOf",
     // HashMap
     "put", "get", "getOrDefault", "containsKey", "containsValue",
