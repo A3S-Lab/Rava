@@ -129,9 +129,13 @@ impl Lowerer {
             })
             .collect();
 
+        let enum_constant_names: std::collections::HashSet<String> = class.members.iter()
+            .filter_map(|m| if let Member::EnumConstant(ec) = m { Some(ec.name.clone()) } else { None })
+            .collect();
+
         for member in &class.members {
             match member {
-                Member::Method(m)      => self.lower_method(&class.name, m, &static_field_names)?,
+                Member::Method(m)      => self.lower_method(&class.name, m, &static_field_names, &enum_constant_names)?,
                 Member::Constructor(c) => self.lower_constructor(&class.name, c, &field_inits, &static_field_names)?,
                 Member::Field(f)       => {
                     if f.init.is_some() && f.modifiers.contains(&Modifier::Static) {
@@ -358,7 +362,7 @@ impl Lowerer {
         Ok(())
     }
 
-    fn lower_method(&mut self, class: &str, method: &MethodDecl, static_field_names: &std::collections::HashSet<String>) -> Result<()> {
+    fn lower_method(&mut self, class: &str, method: &MethodDecl, static_field_names: &std::collections::HashSet<String>, enum_constant_names: &std::collections::HashSet<String>) -> Result<()> {
         let body = match &method.body {
             Some(b) => b,
             None    => return Ok(()),
@@ -377,6 +381,7 @@ impl Lowerer {
         let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
         ctx.class_name = class.to_string();
         ctx.static_field_names = static_field_names.clone();
+        ctx.enum_constant_names = enum_constant_names.clone();
         let is_instance = !method.modifiers.contains(&Modifier::Static);
         let params = if is_instance {
             let mut p = vec![(Value("this".into()), RirType::Ref(ClassId(encode_builtin(class))))];
@@ -522,6 +527,8 @@ pub(super) struct FuncCtx<'a> {
     pub(super) class_name: String,
     /// Static field names of the current class — used to distinguish `count` (static) from `this.count` (instance).
     pub(super) static_field_names: std::collections::HashSet<String>,
+    /// Enum constant names of the current class — bare idents like `NORTH` resolve as GetStatic, not GetField(this).
+    pub(super) enum_constant_names: std::collections::HashSet<String>,
 }
 
 impl<'a> FuncCtx<'a> {
@@ -555,6 +562,7 @@ impl<'a> FuncCtx<'a> {
             anon_counter,
             class_name: String::new(),
             static_field_names: std::collections::HashSet::new(),
+            enum_constant_names: std::collections::HashSet::new(),
         }
     }
 

@@ -3343,3 +3343,379 @@ class Main {
 "#);
     assert_eq!(out.trim(), "Invalid: name\n400\nvalid");
 }
+
+#[test]
+fn string_valueof_and_conversions() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println(String.valueOf(42));
+        System.out.println(String.valueOf(3.14));
+        System.out.println(String.valueOf(true));
+        System.out.println(String.valueOf('A'));
+        int n = Integer.parseInt("123");
+        double d = Double.parseDouble("2.5");
+        System.out.println(n + 1);
+        System.out.println(d + 0.5);
+        System.out.println(Integer.toBinaryString(10));
+        System.out.println(Integer.toHexString(255));
+        System.out.println(Integer.toOctalString(8));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "42\n3.14\ntrue\nA\n124\n3.0\n1010\nff\n10");
+}
+
+#[test]
+fn map_getordefault_and_putifabsent() {
+    let out = run(r#"
+import java.util.HashMap;
+class Main {
+    public static void main(String[] args) {
+        HashMap<String, Integer> map = new HashMap<>();
+        map.put("a", 1);
+        map.put("b", 2);
+        System.out.println(map.getOrDefault("a", 0));
+        System.out.println(map.getOrDefault("z", 99));
+        map.putIfAbsent("a", 100);
+        map.putIfAbsent("c", 3);
+        System.out.println(map.get("a"));
+        System.out.println(map.get("c"));
+        System.out.println(map.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1\n99\n1\n3\n3");
+}
+
+#[test]
+fn collections_ncopies_and_frequency() {
+    let out = run(r#"
+import java.util.Collections;
+import java.util.ArrayList;
+import java.util.List;
+class Main {
+    public static void main(String[] args) {
+        List<String> copies = Collections.nCopies(3, "hello");
+        System.out.println(copies.size());
+        System.out.println(copies.get(0));
+        ArrayList<Integer> list = new ArrayList<>();
+        list.add(1); list.add(2); list.add(2); list.add(3); list.add(2);
+        System.out.println(Collections.frequency(list, 2));
+        System.out.println(Collections.min(list));
+        System.out.println(Collections.max(list));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\nhello\n3\n1\n3");
+}
+
+#[test]
+fn arrays_sort_and_binarysearch() {
+    let out = run(r#"
+import java.util.Arrays;
+class Main {
+    public static void main(String[] args) {
+        int[] arr = {5, 3, 8, 1, 9, 2};
+        Arrays.sort(arr);
+        System.out.println(Arrays.toString(arr));
+        int idx = Arrays.binarySearch(arr, 8);
+        System.out.println(idx);
+        String[] words = {"banana", "apple", "cherry"};
+        Arrays.sort(words);
+        System.out.println(Arrays.toString(words));
+        int[] copy = Arrays.copyOfRange(arr, 1, 4);
+        System.out.println(Arrays.toString(copy));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[1, 2, 3, 5, 8, 9]\n4\n[apple, banana, cherry]\n[2, 3, 5]");
+}
+
+#[test]
+fn string_builder_insert_and_index() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        StringBuilder sb = new StringBuilder("Hello World");
+        sb.insert(5, ",");
+        System.out.println(sb.toString());
+        System.out.println(sb.indexOf("World"));
+        System.out.println(sb.length());
+        sb.deleteCharAt(5);
+        System.out.println(sb.toString());
+        sb.replace(0, 5, "Hi");
+        System.out.println(sb.toString());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Hello, World\n7\n12\nHello World\nHi World");
+}
+
+#[test]
+fn deque_as_stack_and_queue() {
+    let out = run(r#"
+import java.util.ArrayDeque;
+import java.util.Deque;
+class Main {
+    public static void main(String[] args) {
+        // use as stack
+        Deque<Integer> stack = new ArrayDeque<>();
+        stack.push(1);
+        stack.push(2);
+        stack.push(3);
+        System.out.println(stack.peek());
+        System.out.println(stack.pop());
+        System.out.println(stack.size());
+        // use as queue
+        Deque<String> queue = new ArrayDeque<>();
+        queue.offer("a");
+        queue.offer("b");
+        queue.offer("c");
+        System.out.println(queue.poll());
+        System.out.println(queue.peek());
+        System.out.println(queue.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n3\n2\na\nb\n2");
+}
+
+#[test]
+fn math_min_max_and_clamp() {
+    let out = run(r#"
+class Main {
+    static int clamp(int val, int min, int max) {
+        return Math.max(min, Math.min(max, val));
+    }
+    public static void main(String[] args) {
+        System.out.println(Math.min(3, 7));
+        System.out.println(Math.max(3, 7));
+        System.out.println(Math.abs(-42));
+        System.out.println(clamp(5, 0, 10));
+        System.out.println(clamp(-5, 0, 10));
+        System.out.println(clamp(15, 0, 10));
+        System.out.println(Math.pow(2, 10));
+        System.out.println((int) Math.sqrt(144));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n7\n42\n5\n0\n10\n1024.0\n12");
+}
+
+#[test]
+fn list_sublist_and_contains() {
+    let out = run(r#"
+import java.util.ArrayList;
+import java.util.List;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> list = new ArrayList<>();
+        for (int i = 1; i <= 6; i++) list.add(i);
+        List<Integer> sub = list.subList(1, 4);
+        System.out.println(sub);
+        System.out.println(sub.size());
+        System.out.println(list.contains(3));
+        System.out.println(list.contains(9));
+        System.out.println(list.indexOf(4));
+        list.remove(2); // remove by index 2 → removes value 3
+        System.out.println(list);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[2, 3, 4]\n3\ntrue\nfalse\n3\n[1, 2, 4, 5, 6]");
+}
+
+#[test]
+fn nested_generic_map() {
+    let out = run(r#"
+import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Map;
+class Main {
+    public static void main(String[] args) {
+        HashMap<String, ArrayList<Integer>> map = new HashMap<>();
+        map.put("evens", new ArrayList<>());
+        map.put("odds", new ArrayList<>());
+        for (int i = 1; i <= 6; i++) {
+            if (i % 2 == 0) map.get("evens").add(i);
+            else map.get("odds").add(i);
+        }
+        System.out.println(map.get("evens"));
+        System.out.println(map.get("odds"));
+        System.out.println(map.get("evens").size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[2, 4, 6]\n[1, 3, 5]\n3");
+}
+
+#[test]
+fn string_format_various() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println(String.format("%d + %d = %d", 3, 4, 7));
+        System.out.println(String.format("%.2f", 3.14159));
+        System.out.println(String.format("%05d", 42));
+        System.out.println(String.format("%-10s|", "left"));
+        System.out.println(String.format("%10s|", "right"));
+        System.out.println(String.format("%s is %b", "java", true));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3 + 4 = 7\n3.14\n00042\nleft      |\n     right|\njava is true");
+}
+
+#[test]
+fn functional_compose_and_andthen() {
+    let out = run(r#"
+import java.util.function.Function;
+class Main {
+    public static void main(String[] args) {
+        Function<Integer, Integer> times2 = x -> x * 2;
+        Function<Integer, Integer> plus3  = x -> x + 3;
+        Function<Integer, Integer> composed = times2.andThen(plus3);
+        Function<Integer, Integer> composed2 = times2.compose(plus3);
+        System.out.println(composed.apply(5));   // (5*2)+3 = 13
+        System.out.println(composed2.apply(5));  // (5+3)*2 = 16
+        Function<String, Integer> len = String::length;
+        System.out.println(len.apply("hello"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "13\n16\n5");
+}
+
+#[test]
+fn stream_map_and_distinct() {
+    let out = run(r#"
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> nums = Arrays.asList(1, 2, 2, 3, 3, 3, 4);
+        List<Integer> distinct = nums.stream().distinct().collect(Collectors.toList());
+        System.out.println(distinct);
+        List<String> strs = nums.stream()
+            .distinct()
+            .map(n -> "n" + n)
+            .collect(Collectors.toList());
+        System.out.println(strs);
+        long count = nums.stream().distinct().count();
+        System.out.println(count);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[1, 2, 3, 4]\n[n1, n2, n3, n4]\n4");
+}
+
+#[test]
+fn optional_map_and_filter() {
+    let out = run(r#"
+import java.util.Optional;
+class Main {
+    static Optional<String> findName(boolean found) {
+        return found ? Optional.of("Alice") : Optional.empty();
+    }
+    public static void main(String[] args) {
+        Optional<String> name = findName(true);
+        System.out.println(name.isPresent());
+        System.out.println(name.get());
+        System.out.println(name.map(String::toUpperCase).orElse("none"));
+        Optional<String> empty = findName(false);
+        System.out.println(empty.isPresent());
+        System.out.println(empty.orElse("default"));
+        System.out.println(empty.map(String::toUpperCase).orElse("none"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\nAlice\nALICE\nfalse\ndefault\nnone");
+}
+
+#[test]
+fn enum_switch_and_methods() {
+    let out = run(r#"
+enum Direction {
+    NORTH, SOUTH, EAST, WEST;
+    public Direction opposite() {
+        switch (this) {
+            case NORTH: return SOUTH;
+            case SOUTH: return NORTH;
+            case EAST:  return WEST;
+            case WEST:  return EAST;
+            default:    return this;
+        }
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        Direction d = Direction.NORTH;
+        System.out.println(d);
+        System.out.println(d.opposite());
+        System.out.println(Direction.EAST.opposite());
+        System.out.println(d.ordinal());
+        System.out.println(Direction.values().length);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "NORTH\nSOUTH\nWEST\n0\n4");
+}
+
+#[test]
+fn interface_multiple_default() {
+    let out = run(r#"
+interface Printable {
+    default void print() { System.out.println("Printable: " + describe()); }
+    String describe();
+}
+interface Saveable {
+    default void save() { System.out.println("Saving: " + describe()); }
+    String describe();
+}
+class Document implements Printable, Saveable {
+    String title;
+    Document(String t) { this.title = t; }
+    public String describe() { return title; }
+}
+class Main {
+    public static void main(String[] args) {
+        Document doc = new Document("Report");
+        doc.print();
+        doc.save();
+        System.out.println(doc.describe());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Printable: Report\nSaving: Report\nReport");
+}
+
+#[test]
+fn array_varargs_and_spread() {
+    let out = run(r#"
+class Main {
+    static int sum(int... nums) {
+        int total = 0;
+        for (int n : nums) total += n;
+        return total;
+    }
+    static String join(String sep, String... parts) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) sb.append(sep);
+            sb.append(parts[i]);
+        }
+        return sb.toString();
+    }
+    public static void main(String[] args) {
+        System.out.println(sum(1, 2, 3));
+        System.out.println(sum(10, 20, 30, 40));
+        System.out.println(sum());
+        System.out.println(join(", ", "a", "b", "c"));
+        System.out.println(join("-", "x", "y"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "6\n100\n0\na, b, c\nx-y");
+}

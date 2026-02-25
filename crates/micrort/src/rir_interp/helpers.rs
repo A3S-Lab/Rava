@@ -1633,6 +1633,21 @@ impl RirInterpreter {
             (RVal::Str(s), RVal::Int(b)) if s.len() == 1 => {
                 s.chars().next().map(|c| c as i64).unwrap_or(-1) == *b
             }
+            // enum comparison: object with __name__ field vs string (for switch on enum)
+            (RVal::Object(id), RVal::Str(s)) => {
+                let heap = self.heap.borrow();
+                heap.get(id)
+                    .and_then(|o| o.fields.get("__name__"))
+                    .map(|n| n.to_display() == *s)
+                    .unwrap_or(false)
+            }
+            (RVal::Str(s), RVal::Object(id)) => {
+                let heap = self.heap.borrow();
+                heap.get(id)
+                    .and_then(|o| o.fields.get("__name__"))
+                    .map(|n| n.to_display() == *s)
+                    .unwrap_or(false)
+            }
             _ => false,
         }
     }

@@ -71,6 +71,19 @@ impl<'a> FuncCtx<'a> {
                 return Ok(result);
             }
         }
+        // Bare identifier that isn't a local variable — treat as enum constant string
+        // (enum values are stored as RVal::Str("CONSTANT_NAME") at runtime)
+        if let Expr::Ident(name) = label {
+            if !self.vars.contains_key(name.as_str()) {
+                let label_val = self.fresh_value();
+                self.emit(RirInstr::ConstStr { ret: label_val.clone(), value: name.clone() });
+                let cmp = self.fresh_value();
+                self.emit(RirInstr::BinOp {
+                    op: RirBinOp::Eq, lhs: switch_val.clone(), rhs: label_val, ret: cmp.clone(),
+                });
+                return Ok(cmp);
+            }
+        }
         // Default: plain equality check
         let label_val = self.lower_expr(label)?;
         let cmp = self.fresh_value();
