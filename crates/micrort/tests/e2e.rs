@@ -4577,3 +4577,123 @@ class Main {
 "#);
     assert_eq!(out.trim(), "0\n1\n6\n15\na, b, c\nx-y");
 }
+
+#[test]
+fn builder_pattern() {
+    let out = run(r#"
+class Person {
+    String name;
+    int age;
+    String email;
+    private Person() {}
+    static class Builder {
+        private Person p = new Person();
+        Builder name(String n) { p.name = n; return this; }
+        Builder age(int a) { p.age = a; return this; }
+        Builder email(String e) { p.email = e; return this; }
+        Person build() { return p; }
+    }
+    public String toString() { return name + "(" + age + ") <" + email + ">"; }
+}
+class Main {
+    public static void main(String[] args) {
+        Person p = new Person.Builder()
+            .name("Alice")
+            .age(30)
+            .email("alice@example.com")
+            .build();
+        System.out.println(p);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Alice(30) <alice@example.com>");
+}
+
+#[test]
+fn collections_priority_queue_custom() {
+    let out = run(r#"
+import java.util.PriorityQueue;
+import java.util.Comparator;
+class Main {
+    public static void main(String[] args) {
+        // max-heap using reverse comparator
+        PriorityQueue<Integer> maxHeap = new PriorityQueue<>((a, b) -> b - a);
+        maxHeap.offer(3); maxHeap.offer(1); maxHeap.offer(4); maxHeap.offer(1); maxHeap.offer(5);
+        System.out.println(maxHeap.poll());
+        System.out.println(maxHeap.poll());
+        System.out.println(maxHeap.peek());
+        // min-heap (default)
+        PriorityQueue<Integer> minHeap = new PriorityQueue<>();
+        minHeap.offer(5); minHeap.offer(2); minHeap.offer(8); minHeap.offer(1);
+        System.out.println(minHeap.poll());
+        System.out.println(minHeap.poll());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "5\n4\n3\n1\n2");
+}
+
+
+#[test]
+fn string_advanced_methods() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String s = "Hello, World\!";
+        System.out.println(s.replace("World", "Java"));
+        System.out.println(s.replaceAll("[aeiou]", "*"));
+        System.out.println("  hello  ".strip());
+        System.out.println("abc".repeat(3));
+        System.out.println("hello world".contains("world"));
+        System.out.println("hello".startsWith("hel"));
+        System.out.println("hello".endsWith("llo"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Hello, Java!\nH*ll*, W*rld!\nhello\nabcabcabc\ntrue\ntrue\ntrue");
+}
+
+#[test]
+fn treemap_sorted_iteration() {
+    let out = run(r#"
+import java.util.Map;
+import java.util.TreeMap;
+class Main {
+    public static void main(String[] args) {
+        TreeMap<String, Integer> scores = new TreeMap<>();
+        scores.put("Charlie", 92);
+        scores.put("Alice", 95);
+        scores.put("Bob", 87);
+        for (Map.Entry<String, Integer> e : scores.entrySet()) {
+            System.out.println(e.getKey() + ": " + e.getValue());
+        }
+        System.out.println(scores.firstKey());
+        System.out.println(scores.lastKey());
+        System.out.println(scores.containsKey("Bob"));
+        System.out.println(scores.containsValue(100));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Alice: 95\nBob: 87\nCharlie: 92\nAlice\nCharlie\ntrue\nfalse");
+}
+
+#[test]
+fn bit_manipulation() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int a = 10;  // 1010
+        int b = 12;  // 1100
+        System.out.println(a & b);   // 8
+        System.out.println(a | b);   // 14
+        System.out.println(a ^ b);   // 6
+        System.out.println(~a);      // -11
+        System.out.println(a << 1);  // 20
+        System.out.println(a >> 1);  // 5
+        System.out.println((a & (1 << 1)) != 0); // true
+        System.out.println((a & (1 << 2)) != 0); // false
+    }
+}
+"#);
+    assert_eq!(out.trim(), "8\n14\n6\n-11\n20\n5\ntrue\nfalse");
+}

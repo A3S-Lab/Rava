@@ -1185,12 +1185,33 @@ impl RirInterpreter {
         match method {
             "offer" | "add" => {
                 let val = args.first().cloned().unwrap_or(RVal::Null);
+                let comparator = {
+                    let heap = self.heap.borrow();
+                    heap.get(&id).and_then(|o| o.fields.get("__comparator__").cloned())
+                };
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
                     let items = obj.fields.entry("__items__".into()).or_insert(RVal::Array(Rc::new(RefCell::new(vec![]))));
                     if let RVal::Array(arr) = items {
                         arr.borrow_mut().push(val);
-                        arr.borrow_mut().sort_by(|a, b| crate::builtins::rval_cmp(a, b));
+                        let arr_clone = arr.clone();
+                        drop(heap);
+                        if let Some(cmp) = comparator {
+                            let mut elems = arr_clone.borrow().clone();
+                            for i in 1..elems.len() {
+                                let mut j = i;
+                                while j > 0 {
+                                    let cmp_result = self.invoke_lambda(&cmp, &[elems[j-1].clone(), elems[j].clone()]);
+                                    match cmp_result {
+                                        Ok(r) if r.as_int() > 0 => { elems.swap(j-1, j); j -= 1; }
+                                        _ => break,
+                                    }
+                                }
+                            }
+                            *arr_clone.borrow_mut() = elems;
+                        } else {
+                            arr_clone.borrow_mut().sort_by(|a, b| crate::builtins::rval_cmp(a, b));
+                        }
                     }
                 }
                 Some(Ok(RVal::Bool(true)))

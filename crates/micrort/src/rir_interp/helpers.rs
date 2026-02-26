@@ -892,6 +892,23 @@ impl RirInterpreter {
                 }
             }
             // ArrayList copy constructor — copy from source array/collection
+            // PriorityQueue.<init> — store optional comparator lambda
+            if func_id == encode_builtin("PriorityQueue.<init>") {
+                if let Some(RVal::Object(id)) = args.first() {
+                    // args: [this] or [this, initialCapacity] or [this, comparator]
+                    let comparator = args.get(1).or(args.get(2)).cloned();
+                    if let Some(cmp) = comparator {
+                        // Only store if it looks like a lambda/comparator, not an int capacity
+                        if !matches!(cmp, RVal::Int(_)) {
+                            let mut heap = self.heap.borrow_mut();
+                            if let Some(obj) = heap.get_mut(id) {
+                                obj.fields.insert("__comparator__".into(), cmp);
+                            }
+                        }
+                    }
+                }
+                return Ok(RVal::Void);
+            }
             if func_id == encode_builtin("ArrayList.<init>") {
                 if let (Some(RVal::Array(dst)), Some(src)) = (args.first(), args.get(1)) {
                     match src {
