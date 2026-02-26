@@ -4963,3 +4963,150 @@ class Main {
 "#);
     assert_eq!(out.trim(), "3\n0\ntrue\nfalse\n[x, x, x]");
 }
+
+#[test]
+fn record_like_class() {
+    let out = run(r#"
+class Point {
+    final int x, y;
+    Point(int x, int y) { this.x = x; this.y = y; }
+    Point translate(int dx, int dy) { return new Point(x + dx, y + dy); }
+    double magnitude() { return Math.sqrt(x * x + y * y); }
+    public String toString() { return "Point[x=" + x + ", y=" + y + "]"; }
+    boolean sameAs(Point p) { return x == p.x && y == p.y; }
+}
+class Main {
+    public static void main(String[] args) {
+        Point p1 = new Point(3, 4);
+        Point p2 = p1.translate(1, 1);
+        System.out.println(p1);
+        System.out.println(p2);
+        System.out.printf("%.1f%n", p1.magnitude());
+        System.out.println(p1.sameAs(new Point(3, 4)));
+        System.out.println(p1.sameAs(p2));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Point[x=3, y=4]\nPoint[x=4, y=5]\n5.0\ntrue\n0");
+}
+
+#[test]
+fn stream_collect_to_map() {
+    let out = run(r#"
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
+class Main {
+    public static void main(String[] args) {
+        List<String> words = Arrays.asList("apple", "banana", "cherry");
+        Map<String, Integer> lengths = words.stream()
+            .collect(Collectors.toMap(w -> w, w -> w.length()));
+        // Use TreeMap for sorted output
+        TreeMap<String, Integer> sorted = new TreeMap<>(lengths);
+        for (Map.Entry<String, Integer> e : sorted.entrySet()) {
+            System.out.println(e.getKey() + "=" + e.getValue());
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "apple=5\nbanana=6\ncherry=6");
+}
+
+#[test]
+fn abstract_template_method() {
+    let out = run(r#"
+abstract class DataProcessor {
+    // Template method
+    final void process(int[] data) {
+        int[] filtered = filter(data);
+        int[] transformed = transform(filtered);
+        output(transformed);
+    }
+    abstract int[] filter(int[] data);
+    abstract int[] transform(int[] data);
+    void output(int[] data) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < data.length; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(data[i]);
+        }
+        sb.append("]");
+        System.out.println(sb.toString());
+    }
+}
+class EvenDoubler extends DataProcessor {
+    int[] filter(int[] data) {
+        int count = 0;
+        for (int x : data) if (x % 2 == 0) count++;
+        int[] result = new int[count];
+        int i = 0;
+        for (int x : data) if (x % 2 == 0) result[i++] = x;
+        return result;
+    }
+    int[] transform(int[] data) {
+        int[] result = new int[data.length];
+        for (int i = 0; i < data.length; i++) result[i] = data[i] * 2;
+        return result;
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        DataProcessor p = new EvenDoubler();
+        int[] data = {1, 2, 3, 4, 5, 6};
+        p.process(data);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[0, 4, 8, 12]");
+}
+
+#[test]
+fn string_intern_and_equality() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String a = "hello";
+        String b = "hello";
+        System.out.println(a.equals(b));
+        System.out.println(a.equalsIgnoreCase("HELLO"));
+        System.out.println("abc".compareTo("abd"));
+        System.out.println("abc".compareTo("abc"));
+        System.out.println("abd".compareTo("abc"));
+        System.out.println("Hello World".toLowerCase());
+        System.out.println("Hello World".toUpperCase());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\ntrue\n-1\n0\n1\nhello world\nHELLO WORLD");
+}
+
+
+#[test]
+fn linkedlist_queue_deque() {
+    let out = run(r#"
+import java.util.LinkedList;
+import java.util.Queue;
+class Main {
+    public static void main(String[] args) {
+        Queue<String> queue = new LinkedList<>();
+        queue.offer("first");
+        queue.offer("second");
+        queue.offer("third");
+        System.out.println(queue.peek());
+        System.out.println(queue.poll());
+        System.out.println(queue.poll());
+        System.out.println(queue.size());
+        LinkedList<Integer> deque = new LinkedList<>();
+        deque.addFirst(1);
+        deque.addLast(2);
+        deque.addFirst(0);
+        System.out.println(deque.getFirst());
+        System.out.println(deque.getLast());
+        System.out.println(deque.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "first\nfirst\nsecond\n1\n0\n2\n3");
+}
