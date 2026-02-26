@@ -4466,3 +4466,114 @@ class Main {
 "#);
     assert_eq!(out.trim(), "true\nfalse\n28.27\nfalse\ntrue\n20.00");
 }
+
+
+#[test]
+fn stream_filter_chain() {
+    let out = run(r#"
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+        List<Integer> result = nums.stream()
+            .filter(n -> n % 2 == 0)
+            .filter(n -> n > 4)
+            .collect(Collectors.toList());
+        System.out.println(result);
+        long count = nums.stream().filter(n -> n % 3 == 0).count();
+        System.out.println(count);
+        int sum = nums.stream().filter(n -> n % 2 != 0).mapToInt(n -> n).sum();
+        System.out.println(sum);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[6, 8, 10]\n3\n25");
+}
+
+#[test]
+fn generic_pair() {
+    let out = run(r#"
+class Pair<A, B> {
+    A first;
+    B second;
+    Pair(A first, B second) { this.first = first; this.second = second; }
+    public String toString() { return "(" + first + ", " + second + ")"; }
+    Pair<B, A> swap() { return new Pair<>(second, first); }
+}
+class Main {
+    public static void main(String[] args) {
+        Pair<String, Integer> p = new Pair<>("hello", 42);
+        System.out.println(p);
+        System.out.println(p.first);
+        System.out.println(p.second);
+        Pair<Integer, String> swapped = p.swap();
+        System.out.println(swapped);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "(hello, 42)\nhello\n42\n(42, hello)");
+}
+
+#[test]
+fn binary_search_and_sort() {
+    let out = run(r#"
+import java.util.Arrays;
+class Main {
+    static int binarySearch(int[] arr, int target) {
+        int lo = 0, hi = arr.length - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (arr[mid] == target) return mid;
+            else if (arr[mid] < target) lo = mid + 1;
+            else hi = mid - 1;
+        }
+        return -1;
+    }
+    static void bubbleSort(int[] arr) {
+        for (int i = 0; i < arr.length - 1; i++)
+            for (int j = 0; j < arr.length - 1 - i; j++)
+                if (arr[j] > arr[j+1]) { int t = arr[j]; arr[j] = arr[j+1]; arr[j+1] = t; }
+    }
+    public static void main(String[] args) {
+        int[] arr = {5, 2, 8, 1, 9, 3};
+        bubbleSort(arr);
+        System.out.println(Arrays.toString(arr));
+        System.out.println(binarySearch(arr, 8));
+        System.out.println(binarySearch(arr, 7));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[1, 2, 3, 5, 8, 9]\n4\n-1");
+}
+
+#[test]
+fn varargs_multiple() {
+    let out = run(r#"
+class Main {
+    static int sum(int... nums) {
+        int total = 0;
+        for (int n : nums) total += n;
+        return total;
+    }
+    static String concat(String sep, String... parts) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) sb.append(sep);
+            sb.append(parts[i]);
+        }
+        return sb.toString();
+    }
+    public static void main(String[] args) {
+        System.out.println(sum());
+        System.out.println(sum(1));
+        System.out.println(sum(1, 2, 3));
+        System.out.println(sum(1, 2, 3, 4, 5));
+        System.out.println(concat(", ", "a", "b", "c"));
+        System.out.println(concat("-", "x", "y"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "0\n1\n6\n15\na, b, c\nx-y");
+}
