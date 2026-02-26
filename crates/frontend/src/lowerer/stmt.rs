@@ -149,6 +149,12 @@ impl<'a> FuncCtx<'a> {
                 self.emit(RirInstr::Branch { cond: cond_val, then_bb: body_bb, else_bb: exit_bb });
                 self.loop_stack.push((exit_bb, header_bb));
                 self.register_pending_label(exit_bb, header_bb);
+                // Snapshot vars before lowering body so we can restore after.
+                // This ensures post-loop code uses the named slots (e.g. "j") which
+                // are kept up-to-date by __copy__ when the loop runs, rather than
+                // stale fresh SSA names (e.g. "v7") that may hold values from a
+                // previous loop iteration.
+                let pre_body_vars = self.vars.clone();
                 self.switch_to(body_bb);
                 self.lower_stmt(body)?;
                 if !self.current_block_ends_with_terminator() {
@@ -156,6 +162,8 @@ impl<'a> FuncCtx<'a> {
                 }
                 self.loop_stack.pop();
                 self.switch_to(exit_bb);
+                // Restore vars to pre-while snapshot
+                self.vars = pre_body_vars;
             }
             Stmt::DoWhile { body, cond } => {
                 let pre = self.current;
@@ -193,6 +201,8 @@ impl<'a> FuncCtx<'a> {
                 }
                 self.loop_stack.push((exit_bb, update_bb));
                 self.register_pending_label(exit_bb, update_bb);
+                // Snapshot vars before body so post-loop code uses named slots
+                let pre_body_vars = self.vars.clone();
                 self.switch_to(body_bb);
                 self.lower_stmt(body)?;
                 if !self.current_block_ends_with_terminator() {
@@ -205,6 +215,8 @@ impl<'a> FuncCtx<'a> {
                     self.emit(RirInstr::Jump(header_bb));
                 }
                 self.switch_to(exit_bb);
+                // Restore vars to pre-body snapshot
+                self.vars = pre_body_vars;
             }
             Stmt::ForEach { ty: _, name, iterable, body } => {
                 let collection = self.lower_expr(iterable)?;

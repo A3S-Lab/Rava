@@ -5754,3 +5754,202 @@ class Main {
 "#);
     assert_eq!(out.trim(), "1000000\n+42\n-42\nff\nFF\n10\n1.234568e+05\ntrue\nfalse");
 }
+
+#[test]
+fn strategy_pattern() {
+    let out = run(r#"
+interface SortStrategy {
+    void sort(int[] arr);
+}
+class InsertionSort implements SortStrategy {
+    public void sort(int[] arr) {
+        int n = arr.length;
+        for (int i = 1; i < n; i++) {
+            int key = arr[i];
+            int j = i - 1;
+            while (j >= 0 && arr[j] > key) {
+                int pos = j + 1;
+                arr[pos] = arr[j];
+                j = j - 1;
+            }
+            int pos = j + 1;
+            arr[pos] = key;
+        }
+    }
+}
+class SelectionSort implements SortStrategy {
+    public void sort(int[] arr) {
+        int n = arr.length;
+        for (int i = 0; i < n - 1; i++) {
+            int min = i;
+            for (int j = i + 1; j < n; j++) if (arr[j] < arr[min]) min = j;
+            int t = arr[i]; arr[i] = arr[min]; arr[min] = t;
+        }
+    }
+}
+class Sorter {
+    private SortStrategy strategy;
+    Sorter(SortStrategy s) { this.strategy = s; }
+    void sort(int[] arr) { strategy.sort(arr); }
+}
+class Main {
+    static void print(int[] arr) {
+        for (int v : arr) System.out.print(v + " ");
+        System.out.println();
+    }
+    public static void main(String[] args) {
+        int[] a = {5, 2, 8, 1, 9};
+        new Sorter(new InsertionSort()).sort(a);
+        print(a);
+        int[] b = {5, 2, 8, 1, 9};
+        new Sorter(new SelectionSort()).sort(b);
+        print(b);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1 2 5 8 9 \n1 2 5 8 9");
+}
+
+#[test]
+fn generic_bounded_comparable() {
+    let out = run(r#"
+class Box<T extends Comparable<T>> {
+    private T value;
+    Box(T value) { this.value = value; }
+    T getValue() { return value; }
+    boolean isGreaterThan(Box<T> other) { return value.compareTo(other.value) > 0; }
+}
+class Main {
+    public static void main(String[] args) {
+        Box<Integer> b1 = new Box<>(10);
+        Box<Integer> b2 = new Box<>(5);
+        System.out.println(b1.getValue());
+        System.out.println(b1.isGreaterThan(b2));
+        System.out.println(b2.isGreaterThan(b1));
+        Box<String> s1 = new Box<>("banana");
+        Box<String> s2 = new Box<>("apple");
+        System.out.println(s1.isGreaterThan(s2));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "10\ntrue\nfalse\ntrue");
+}
+
+#[test]
+fn collections_stack_deque() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        // Use Deque as stack
+        Deque<Integer> stack = new ArrayDeque<>();
+        for (int i = 1; i <= 5; i++) stack.push(i);
+        System.out.println(stack.peek());
+        while (!stack.isEmpty()) System.out.print(stack.pop() + " ");
+        System.out.println();
+        // Use Deque as queue
+        Deque<String> queue = new ArrayDeque<>();
+        queue.offer("first"); queue.offer("second"); queue.offer("third");
+        System.out.println(queue.peek());
+        while (!queue.isEmpty()) System.out.print(queue.poll() + " ");
+        System.out.println();
+    }
+}
+"#);
+    assert_eq!(out.trim(), "5\n5 4 3 2 1 \nfirst\nfirst second third");
+}
+
+#[test]
+fn string_operations_comprehensive() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String s = "Hello, World!";
+        System.out.println(s.length());
+        System.out.println(s.indexOf("World"));
+        System.out.println(s.lastIndexOf('l'));
+        System.out.println(s.substring(7));
+        System.out.println(s.substring(7, 12));
+        System.out.println(s.replace("World", "Java"));
+        System.out.println(s.toLowerCase());
+        System.out.println(s.toUpperCase());
+        System.out.println(s.contains("World"));
+        System.out.println(s.startsWith("Hello"));
+        System.out.println(s.endsWith("!"));
+        System.out.println("  hello  ".strip());
+        System.out.println(String.valueOf(42));
+        System.out.println(String.valueOf(3.14));
+        System.out.println(String.valueOf(true));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "13\n7\n10\nWorld!\nWorld\nHello, Java!\nhello, world!\nHELLO, WORLD!\ntrue\ntrue\ntrue\nhello\n42\n3.14\ntrue");
+}
+
+#[test]
+fn lambda_higher_order() {
+    let out = run(r#"
+import java.util.*;
+import java.util.function.*;
+class Main {
+    static <T, R> List<R> transform(List<T> list, Function<T, R> f) {
+        List<R> result = new ArrayList<>();
+        for (T item : list) result.add(f.apply(item));
+        return result;
+    }
+    static <T> List<T> filterList(List<T> list, Predicate<T> p) {
+        List<T> result = new ArrayList<>();
+        for (T item : list) if (p.test(item)) result.add(item);
+        return result;
+    }
+    public static void main(String[] args) {
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5, 6);
+        List<Integer> doubled = transform(nums, n -> n * 2);
+        System.out.println(doubled);
+        List<Integer> evens = filterList(nums, n -> n % 2 == 0);
+        System.out.println(evens);
+        List<String> strs = transform(nums, n -> "item" + n);
+        System.out.println(strs);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[2, 4, 6, 8, 10, 12]\n[2, 4, 6]\n[item1, item2, item3, item4, item5, item6]");
+}
+
+#[test]
+fn array_sorting_algorithms() {
+    let out = run(r#"
+import java.util.Arrays;
+class Main {
+    static int[] mergeSort(int[] arr) {
+        if (arr.length <= 1) return arr;
+        int mid = arr.length / 2;
+        int[] left = mergeSort(Arrays.copyOfRange(arr, 0, mid));
+        int[] right = mergeSort(Arrays.copyOfRange(arr, mid, arr.length));
+        return merge(left, right);
+    }
+    static int[] merge(int[] a, int[] b) {
+        int total = a.length + b.length;
+        int[] result = new int[total];
+        int i = 0, j = 0, k = 0;
+        while (i < a.length && j < b.length) {
+            if (a[i] <= b[j]) { result[k] = a[i]; i++; }
+            else { result[k] = b[j]; j++; }
+            k++;
+        }
+        while (i < a.length) { result[k] = a[i]; i++; k++; }
+        while (j < b.length) { result[k] = b[j]; j++; k++; }
+        return result;
+    }
+    public static void main(String[] args) {
+        int[] arr = {5, 2, 8, 1, 9, 3, 7, 4, 6};
+        int[] sorted = mergeSort(arr);
+        for (int v : sorted) System.out.print(v + " ");
+        System.out.println();
+        System.out.println(sorted.length);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1 2 3 4 5 6 7 8 9 \n9");
+}
+

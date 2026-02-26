@@ -169,7 +169,9 @@ impl RirInterpreter {
                     env.insert(ret.0.clone(), val);
                 } else if let Some(src_name) = value.strip_prefix("__copy__") {
                     let val = env.get(src_name).cloned().unwrap_or(RVal::Null);
-                    env.insert(ret.0.clone(), val);
+                    env.insert(ret.0.clone(), val.clone());
+                    // Also propagate back so the src name is always findable
+                    env.insert(src_name.to_string(), val);
                 } else if let Some(resolved) = self.resolve_synthetic(value, env) {
                     env.insert(ret.0.clone(), resolved);
                 } else {
