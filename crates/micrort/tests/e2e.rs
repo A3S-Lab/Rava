@@ -4118,3 +4118,213 @@ class Main {
 "#);
     assert_eq!(out.trim(), "[2, 4, 6, 8, 10]\n[2, 4]\n2");
 }
+
+
+#[test]
+fn collections_sort_with_comparator() {
+    let out = run(r#"
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+class Main {
+    public static void main(String[] args) {
+        List<String> words = new ArrayList<>();
+        words.add("banana"); words.add("apple"); words.add("cherry"); words.add("date");
+        Collections.sort(words);
+        System.out.println(words);
+        Collections.sort(words, (a, b) -> b.compareTo(a));
+        System.out.println(words);
+        List<Integer> nums = new ArrayList<>();
+        nums.add(3); nums.add(1); nums.add(4); nums.add(1); nums.add(5);
+        Collections.sort(nums);
+        System.out.println(nums);
+        System.out.println(Collections.min(nums));
+        System.out.println(Collections.max(nums));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[apple, banana, cherry, date]\n[date, cherry, banana, apple]\n[1, 1, 3, 4, 5]\n1\n5");
+}
+
+#[test]
+fn multi_catch_and_finally() {
+    let out = run(r#"
+class Main {
+    static int divide(int a, int b) { return a / b; }
+    public static void main(String[] args) {
+        try {
+            System.out.println(divide(10, 0));
+        } catch (ArithmeticException e) {
+            System.out.println("caught: " + e.getMessage());
+        } finally {
+            System.out.println("finally1");
+        }
+        try {
+            Integer.parseInt("abc");
+        } catch (NumberFormatException e) {
+            System.out.println("nfe caught");
+        } finally {
+            System.out.println("finally2");
+        }
+        System.out.println("done");
+    }
+}
+"#);
+    assert_eq!(out.trim(), "caught: / by zero\nfinally1\nnfe caught\nfinally2\ndone");
+}
+
+#[test]
+fn interface_default_method_override() {
+    let out = run(r#"
+interface Greeter {
+    String greet(String name);
+    default String greetLoud(String name) {
+        return greet(name).toUpperCase();
+    }
+}
+class FormalGreeter implements Greeter {
+    public String greet(String name) { return "Good day, " + name; }
+}
+class CasualGreeter implements Greeter {
+    public String greet(String name) { return "Hey " + name + "!"; }
+    public String greetLoud(String name) { return "HEY " + name.toUpperCase() + "!!!"; }
+}
+class Main {
+    public static void main(String[] args) {
+        Greeter f = new FormalGreeter();
+        Greeter c = new CasualGreeter();
+        System.out.println(f.greet("Alice"));
+        System.out.println(f.greetLoud("Alice"));
+        System.out.println(c.greet("Bob"));
+        System.out.println(c.greetLoud("Bob"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Good day, Alice\nGOOD DAY, ALICE\nHey Bob!\nHEY BOB!!!");
+}
+
+#[test]
+fn stream_reduce_operations() {
+    let out = run(r#"
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5);
+        int sum = nums.stream().reduce(0, (a, b) -> a + b);
+        System.out.println(sum);
+        int product = nums.stream().reduce(1, (a, b) -> a * b);
+        System.out.println(product);
+        List<Integer> doubled = nums.stream()
+            .map(n -> n * 2)
+            .collect(Collectors.toList());
+        System.out.println(doubled);
+        String joined = nums.stream()
+            .map(n -> String.valueOf(n))
+            .collect(Collectors.joining("-"));
+        System.out.println(joined);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "15\n120\n[2, 4, 6, 8, 10]\n1-2-3-4-5");
+}
+
+#[test]
+fn character_class_methods() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println(Character.isUpperCase('A'));
+        System.out.println(Character.isLowerCase('a'));
+        System.out.println(Character.isDigit('5'));
+        System.out.println(Character.isLetter('z'));
+        System.out.println(Character.isWhitespace(' '));
+        System.out.println(Character.toUpperCase('a'));
+        System.out.println(Character.toLowerCase('Z'));
+        System.out.println(Character.isAlphabetic('b'));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\ntrue\ntrue\ntrue\ntrue\nA\nz\ntrue");
+}
+
+#[test]
+fn map_merge_and_compute() {
+    let out = run(r#"
+import java.util.HashMap;
+import java.util.Map;
+class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> freq = new HashMap<>();
+        String[] words = {"apple", "banana", "apple", "cherry", "banana", "apple"};
+        for (String w : words) {
+            freq.merge(w, 1, (old, v) -> old + v);
+        }
+        System.out.println(freq.get("apple"));
+        System.out.println(freq.get("banana"));
+        System.out.println(freq.get("cherry"));
+        Map<String, Integer> m = new HashMap<>();
+        m.computeIfAbsent("key", k -> k.length());
+        System.out.println(m.get("key"));
+        m.putIfAbsent("key", 999);
+        System.out.println(m.get("key"));
+        m.putIfAbsent("new", 42);
+        System.out.println(m.get("new"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n2\n1\n3\n3\n42");
+}
+
+
+#[test]
+fn string_builder_method_chaining() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String result = new StringBuilder()
+            .append("Hello")
+            .append(", ")
+            .append("World")
+            .append("!")
+            .toString();
+        System.out.println(result);
+        StringBuilder sb = new StringBuilder("abcde");
+        sb.reverse();
+        System.out.println(sb.toString());
+        sb.insert(2, "XY");
+        System.out.println(sb.toString());
+        sb.delete(2, 4);
+        System.out.println(sb.toString());
+        System.out.println(sb.length());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Hello, World!\nedcba\nedXYcba\nedcba\n5");
+}
+
+#[test]
+fn matrix_2d_transpose() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int[][] matrix = new int[3][3];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                matrix[i][j] = i * 3 + j + 1;
+        for (int[] row : matrix) {
+            for (int v : row) System.out.print(v + " ");
+            System.out.println();
+        }
+        int[][] t = new int[3][3];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                t[j][i] = matrix[i][j];
+        System.out.println(t[0][1]);
+        System.out.println(t[1][0]);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1 2 3 \n4 5 6 \n7 8 9 \n4\n2");
+}
