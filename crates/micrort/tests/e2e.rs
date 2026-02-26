@@ -1665,7 +1665,7 @@ class Main {
 }
 
 #[test]
-fn interface_default_method() {
+fn interface_default_method_v2() {
     let out = run(r#"
 interface Greeter {
     String name();
@@ -4493,7 +4493,7 @@ class Main {
 }
 
 #[test]
-fn generic_pair() {
+fn generic_pair_v2() {
     let out = run(r#"
 class Pair<A, B> {
     A first;
@@ -4987,7 +4987,7 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Point[x=3, y=4]\nPoint[x=4, y=5]\n5.0\ntrue\n0");
+    assert_eq!(out.trim(), "Point[x=3, y=4]\nPoint[x=4, y=5]\n5.0\ntrue\nfalse");
 }
 
 #[test]
@@ -6554,4 +6554,131 @@ class Main {
 }
 "#);
     assert_eq!(out.trim(), "[HELLO, WORLD, STREAM]\n23\n3\napi hello java stream world \n4");
+}
+
+#[test]
+fn enum_with_methods() {
+    let out = run(r#"
+enum Season {
+    SPRING, SUMMER, FALL, WINTER;
+    boolean isWarm() {
+        return this == SPRING || this == SUMMER;
+    }
+    Season next() {
+        switch (this) {
+            case SPRING: return SUMMER;
+            case SUMMER: return FALL;
+            case FALL: return WINTER;
+            default: return SPRING;
+        }
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        for (Season s : Season.values()) {
+            System.out.println(s + " warm=" + s.isWarm());
+        }
+        Season s = Season.WINTER;
+        System.out.println(s.next());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "SPRING warm=true\nSUMMER warm=true\nFALL warm=false\nWINTER warm=false\nSPRING");
+}
+
+#[test]
+fn interface_default_method() {
+    let out = run(r#"
+interface Greeter {
+    String greet(String name);
+    default String greetLoud(String name) {
+        return greet(name).toUpperCase();
+    }
+}
+class FormalGreeter implements Greeter {
+    public String greet(String name) { return "Good day, " + name; }
+}
+class CasualGreeter implements Greeter {
+    public String greet(String name) { return "Hey " + name + "!"; }
+}
+class Main {
+    public static void main(String[] args) {
+        Greeter[] greeters = { new FormalGreeter(), new CasualGreeter() };
+        for (Greeter g : greeters) {
+            System.out.println(g.greet("Alice"));
+            System.out.println(g.greetLoud("Bob"));
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Good day, Alice\nGOOD DAY, BOB\nHey Alice!\nHEY BOB!");
+}
+
+#[test]
+fn generic_pair() {
+    let out = run(r#"
+class Pair<A, B> {
+    A first;
+    B second;
+    Pair(A first, B second) { this.first = first; this.second = second; }
+    Pair<B, A> swap() { return new Pair<>(second, first); }
+    public String toString() { return "(" + first + ", " + second + ")"; }
+}
+class Main {
+    public static void main(String[] args) {
+        Pair<String, Integer> p = new Pair<>("hello", 42);
+        System.out.println(p);
+        System.out.println(p.first);
+        System.out.println(p.second);
+        Pair<Integer, String> swapped = p.swap();
+        System.out.println(swapped);
+        Pair<Integer, Integer> nums = new Pair<>(10, 20);
+        System.out.println(nums.first + nums.second);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "(hello, 42)\nhello\n42\n(42, hello)\n30");
+}
+
+#[test]
+fn string_formatting() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.printf("Name: %s, Age: %d%n", "Alice", 30);
+        System.out.printf("Pi: %.4f%n", Math.PI);
+        System.out.printf("%05d%n", 42);
+        System.out.printf("%-10s|%n", "left");
+        System.out.printf("%10s|%n", "right");
+        String s = String.format("(%d, %d)", 3, 4);
+        System.out.println(s);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Name: Alice, Age: 30\nPi: 3.1416\n00042\nleft      |\n     right|\n(3, 4)");
+}
+
+#[test]
+fn collections_operations() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        // ArrayList operations
+        List<Integer> list = new ArrayList<>(Arrays.asList(3, 1, 4, 1, 5, 9, 2, 6));
+        Collections.sort(list);
+        System.out.println(list);
+        System.out.println(Collections.min(list));
+        System.out.println(Collections.max(list));
+        Collections.reverse(list);
+        System.out.println(list.get(0));
+        // Set operations
+        Set<String> set = new HashSet<>(Arrays.asList("a", "b", "c", "a", "b"));
+        System.out.println(set.size());
+        System.out.println(set.contains("a"));
+        System.out.println(set.contains("z"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[1, 1, 2, 3, 4, 5, 6, 9]\n1\n9\n9\n3\ntrue\nfalse");
 }

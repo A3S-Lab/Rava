@@ -938,7 +938,15 @@ impl RirInterpreter {
                         let mut heap = self.heap.borrow_mut();
                         if let Some(dst) = heap.get_mut(dst_id) {
                             if let Some(RVal::Array(items)) = dst.fields.get("__items__") {
-                                *items.borrow_mut() = src_items;
+                                // Deduplicate for Set types
+                                let mut deduped: Vec<RVal> = Vec::new();
+                                for item in src_items {
+                                    let key = item.to_display();
+                                    if !deduped.iter().any(|v| v.to_display() == key) {
+                                        deduped.push(item);
+                                    }
+                                }
+                                *items.borrow_mut() = deduped;
                             }
                         }
                     }

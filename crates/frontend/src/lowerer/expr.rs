@@ -717,8 +717,13 @@ impl<'a> FuncCtx<'a> {
         }
 
         self.switch_to(short_bb);
-        let default_val = if is_and { 0 } else { 1 };
-        self.emit(RirInstr::ConstInt { ret: result.clone(), value: default_val });
+        // For &&: lhs was false → result is false (0)
+        // For ||: lhs was true → result is true, but preserve the actual lhs value
+        //         so Bool(true) stays Bool(true) rather than becoming Int(1)
+        self.emit(RirInstr::ConstStr {
+            ret: result.clone(),
+            value: format!("__copy__{}", l.0),
+        });
         self.emit(RirInstr::Jump(merge_bb));
 
         self.switch_to(rhs_bb);
