@@ -603,7 +603,7 @@ class Main {
 }
 
 #[test]
-fn do_while_loop() {
+fn do_while_loop_v2() {
     let out = run(r#"
 class Main {
     public static void main(String[] args) {
@@ -1576,7 +1576,7 @@ class Main {
 }
 
 #[test]
-fn bitwise_operations() {
+fn bitwise_operations_v2() {
     let out = run(r#"
 class Main {
     public static void main(String[] args) {
@@ -2114,7 +2114,7 @@ class Main {
 }
 
 #[test]
-fn string_char_operations() {
+fn string_char_operations_v2() {
     let out = run(r#"
 class Main {
     public static void main(String[] args) {
@@ -2214,7 +2214,7 @@ class Main {
 }
 
 #[test]
-fn iterator_pattern() {
+fn iterator_pattern_v2() {
     let out = run(r#"
 import java.util.*;
 class Main {
@@ -2692,7 +2692,7 @@ class Main {
 }
 
 #[test]
-fn abstract_class() {
+fn abstract_class_v2() {
     let out = run(r#"
 abstract class Shape {
     abstract double area();
@@ -2892,7 +2892,7 @@ class Main {
 }
 
 #[test]
-fn static_fields_and_methods() {
+fn static_fields_and_methods_v2() {
     let out = run(r#"
 class Counter {
     static int count = 0;
@@ -5953,3 +5953,194 @@ class Main {
     assert_eq!(out.trim(), "1 2 3 4 5 6 7 8 9 \n9");
 }
 
+#[test]
+fn do_while_basic_v2() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int i = 0;
+        do {
+            System.out.println(i);
+            i++;
+        } while (i < 3);
+        int x = 10;
+        do {
+            System.out.println("x=" + x);
+            x++;
+        } while (x < 5);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "0\n1\n2\nx=10");
+}
+
+#[test]
+fn bitwise_ops() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int a = 10;
+        int b = 12;
+        System.out.println(a & b);
+        System.out.println(a | b);
+        System.out.println(a ^ b);
+        System.out.println(~a);
+        System.out.println(a << 1);
+        System.out.println(a >> 1);
+        System.out.println(-1 >>> 28);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "8\n14\n6\n-11\n20\n5\n15");
+}
+
+#[test]
+fn static_counter() {
+    let out = run(r#"
+class Counter {
+    private static int count = 0;
+    private int id;
+    Counter() { count++; this.id = count; }
+    static int getCount() { return count; }
+    int getId() { return id; }
+    static void reset() { count = 0; }
+}
+class Main {
+    public static void main(String[] args) {
+        System.out.println(Counter.getCount());
+        Counter a = new Counter();
+        Counter b = new Counter();
+        Counter c = new Counter();
+        System.out.println(Counter.getCount());
+        System.out.println(a.getId());
+        System.out.println(b.getId());
+        System.out.println(c.getId());
+        Counter.reset();
+        System.out.println(Counter.getCount());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "0\n3\n1\n2\n3\n0");
+}
+
+#[test]
+fn abstract_shape() {
+    let out = run(r#"
+abstract class Shape {
+    String color;
+    Shape(String color) { this.color = color; }
+    abstract double area();
+    String describe() { return color + " shape with area " + area(); }
+}
+class Circle extends Shape {
+    double radius;
+    Circle(String color, double radius) { super(color); this.radius = radius; }
+    double area() { return Math.PI * radius * radius; }
+}
+class Rectangle extends Shape {
+    double w, h;
+    Rectangle(String color, double w, double h) { super(color); this.w = w; this.h = h; }
+    double area() { return w * h; }
+}
+class Main {
+    public static void main(String[] args) {
+        Shape[] shapes = { new Circle("red", 5), new Rectangle("blue", 4, 6) };
+        for (Shape s : shapes) System.out.printf("%.2f%n", s.area());
+        System.out.println(shapes[1].describe());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "78.54\n24.00\nblue shape with area 24");
+}
+
+#[test]
+fn instanceof_downcast() {
+    let out = run(r#"
+class Animal { String name; Animal(String n) { name = n; } }
+class Dog extends Animal {
+    Dog(String n) { super(n); }
+    void bark() { System.out.println(name + " says woof"); }
+}
+class Cat extends Animal {
+    Cat(String n) { super(n); }
+    void meow() { System.out.println(name + " says meow"); }
+}
+class Main {
+    public static void main(String[] args) {
+        Animal[] animals = { new Dog("Rex"), new Cat("Whiskers"), new Dog("Buddy") };
+        for (Animal a : animals) {
+            System.out.println(a instanceof Dog);
+            if (a instanceof Dog) {
+                Dog d = (Dog) a;
+                d.bark();
+            } else if (a instanceof Cat) {
+                Cat c = (Cat) a;
+                c.meow();
+            }
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\nRex says woof\nfalse\nWhiskers says meow\ntrue\nBuddy says woof");
+}
+
+#[test]
+fn multiple_catch_blocks() {
+    let out = run(r#"
+class Main {
+    static int divide(int a, int b) {
+        if (b == 0) throw new ArithmeticException("division by zero");
+        return a / b;
+    }
+    public static void main(String[] args) {
+        try {
+            System.out.println(divide(10, 2));
+            System.out.println(divide(10, 0));
+        } catch (ArithmeticException e) {
+            System.out.println("ArithmeticException: " + e.getMessage());
+        }
+        try {
+            int n = Integer.parseInt("abc");
+        } catch (NumberFormatException e) {
+            System.out.println("NumberFormatException");
+        } catch (ArithmeticException e) {
+            System.out.println("ArithmeticException");
+        }
+        try {
+            System.out.println(divide(10, 0));
+        } catch (NumberFormatException e) {
+            System.out.println("NumberFormatException");
+        } catch (ArithmeticException e) {
+            System.out.println("ArithmeticException: " + e.getMessage());
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "5\nArithmeticException: division by zero\nNumberFormatException\nArithmeticException: division by zero");
+}
+
+#[test]
+fn comparable_sort_students() {
+    let out = run(r#"
+import java.util.*;
+class Student implements Comparable<Student> {
+    String name;
+    int grade;
+    Student(String name, int grade) { this.name = name; this.grade = grade; }
+    public int compareTo(Student other) { return Integer.compare(this.grade, other.grade); }
+    public String toString() { return name + ":" + grade; }
+}
+class Main {
+    public static void main(String[] args) {
+        List<Student> students = new ArrayList<>();
+        students.add(new Student("Alice", 85));
+        students.add(new Student("Bob", 92));
+        students.add(new Student("Charlie", 78));
+        students.add(new Student("Diana", 95));
+        Collections.sort(students);
+        for (Student s : students) System.out.println(s);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Charlie:78\nAlice:85\nBob:92\nDiana:95");
+}
