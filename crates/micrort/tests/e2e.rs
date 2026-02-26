@@ -1006,7 +1006,7 @@ class Main {
 }
 
 #[test]
-fn exception_hierarchy() {
+fn exception_hierarchy_v2() {
     let out = run(r#"
 class AppException extends RuntimeException {
     int code;
@@ -6143,4 +6143,223 @@ class Main {
 }
 "#);
     assert_eq!(out.trim(), "Charlie:78\nAlice:85\nBob:92\nDiana:95");
+}
+
+#[test]
+fn nested_loops_matrix() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int[][] matrix = new int[3][3];
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                matrix[i][j] = i * 3 + j + 1;
+        int sum = 0;
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 3; j++) {
+                System.out.print(matrix[i][j] + " ");
+                sum += matrix[i][j];
+            }
+            System.out.println();
+        }
+        System.out.println("sum=" + sum);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1 2 3 \n4 5 6 \n7 8 9 \nsum=45");
+}
+
+#[test]
+fn string_split_join() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        String csv = "apple,banana,cherry,date";
+        String[] parts = csv.split(",");
+        System.out.println(parts.length);
+        for (String p : parts) System.out.println(p);
+        String joined = String.join(" | ", parts);
+        System.out.println(joined);
+        String[] words = "one two three".split(" ");
+        System.out.println(words.length);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "4\napple\nbanana\ncherry\ndate\napple | banana | cherry | date\n3");
+}
+
+#[test]
+fn map_iteration_patterns_v2() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> scores = new LinkedHashMap<>();
+        scores.put("Alice", 90);
+        scores.put("Bob", 85);
+        scores.put("Charlie", 92);
+        // entrySet iteration
+        for (Map.Entry<String, Integer> e : scores.entrySet())
+            System.out.println(e.getKey() + "=" + e.getValue());
+        // keySet
+        int total = 0;
+        for (String k : scores.keySet()) total += scores.get(k);
+        System.out.println("total=" + total);
+        // containsKey/Value
+        System.out.println(scores.containsKey("Bob"));
+        System.out.println(scores.containsValue(99));
+        // remove
+        scores.remove("Bob");
+        System.out.println(scores.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Alice=90\nBob=85\nCharlie=92\ntotal=267\ntrue\nfalse\n2");
+}
+
+#[test]
+fn generic_stack_v2() {
+    let out = run(r#"
+class Stack<T> {
+    private Object[] data;
+    private int size;
+    Stack(int cap) { data = new Object[cap]; size = 0; }
+    void push(T val) { data[size++] = val; }
+    T pop() { return (T) data[--size]; }
+    T peek() { return (T) data[size - 1]; }
+    boolean isEmpty() { return size == 0; }
+    int size() { return size; }
+}
+class Main {
+    public static void main(String[] args) {
+        Stack<Integer> s = new Stack<>(10);
+        s.push(1); s.push(2); s.push(3);
+        System.out.println(s.size());
+        System.out.println(s.peek());
+        System.out.println(s.pop());
+        System.out.println(s.pop());
+        System.out.println(s.isEmpty());
+        System.out.println(s.pop());
+        System.out.println(s.isEmpty());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n3\n3\n2\nfalse\n1\ntrue");
+}
+
+#[test]
+fn functional_interface_lambda() {
+    let out = run(r#"
+import java.util.*;
+import java.util.function.*;
+class Main {
+    static int apply(int x, Function<Integer, Integer> f) { return f.apply(x); }
+    static boolean test(int x, Predicate<Integer> p) { return p.test(x); }
+    public static void main(String[] args) {
+        Function<Integer, Integer> square = x -> x * x;
+        Function<Integer, Integer> addTen = x -> x + 10;
+        System.out.println(apply(5, square));
+        System.out.println(apply(5, addTen));
+        Predicate<Integer> isEven = x -> x % 2 == 0;
+        System.out.println(test(4, isEven));
+        System.out.println(test(7, isEven));
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5, 6);
+        nums.stream().filter(isEven).map(square).forEach(System.out::println);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "25\n15\ntrue\nfalse\n4\n16\n36");
+}
+
+#[test]
+fn string_builder_operations() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Hello");
+        sb.append(", ");
+        sb.append("World");
+        sb.append("!");
+        System.out.println(sb.toString());
+        System.out.println(sb.length());
+        sb.insert(5, " there");
+        System.out.println(sb.toString());
+        sb.delete(5, 11);
+        System.out.println(sb.toString());
+        sb.reverse();
+        System.out.println(sb.toString());
+        StringBuilder sb2 = new StringBuilder("abc");
+        sb2.append(123).append(true);
+        System.out.println(sb2.toString());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Hello, World!\n13\nHello there, World!\nHello, World!\n!dlroW ,olleH\nabc123true");
+}
+
+#[test]
+fn exception_hierarchy() {
+    let out = run(r#"
+class AppException extends RuntimeException {
+    int code;
+    AppException(String msg, int code) { super(msg); this.code = code; }
+    int getCode() { return code; }
+}
+class ValidationException extends AppException {
+    String field;
+    ValidationException(String field, String msg) {
+        super(msg, 400);
+        this.field = field;
+    }
+    String getField() { return field; }
+}
+class Main {
+    static void validate(String name, String value) {
+        if (value == null || value.isEmpty())
+            throw new ValidationException(name, name + " is required");
+    }
+    public static void main(String[] args) {
+        try {
+            validate("email", "");
+        } catch (ValidationException e) {
+            System.out.println("field=" + e.getField());
+            System.out.println("msg=" + e.getMessage());
+            System.out.println("code=" + e.getCode());
+        }
+        try {
+            validate("name", "Alice");
+            System.out.println("ok");
+        } catch (AppException e) {
+            System.out.println("error");
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "field=email\nmsg=email is required\ncode=400\nok");
+}
+
+#[test]
+fn array_operations_advanced() {
+    let out = run(r#"
+import java.util.Arrays;
+class Main {
+    public static void main(String[] args) {
+        int[] arr = {5, 2, 8, 1, 9, 3};
+        Arrays.sort(arr);
+        System.out.println(Arrays.toString(arr));
+        int idx = Arrays.binarySearch(arr, 8);
+        System.out.println("found 8 at " + idx);
+        int[] copy = Arrays.copyOf(arr, 4);
+        System.out.println(Arrays.toString(copy));
+        int[] range = Arrays.copyOfRange(arr, 2, 5);
+        System.out.println(Arrays.toString(range));
+        int[] filled = new int[5];
+        Arrays.fill(filled, 7);
+        System.out.println(Arrays.toString(filled));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[1, 2, 3, 5, 8, 9]\nfound 8 at 4\n[1, 2, 3, 5]\n[3, 5, 8]\n[7, 7, 7, 7, 7]");
 }
