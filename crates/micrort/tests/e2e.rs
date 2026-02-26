@@ -6682,3 +6682,136 @@ class Main {
 "#);
     assert_eq!(out.trim(), "[1, 1, 2, 3, 4, 5, 6, 9]\n1\n9\n9\n3\ntrue\nfalse");
 }
+
+#[test]
+fn nested_generics_map() {
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        Map<String, List<Integer>> map = new HashMap<>();
+        map.put("evens", new ArrayList<>(Arrays.asList(2, 4, 6)));
+        map.put("odds", new ArrayList<>(Arrays.asList(1, 3, 5)));
+        List<Integer> evens = map.get("evens");
+        evens.add(8);
+        System.out.println(map.get("evens").size());
+        System.out.println(map.get("odds").size());
+        int total = 0;
+        for (String k : map.keySet()) {
+            for (int n : map.get(k)) total += n;
+        }
+        System.out.println(total);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "4\n3\n29");
+}
+
+#[test]
+fn fibonacci_memoized() {
+    let out = run(r#"
+import java.util.HashMap;
+import java.util.Map;
+class Main {
+    static Map<Integer, Long> memo = new HashMap<>();
+    static long fib(int n) {
+        if (n <= 1) return n;
+        if (memo.containsKey(n)) return memo.get(n);
+        long result = fib(n - 1) + fib(n - 2);
+        memo.put(n, result);
+        return result;
+    }
+    public static void main(String[] args) {
+        for (int i = 0; i <= 10; i++) System.out.print(fib(i) + " ");
+        System.out.println();
+        System.out.println(fib(40));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "0 1 1 2 3 5 8 13 21 34 55 \n102334155");
+}
+
+#[test]
+fn string_parsing() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        // parseInt/parseLong/parseDouble
+        int i = Integer.parseInt("42");
+        long l = Long.parseLong("9876543210");
+        double d = Double.parseDouble("3.14");
+        System.out.println(i);
+        System.out.println(l);
+        System.out.printf("%.2f%n", d);
+        // toString
+        System.out.println(Integer.toString(255, 16));
+        System.out.println(Integer.toBinaryString(10));
+        System.out.println(Integer.toHexString(255));
+        System.out.println(Integer.toOctalString(8));
+        // valueOf
+        System.out.println(Integer.valueOf("100"));
+        System.out.println(Double.valueOf("2.5") * 2);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "42\n9876543210\n3.14\nff\n1010\nff\n10\n100\n5.0");
+}
+
+#[test]
+fn array_2d_matrix_multiply() {
+    let out = run(r#"
+class Main {
+    static int[][] multiply(int[][] a, int[][] b) {
+        int n = a.length;
+        int[][] c = new int[n][n];
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j < n; j++)
+                for (int k = 0; k < n; k++)
+                    c[i][j] += a[i][k] * b[k][j];
+        return c;
+    }
+    public static void main(String[] args) {
+        int[][] a = {{1, 2}, {3, 4}};
+        int[][] b = {{5, 6}, {7, 8}};
+        int[][] c = multiply(a, b);
+        for (int[] row : c) {
+            for (int v : row) System.out.print(v + " ");
+            System.out.println();
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "19 22 \n43 50");
+}
+
+#[test]
+fn observer_pattern_v2() {
+    let out = run(r#"
+import java.util.*;
+interface Observer {
+    void update(String event, Object data);
+}
+class EventBus {
+    Map<String, List<Observer>> listeners = new HashMap<>();
+    void subscribe(String event, Observer obs) {
+        listeners.computeIfAbsent(event, k -> new ArrayList<>()).add(obs);
+    }
+    void publish(String event, Object data) {
+        List<Observer> obs = listeners.getOrDefault(event, new ArrayList<>());
+        for (Observer o : obs) o.update(event, data);
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        EventBus bus = new EventBus();
+        bus.subscribe("login", (e, d) -> System.out.println("Logger: " + d + " logged in"));
+        bus.subscribe("login", (e, d) -> System.out.println("Audit: login event for " + d));
+        bus.subscribe("logout", (e, d) -> System.out.println("Logger: " + d + " logged out"));
+        bus.publish("login", "Alice");
+        bus.publish("logout", "Bob");
+        bus.publish("login", "Charlie");
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Logger: Alice logged in\nAudit: login event for Alice\nLogger: Bob logged out\nLogger: Charlie logged in\nAudit: login event for Charlie");
+}
