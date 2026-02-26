@@ -167,6 +167,14 @@ impl RirInterpreter {
                 } else if value == "__exception__" {
                     let val = env.get("__exception__").cloned().unwrap_or(RVal::Null);
                     env.insert(ret.0.clone(), val);
+                } else if let Some(src_name) = value.strip_prefix("__copy_ifunset__") {
+                    // Phi-like copy: only set ret if it's not already in env.
+                    // Used in while/for exit blocks to initialize post-loop SSA names
+                    // when the loop body never ran.
+                    if !env.contains_key(&ret.0) {
+                        let val = env.get(src_name).cloned().unwrap_or(RVal::Null);
+                        env.insert(ret.0.clone(), val);
+                    }
                 } else if let Some(src_name) = value.strip_prefix("__copy__") {
                     let val = env.get(src_name).cloned().unwrap_or(RVal::Null);
                     env.insert(ret.0.clone(), val.clone());

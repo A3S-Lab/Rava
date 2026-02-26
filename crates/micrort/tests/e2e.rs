@@ -6363,3 +6363,195 @@ class Main {
 "#);
     assert_eq!(out.trim(), "[1, 2, 3, 5, 8, 9]\nfound 8 at 4\n[1, 2, 3, 5]\n[3, 5, 8]\n[7, 7, 7, 7, 7]");
 }
+
+#[test]
+fn switch_expression_patterns() {
+    let out = run(r#"
+class Main {
+    static String dayType(int day) {
+        switch (day) {
+            case 1: case 7: return "weekend";
+            case 2: case 3: case 4: case 5: case 6: return "weekday";
+            default: return "invalid";
+        }
+    }
+    static int score(String grade) {
+        switch (grade) {
+            case "A": return 4;
+            case "B": return 3;
+            case "C": return 2;
+            case "D": return 1;
+            default: return 0;
+        }
+    }
+    public static void main(String[] args) {
+        for (int d = 1; d <= 7; d++) System.out.print(dayType(d) + " ");
+        System.out.println();
+        System.out.println(score("A"));
+        System.out.println(score("B"));
+        System.out.println(score("F"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "weekend weekday weekday weekday weekday weekday weekend \n4\n3\n0");
+}
+
+#[test]
+fn linked_list_impl() {
+    let out = run(r#"
+class Node {
+    int val;
+    Node next;
+    Node(int val) { this.val = val; }
+}
+class MyLinkedList {
+    Node head;
+    void add(int val) {
+        Node n = new Node(val);
+        if (head == null) { head = n; return; }
+        Node cur = head;
+        while (cur.next != null) cur = cur.next;
+        cur.next = n;
+    }
+    void print() {
+        Node cur = head;
+        while (cur != null) {
+            System.out.print(cur.val);
+            if (cur.next != null) System.out.print(" -> ");
+            cur = cur.next;
+        }
+        System.out.println();
+    }
+    int size() {
+        int n = 0;
+        Node cur = head;
+        while (cur != null) { n++; cur = cur.next; }
+        return n;
+    }
+    void reverse() {
+        Node prev = null;
+        Node cur = head;
+        while (cur != null) {
+            Node next = cur.next;
+            cur.next = prev;
+            prev = cur;
+            cur = next;
+        }
+        head = prev;
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        MyLinkedList list = new MyLinkedList();
+        list.add(1); list.add(2); list.add(3); list.add(4); list.add(5);
+        list.print();
+        System.out.println(list.size());
+        list.reverse();
+        list.print();
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1 -> 2 -> 3 -> 4 -> 5\n5\n5 -> 4 -> 3 -> 2 -> 1");
+}
+
+#[test]
+fn binary_tree_traversal() {
+    let out = run(r#"
+class TreeNode {
+    int val;
+    TreeNode left, right;
+    TreeNode(int val) { this.val = val; }
+}
+class BST {
+    TreeNode root;
+    void insert(int val) { root = insert(root, val); }
+    TreeNode insert(TreeNode node, int val) {
+        if (node == null) return new TreeNode(val);
+        if (val < node.val) node.left = insert(node.left, val);
+        else if (val > node.val) node.right = insert(node.right, val);
+        return node;
+    }
+    void inorder(TreeNode node) {
+        if (node == null) return;
+        inorder(node.left);
+        System.out.print(node.val + " ");
+        inorder(node.right);
+    }
+    boolean contains(int val) { return contains(root, val); }
+    boolean contains(TreeNode node, int val) {
+        if (node == null) return false;
+        if (val == node.val) return true;
+        return val < node.val ? contains(node.left, val) : contains(node.right, val);
+    }
+}
+class Main {
+    public static void main(String[] args) {
+        BST tree = new BST();
+        int[] vals = {5, 3, 7, 1, 4, 6, 8};
+        for (int v : vals) tree.insert(v);
+        tree.inorder(tree.root);
+        System.out.println();
+        System.out.println(tree.contains(4));
+        System.out.println(tree.contains(9));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1 3 4 5 6 7 8 \ntrue\nfalse");
+}
+
+#[test]
+fn optional_usage() {
+    let out = run(r#"
+import java.util.Optional;
+class Main {
+    static Optional<String> findUser(int id) {
+        if (id == 1) return Optional.of("Alice");
+        if (id == 2) return Optional.of("Bob");
+        return Optional.empty();
+    }
+    public static void main(String[] args) {
+        Optional<String> u1 = findUser(1);
+        System.out.println(u1.isPresent());
+        System.out.println(u1.get());
+        Optional<String> u3 = findUser(3);
+        System.out.println(u3.isPresent());
+        System.out.println(u3.orElse("Unknown"));
+        System.out.println(u1.map(s -> s.toUpperCase()).get());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\nAlice\nfalse\nUnknown\nALICE");
+}
+
+#[test]
+fn stream_advanced() {
+    let out = run(r#"
+import java.util.*;
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        List<String> words = Arrays.asList("hello", "world", "java", "stream", "api");
+        // filter + map + collect
+        List<String> result = words.stream()
+            .filter(w -> w.length() > 4)
+            .map(String::toUpperCase)
+            .collect(Collectors.toList());
+        System.out.println(result);
+        // reduce
+        int totalLen = words.stream().mapToInt(String::length).sum();
+        System.out.println(totalLen);
+        // count
+        long count = words.stream().filter(w -> w.contains("a")).count();
+        System.out.println(count);
+        // sorted
+        words.stream().sorted().forEach(w -> System.out.print(w + " "));
+        System.out.println();
+        // distinct
+        List<Integer> nums = Arrays.asList(1, 2, 2, 3, 3, 3, 4);
+        long distinct = nums.stream().distinct().count();
+        System.out.println(distinct);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[HELLO, WORLD, STREAM]\n23\n3\napi hello java stream world \n4");
+}
