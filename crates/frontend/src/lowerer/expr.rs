@@ -205,8 +205,10 @@ impl<'a> FuncCtx<'a> {
                 if matches!(callee.as_ref(), Expr::Super) {
                     let mut arg_vals = vec![Value("this".into())];
                     for a in args { arg_vals.push(self.lower_expr(a)?); }
+                    // Encode calling class so interpreter knows which parent to look up
+                    let super_init_key = format!("super.<init>@{}", self.class_name);
                     self.emit(RirInstr::Call {
-                        func: FuncId(encode_builtin("super.<init>")),
+                        func: FuncId(encode_builtin(&super_init_key)),
                         args: arg_vals,
                         ret:  None,
                     });

@@ -437,7 +437,7 @@ pub fn dispatch_array_named(arr: &Rc<RefCell<Vec<RVal>>>, method: &str, args: &[
             let v = arr.borrow();
             Some(Ok(RVal::Bool(!matches!(v.first(), Some(RVal::Null) | None))))
         }
-        "get" | "orElseThrow" if arr.borrow().len() == 1 => {
+        "get" | "orElseThrow" | "getAsInt" | "getAsLong" | "getAsDouble" if arr.borrow().len() == 1 => {
             let v = arr.borrow();
             match v.first() {
                 Some(RVal::Null) | None => Some(Err(rava_common::error::RavaError::JavaException {

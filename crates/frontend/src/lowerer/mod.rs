@@ -318,6 +318,22 @@ impl Lowerer {
                 });
             }
 
+            // toString() method — returns __name__ field (same as name())
+            {
+                let func_id = self.next_func_id();
+                let fname = format!("{}.toString", class.name);
+                let params = vec![(Value("this".into()), RirType::Ref(ClassId(encode_builtin(&class.name))))];
+                let mut ctx = FuncCtx::new(func_id, &mut self.block_id, &mut self.value_id, &self.varargs_methods, &mut self.pending_lambdas, &mut self.lambda_counter, &mut self.pending_anon_classes, &mut self.anon_counter);
+                ctx.vars.insert("this".into(), Value("this".into()));
+                let ret = ctx.fresh_value();
+                ctx.emit(RirInstr::GetField { obj: Value("this".into()), field: FieldId(encode_builtin("__name__")), ret: ret.clone() });
+                ctx.emit(RirInstr::Return(Some(ret)));
+                self.module.functions.push(RirFunction {
+                    id: func_id, name: fname, params,
+                    return_type: RirType::I64, basic_blocks: ctx.finish(), flags: FuncFlags::default(),
+                });
+            }
+
             // name() method
             {
                 let func_id = self.next_func_id();

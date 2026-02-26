@@ -303,6 +303,12 @@ impl RirInterpreter {
             }
             // Collectors factory methods — create Collector objects
             // Map.of(k1,v1, k2,v2, ...) — create immutable HashMap
+            if func_id == encode_builtin("List.of") {
+                let arr = Rc::new(RefCell::new(args.to_vec()));
+                let ptr = Rc::as_ptr(&arr) as usize;
+                super::UNMODIFIABLE.with(|u| u.borrow_mut().insert(ptr));
+                return Ok(RVal::Array(arr));
+            }
             if func_id == encode_builtin("Map.of") {
                 let id = self.alloc_object("HashMap");
                 {
@@ -521,6 +527,20 @@ impl RirInterpreter {
                         }
                         *arr.borrow_mut() = elems;
                         return Ok(RVal::Void);
+                    }
+                }
+                // ArrayIter hasNext/next
+                if let RVal::ArrayIter(arr, idx) = receiver {
+                    match method_name.as_str() {
+                        "hasNext" => return Ok(RVal::Bool(idx.get() < arr.borrow().len())),
+                        "next" => {
+                            let i = idx.get();
+                            let val = arr.borrow().get(i).cloned().unwrap_or(RVal::Null);
+                            idx.set(i + 1);
+                            return Ok(val);
+                        }
+                        "iterator" => return Ok(receiver.clone()),
+                        _ => {}
                     }
                 }
                 // Optional.orElseGet / ifPresent / map — need interpreter for lambda invocation
@@ -1022,11 +1042,32 @@ impl RirInterpreter {
                 }
             }
 
-            if func_id == encode_builtin("super.<init>") {
+            // Handle super.<init>@ClassName — class-specific super constructor call
+            // The calling class is encoded in the func_id to avoid infinite recursion
+            let super_init_prefix = "super.<init>@";
+            let calling_class_opt: Option<String> = if func_id == encode_builtin("super.<init>") {
+                // Legacy: use object's runtime class (may cause recursion for deep hierarchies)
+                None
+            } else {
+                // Find which class this super.<init>@X call belongs to
+                let mut found = None;
+                for func in &self.module.functions {
+                    if let Some(class) = func.name.split('.').next() {
+                        let key = format!("{}{}", super_init_prefix, class);
+                        if encode_builtin(&key) == func_id {
+                            found = Some(class.to_string());
+                            break;
+                        }
+                    }
+                }
+                found
+            };
+            let is_super_init = func_id == encode_builtin("super.<init>") || calling_class_opt.is_some();
+            if is_super_init {
                 if let Some(RVal::Object(id)) = args.first() {
-                    let class_name = self.heap.borrow().get(id)
-                        .map(|o| o.class_name.clone())
-                        .unwrap_or_default();
+                    let class_name = calling_class_opt.unwrap_or_else(|| {
+                        self.heap.borrow().get(id).map(|o| o.class_name.clone()).unwrap_or_default()
+                    });
                     let parent = self.module.class_hierarchy.get(&class_name).cloned();
                     if let Some(parent_class) = parent {
                         let ctor_name = format!("{}.<init>", parent_class);
@@ -1042,6 +1083,20 @@ impl RirInterpreter {
                                 call_env.insert(param_name.0.clone(), val.clone());
                             }
                             return self.exec_function_idx(idx, call_env);
+                        }
+                    }
+                    // Parent is a builtin class — apply message/cause fields for exceptions
+                    let mut heap = self.heap.borrow_mut();
+                    if let Some(obj) = heap.get_mut(id) {
+                        if let Some(msg_arg) = args.get(1) {
+                            if !matches!(msg_arg, RVal::Object(_)) {
+                                obj.fields.insert("message".into(), msg_arg.clone());
+                            }
+                        }
+                        if let Some(cause_arg) = args.get(2) {
+                            if matches!(cause_arg, RVal::Object(_)) {
+                                obj.fields.insert("__cause__".into(), cause_arg.clone());
+                            }
                         }
                     }
                 }

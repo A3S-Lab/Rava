@@ -53,10 +53,22 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         id if id == fnv("Integer.bitCount")             => Some(Ok(RVal::Int((args.first().map(|v| v.as_int()).unwrap_or(0) as u64).count_ones() as i64))),
         id if id == fnv("Integer.numberOfLeadingZeros") => Some(Ok(RVal::Int((args.first().map(|v| v.as_int()).unwrap_or(0) as u32).leading_zeros() as i64))),
         id if id == fnv("Integer.numberOfTrailingZeros")=> Some(Ok(RVal::Int((args.first().map(|v| v.as_int()).unwrap_or(0) as u32).trailing_zeros() as i64))),
-        id if id == fnv("Integer.reverse")              => Some(Ok(RVal::Int((args.first().map(|v| v.as_int()).unwrap_or(0) as u32).reverse_bits() as i64))),
+        id if id == fnv("Integer.reverse")              => Some(Ok(RVal::Int((args.first().map(|v| v.as_int()).unwrap_or(0) as u32).reverse_bits() as i32 as i64))),
         id if id == fnv("Integer.highestOneBit") => {
             let n = args.first().map(|v| v.as_int()).unwrap_or(0) as u32;
             Some(Ok(RVal::Int(if n == 0 { 0 } else { 1i64 << (31 - n.leading_zeros()) })))
+        }
+        id if id == fnv("Integer.lowestOneBit") => {
+            let n = args.first().map(|v| v.as_int()).unwrap_or(0) as i32;
+            Some(Ok(RVal::Int((n & -n) as i64)))
+        }
+        id if id == fnv("Integer.signum") => {
+            let n = args.first().map(|v| v.as_int()).unwrap_or(0);
+            Some(Ok(RVal::Int(n.signum())))
+        }
+        id if id == fnv("Long.signum") => {
+            let n = args.first().map(|v| v.as_int()).unwrap_or(0);
+            Some(Ok(RVal::Int(n.signum())))
         }
         id if id == fnv("Integer.MAX_VALUE") => Some(Ok(RVal::Int(i32::MAX as i64))),
         id if id == fnv("Integer.MIN_VALUE") => Some(Ok(RVal::Int(i32::MIN as i64))),

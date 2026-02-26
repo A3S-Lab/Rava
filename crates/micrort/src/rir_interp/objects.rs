@@ -700,7 +700,9 @@ impl RirInterpreter {
             "findFirst" => {
                 let arr = self.as_array(receiver)?;
                 let items = arr.borrow();
-                Some(Ok(items.first().cloned().unwrap_or(RVal::Null)))
+                let val = items.first().cloned().unwrap_or(RVal::Null);
+                // Wrap in Optional (single-element array)
+                Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![val])))))
             }
             "anyMatch" => {
                 let arr = self.as_array(receiver)?;
