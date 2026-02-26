@@ -4801,3 +4801,73 @@ class Main {
 "#);
     assert_eq!(out.trim(), "(0,0)\n(3,4)\n(6,8)\n5.0\n5.0");
 }
+
+#[test]
+fn switch_expression_arrow() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        for (int i = 1; i <= 7; i++) {
+            String day = switch (i) {
+                case 1 -> "Monday";
+                case 2 -> "Tuesday";
+                case 3 -> "Wednesday";
+                case 4 -> "Thursday";
+                case 5 -> "Friday";
+                case 6 -> "Saturday";
+                case 7 -> "Sunday";
+                default -> "Unknown";
+            };
+            if (i <= 3 || i == 7) System.out.println(day);
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Monday\nTuesday\nWednesday\nSunday");
+}
+
+
+#[test]
+fn pascal_triangle() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int[][] pascal = new int[6][6];
+        for (int i = 0; i < 6; i++) {
+            pascal[i][0] = 1;
+            for (int j = 1; j < i; j++)
+                pascal[i][j] = pascal[i-1][j-1] + pascal[i-1][j];
+            pascal[i][i] = 1;
+        }
+        for (int i = 0; i < 5; i++) {
+            for (int j = 0; j <= i; j++)
+                System.out.print(pascal[i][j] + " ");
+            System.out.println();
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "1 \n1 1 \n1 2 1 \n1 3 3 1 \n1 4 6 4 1");
+}
+
+#[test]
+fn do_while_basic() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int i = 0;
+        do {
+            System.out.println(i);
+            i++;
+        } while (i < 3);
+        int x = 10;
+        do {
+            System.out.println("executed: " + x);
+            x++;
+        } while (x < 5);
+        System.out.println("done");
+    }
+}
+"#);
+    assert_eq!(out.trim(), "0\n1\n2\nexecuted: 10\ndone");
+}
