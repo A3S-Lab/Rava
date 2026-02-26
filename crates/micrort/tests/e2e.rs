@@ -4697,3 +4697,107 @@ class Main {
 "#);
     assert_eq!(out.trim(), "8\n14\n6\n-11\n20\n5\ntrue\nfalse");
 }
+
+
+#[test]
+fn interface_polymorphism() {
+    let out = run(r#"
+interface Shape {
+    double area();
+    default String describe() { return "Shape with area " + String.format("%.1f", area()); }
+}
+class Circle implements Shape {
+    double r;
+    Circle(double r) { this.r = r; }
+    public double area() { return Math.PI * r * r; }
+}
+class Square implements Shape {
+    double s;
+    Square(double s) { this.s = s; }
+    public double area() { return s * s; }
+}
+class Triangle implements Shape {
+    double b, h;
+    Triangle(double b, double h) { this.b = b; this.h = h; }
+    public double area() { return 0.5 * b * h; }
+}
+class Main {
+    public static void main(String[] args) {
+        Shape[] shapes = { new Circle(5), new Square(4), new Triangle(6, 8) };
+        for (Shape s : shapes) System.out.println(s.describe());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Shape with area 78.5\nShape with area 16.0\nShape with area 24.0");
+}
+
+#[test]
+fn integer_bit_methods() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println(Integer.toBinaryString(42));
+        System.out.println(Integer.toHexString(255));
+        System.out.println(Integer.toOctalString(8));
+        System.out.println(Integer.parseInt("101010", 2));
+        System.out.println(Integer.parseInt("ff", 16));
+        System.out.println(Integer.bitCount(255));
+        System.out.println(Integer.highestOneBit(100));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "101010\nff\n10\n42\n255\n8\n64");
+}
+
+#[test]
+fn functional_transform_compose() {
+    let out = run(r#"
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+class Main {
+    interface Transform { int apply(int x); }
+    public static void main(String[] args) {
+        Transform doubleIt = x -> x * 2;
+        Transform addTen = x -> x + 10;
+        // apply directly
+        System.out.println(doubleIt.apply(5));
+        System.out.println(addTen.apply(5));
+        List<Integer> nums = Arrays.asList(1, 2, 3, 4, 5);
+        List<Integer> doubled = nums.stream()
+            .map(n -> doubleIt.apply(n))
+            .collect(Collectors.toList());
+        System.out.println(doubled);
+        List<Integer> added = nums.stream()
+            .map(n -> addTen.apply(n))
+            .collect(Collectors.toList());
+        System.out.println(added);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "10\n15\n[2, 4, 6, 8, 10]\n[11, 12, 13, 14, 15]");
+}
+
+#[test]
+fn point_array_distance() {
+    let out = run(r#"
+class Point {
+    int x, y;
+    Point(int x, int y) { this.x = x; this.y = y; }
+    double distanceTo(Point other) {
+        int dx = this.x - other.x, dy = this.y - other.y;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
+    public String toString() { return "(" + x + "," + y + ")"; }
+}
+class Main {
+    public static void main(String[] args) {
+        Point[] points = { new Point(0,0), new Point(3,4), new Point(6,8) };
+        for (Point p : points) System.out.println(p);
+        System.out.printf("%.1f%n", points[0].distanceTo(points[1]));
+        System.out.printf("%.1f%n", points[1].distanceTo(points[2]));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "(0,0)\n(3,4)\n(6,8)\n5.0\n5.0");
+}
