@@ -96,10 +96,25 @@ pub fn dispatch_named(s: &str, method: &str, args: &[RVal]) -> Option<Result<RVa
         "split" => {
             let pat   = args.first().map(|v| v.to_display()).unwrap_or_default();
             let limit = args.get(1).map(|v| v.as_int()).unwrap_or(0);
-            let parts: Vec<RVal> = if limit > 0 {
-                s.splitn(limit as usize, pat.as_str()).map(|p| RVal::Str(p.to_string())).collect()
-            } else {
-                s.split(pat.as_str()).map(|p| RVal::Str(p.to_string())).collect()
+            // Handle common Java regex patterns
+            let parts: Vec<RVal> = {
+                let split_fn = |text: &str| -> Vec<String> {
+                    match pat.as_str() {
+                        "\\s+" | "\\s" => text.split_whitespace().map(|s| s.to_string()).collect(),
+                        "\\d+" => text.split(|c: char| c.is_ascii_digit()).filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
+                        "\\w+" => text.split(|c: char| !c.is_alphanumeric() && c != '_').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
+                        _ => {
+                            // Strip anchors and treat as literal for simple patterns
+                            let p = pat.replace("\\.", ".").replace("\\,", ",");
+                            if limit > 0 {
+                                text.splitn(limit as usize, p.as_str()).map(|s| s.to_string()).collect()
+                            } else {
+                                text.split(p.as_str()).map(|s| s.to_string()).collect()
+                            }
+                        }
+                    }
+                };
+                split_fn(s).into_iter().map(|p| RVal::Str(p)).collect()
             };
             Some(Ok(RVal::Array(Rc::new(RefCell::new(parts)))))
         }

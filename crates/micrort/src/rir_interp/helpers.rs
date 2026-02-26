@@ -489,6 +489,38 @@ impl RirInterpreter {
                         return Ok(RVal::Void);
                     }
                 }
+                // Optional.orElseGet / ifPresent / map — need interpreter for lambda invocation
+                if let RVal::Array(arr) = receiver {
+                    match method_name.as_str() {
+                        "orElseGet" => {
+                            let is_empty = matches!(arr.borrow().first(), Some(RVal::Null) | None);
+                            if is_empty {
+                                let supplier = method_args.first().cloned().unwrap_or(RVal::Null);
+                                return self.invoke_lambda(&supplier, &[]);
+                            } else {
+                                return Ok(arr.borrow().first().cloned().unwrap_or(RVal::Null));
+                            }
+                        }
+                        "ifPresent" => {
+                            let val = arr.borrow().first().cloned().unwrap_or(RVal::Null);
+                            if !matches!(val, RVal::Null) {
+                                let consumer = method_args.first().cloned().unwrap_or(RVal::Null);
+                                self.invoke_lambda(&consumer, &[val])?;
+                            }
+                            return Ok(RVal::Void);
+                        }
+                        "map" if arr.borrow().len() == 1 => {
+                            let val = arr.borrow().first().cloned().unwrap_or(RVal::Null);
+                            if matches!(val, RVal::Null) {
+                                return Ok(RVal::Array(Rc::new(RefCell::new(vec![RVal::Null]))));
+                            }
+                            let mapper = method_args.first().cloned().unwrap_or(RVal::Null);
+                            let result = self.invoke_lambda(&mapper, &[val])?;
+                            return Ok(RVal::Array(Rc::new(RefCell::new(vec![result]))));
+                        }
+                        _ => {}
+                    }
+                }
                 if let Some(result) = self.dispatch_stream(receiver, &method_name, method_args) {
                     return result;
                 }

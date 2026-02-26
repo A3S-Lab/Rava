@@ -4328,3 +4328,141 @@ class Main {
 "#);
     assert_eq!(out.trim(), "1 2 3 \n4 5 6 \n7 8 9 \n4\n2");
 }
+
+#[test]
+fn generic_stack_implementation() {
+    let out = run(r#"
+class Stack<T> {
+    private Object[] data;
+    private int size;
+    Stack(int cap) { data = new Object[cap]; size = 0; }
+    void push(T val) { data[size++] = val; }
+    T pop() { return (T) data[--size]; }
+    T peek() { return (T) data[size - 1]; }
+    boolean isEmpty() { return size == 0; }
+    int size() { return size; }
+}
+class Main {
+    public static void main(String[] args) {
+        Stack<Integer> s = new Stack<>(10);
+        s.push(1); s.push(2); s.push(3);
+        System.out.println(s.peek());
+        System.out.println(s.pop());
+        System.out.println(s.size());
+        System.out.println(s.isEmpty());
+        s.pop(); s.pop();
+        System.out.println(s.isEmpty());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n3\n2\nfalse\ntrue");
+}
+
+
+#[test]
+fn comparable_custom_sort() {
+    let out = run(r#"
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+class Person implements Comparable<Person> {
+    String name;
+    int age;
+    Person(String name, int age) { this.name = name; this.age = age; }
+    public int compareTo(Person other) { return this.age - other.age; }
+    public String toString() { return name + "(" + age + ")"; }
+}
+class Main {
+    public static void main(String[] args) {
+        List<Person> people = new ArrayList<>();
+        people.add(new Person("Charlie", 30));
+        people.add(new Person("Alice", 25));
+        people.add(new Person("Bob", 35));
+        Collections.sort(people);
+        for (Person p : people) System.out.println(p);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Alice(25)\nCharlie(30)\nBob(35)");
+}
+
+#[test]
+fn string_split_regex() {
+    let out = run(r#"
+import java.util.Arrays;
+class Main {
+    public static void main(String[] args) {
+        String csv = "one,two,three,four";
+        String[] parts = csv.split(",");
+        System.out.println(parts.length);
+        System.out.println(parts[0]);
+        System.out.println(parts[3]);
+        String joined = String.join(" | ", parts);
+        System.out.println(joined);
+        String sentence = "  hello   world  ";
+        String[] words = sentence.trim().split("\\s+");
+        System.out.println(words.length);
+        System.out.println(String.join("-", words));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "4\none\nfour\none | two | three | four\n2\nhello-world");
+}
+
+#[test]
+fn optional_map_flatmap() {
+    let out = run(r#"
+import java.util.Optional;
+class Main {
+    static Optional<String> findName(boolean found) {
+        return found ? Optional.of("Alice") : Optional.empty();
+    }
+    public static void main(String[] args) {
+        Optional<String> name = findName(true);
+        System.out.println(name.isPresent());
+        System.out.println(name.get());
+        Optional<String> empty = findName(false);
+        System.out.println(empty.isPresent());
+        System.out.println(empty.orElse("default"));
+        System.out.println(empty.orElseGet(() -> "computed"));
+        Optional<Integer> len = name.map(s -> s.length());
+        System.out.println(len.get());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\nAlice\nfalse\ndefault\ncomputed\n5");
+}
+
+#[test]
+fn instanceof_pattern_cast() {
+    let out = run(r#"
+class Shape { String color; Shape(String c) { color = c; } }
+class Circle extends Shape {
+    double r;
+    Circle(String c, double r) { super(c); this.r = r; }
+    double area() { return Math.PI * r * r; }
+}
+class Rectangle extends Shape {
+    double w, h;
+    Rectangle(String c, double w, double h) { super(c); this.w = w; this.h = h; }
+    double area() { return w * h; }
+}
+class Main {
+    public static void main(String[] args) {
+        Shape[] shapes = { new Circle("red", 3), new Rectangle("blue", 4, 5) };
+        for (Shape s : shapes) {
+            System.out.println(s instanceof Circle);
+            System.out.println(s instanceof Rectangle);
+            if (s instanceof Circle) {
+                Circle c = (Circle) s;
+                System.out.printf("%.2f%n", c.area());
+            } else {
+                Rectangle r = (Rectangle) s;
+                System.out.printf("%.2f%n", r.area());
+            }
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\nfalse\n28.27\nfalse\ntrue\n20.00");
+}
