@@ -140,6 +140,16 @@ impl RirInterpreter {
     // ── HashMap methods ───────────────────────────────────────────────────────
 
     pub(super) fn dispatch_hash_map(&self, id: ObjId, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
+        // Check unmodifiable for mutating operations
+        if matches!(method, "put" | "remove" | "clear" | "putAll" | "putIfAbsent" | "replace" | "merge" | "compute" | "computeIfAbsent") {
+            let is_unmod = super::UNMODIFIABLE.with(|u| u.borrow().contains(&(id as usize)));
+            if is_unmod {
+                return Some(Err(rava_common::error::RavaError::JavaException {
+                    exception_type: "UnsupportedOperationException".into(),
+                    message: "".into(),
+                }));
+            }
+        }
         match method {
             "put" => {
                 let key = args.first().map(|v| v.to_display()).unwrap_or_default();

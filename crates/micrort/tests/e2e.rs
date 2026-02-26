@@ -4871,3 +4871,95 @@ class Main {
 "#);
     assert_eq!(out.trim(), "0\n1\n2\nexecuted: 10\ndone");
 }
+
+#[test]
+fn map_of_factory() {
+    let out = run(r#"
+import java.util.Map;
+class Main {
+    public static void main(String[] args) {
+        Map<String, Integer> m = Map.of("a", 1, "b", 2, "c", 3);
+        System.out.println(m.size());
+        System.out.println(m.get("a"));
+        System.out.println(m.get("b"));
+        System.out.println(m.containsKey("c"));
+        System.out.println(m.containsKey("d"));
+        try {
+            m.put("d", 4);
+        } catch (UnsupportedOperationException e) {
+            System.out.println("immutable");
+        }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n1\n2\ntrue\nfalse\nimmutable");
+}
+
+
+#[test]
+fn string_palindrome_and_reverse() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String s = "Hello";
+        int vowels = 0;
+        for (char c : s.toCharArray()) {
+            if ("aeiouAEIOU".indexOf(c) >= 0) vowels++;
+        }
+        System.out.println(vowels);
+        StringBuilder sb = new StringBuilder(s);
+        System.out.println(sb.reverse().toString());
+        String t = "racecar";
+        String rev = new StringBuilder(t).reverse().toString();
+        System.out.println(t.equals(rev));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "2\nolleH\ntrue");
+}
+
+#[test]
+fn generic_number_box() {
+    let out = run(r#"
+class NumberBox<T extends Number> {
+    T value;
+    NumberBox(T value) { this.value = value; }
+    double doubled() { return value.doubleValue() * 2; }
+    boolean isPositive() { return value.doubleValue() > 0; }
+}
+class Main {
+    public static void main(String[] args) {
+        NumberBox<Integer> intBox = new NumberBox<>(42);
+        NumberBox<Double> dblBox = new NumberBox<>(-3.14);
+        System.out.println(intBox.doubled());
+        System.out.println(intBox.isPositive());
+        System.out.println(dblBox.doubled());
+        System.out.println(dblBox.isPositive());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "84.0\ntrue\n-6.28\nfalse");
+}
+
+#[test]
+fn collections_disjoint_frequency() {
+    let out = run(r#"
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+class Main {
+    public static void main(String[] args) {
+        List<Integer> list = Arrays.asList(1, 2, 3, 2, 1, 2, 4);
+        System.out.println(Collections.frequency(list, 2));
+        System.out.println(Collections.frequency(list, 5));
+        List<Integer> a = Arrays.asList(1, 2, 3);
+        List<Integer> b = Arrays.asList(4, 5, 6);
+        List<Integer> c = Arrays.asList(3, 4, 5);
+        System.out.println(Collections.disjoint(a, b));
+        System.out.println(Collections.disjoint(a, c));
+        System.out.println(Collections.nCopies(3, "x"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3\n0\ntrue\nfalse\n[x, x, x]");
+}

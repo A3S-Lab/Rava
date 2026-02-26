@@ -302,6 +302,40 @@ impl RirInterpreter {
                 return Ok(RVal::Void);
             }
             // Collectors factory methods — create Collector objects
+            // Map.of(k1,v1, k2,v2, ...) — create immutable HashMap
+            if func_id == encode_builtin("Map.of") {
+                let id = self.alloc_object("HashMap");
+                {
+                    let mut heap = self.heap.borrow_mut();
+                    if let Some(obj) = heap.get_mut(&id) {
+                        let mut i = 0;
+                        while i + 1 < args.len() {
+                            let key = args[i].to_display();
+                            let val = args[i+1].clone();
+                            obj.fields.insert(key, val);
+                            i += 2;
+                        }
+                    }
+                }
+                // Mark as unmodifiable
+                super::UNMODIFIABLE.with(|u| u.borrow_mut().insert(id as usize));
+                return Ok(RVal::Object(id));
+            }
+            // Set.of(v1, v2, ...) — create immutable HashSet
+            if func_id == encode_builtin("Set.of") {
+                let id = self.alloc_object("HashSet");
+                {
+                    let items: Vec<RVal> = args.to_vec();
+                    let mut heap = self.heap.borrow_mut();
+                    if let Some(obj) = heap.get_mut(&id) {
+                        obj.fields.insert("__items__".into(), RVal::Array(Rc::new(RefCell::new(items))));
+                        obj.fields.insert("__type__".into(), RVal::Str("set".into()));
+                    }
+                }
+                // Mark as unmodifiable
+                super::UNMODIFIABLE.with(|u| u.borrow_mut().insert(id as usize));
+                return Ok(RVal::Object(id));
+            }
             if func_id == encode_builtin("Collectors.toList") || func_id == encode_builtin("Collectors.toUnmodifiableList") {
                 let id = self.alloc_object("Collector");
                 self.heap.borrow_mut().get_mut(&id).map(|o| o.fields.insert("__ctype__".into(), RVal::Str("toList".into())));
