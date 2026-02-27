@@ -9403,3 +9403,188 @@ class Main {
 "#);
     assert_eq!(out.trim(), "42\n3.14\nhello");
 }
+
+#[test]
+fn debug_count_occurrences() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String text = "abababab";
+        String pattern = "ab";
+        int count = 0, idx = 0;
+        while ((idx = text.indexOf(pattern, idx)) != -1) { count++; idx++; }
+        System.out.println(count);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "4");
+}
+
+#[test]
+fn debug_while_assign_in_cond() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int x = 10;
+        int count = 0;
+        while ((x = x - 1) > 0) { count++; }
+        System.out.println(count);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "9");
+}
+
+#[test]
+fn debug_while_assign_cond_and_body() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String text = "abababab";
+        int count = 0, idx = 0;
+        int found;
+        while ((found = text.indexOf("ab", idx)) != -1) {
+            count++;
+            idx = found + 1;
+        }
+        System.out.println(count);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "4");
+}
+
+#[test]
+fn debug_count_occ_exact() {
+    let out = run(r#"
+class Main {
+    static int countOccurrences(String text, String pattern) {
+        int count = 0, idx = 0;
+        while ((idx = text.indexOf(pattern, idx)) != -1) { count++; idx++; }
+        return count;
+    }
+    public static void main(String[] args) {
+        System.out.println(countOccurrences("abababab", "ab"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "4");
+}
+
+#[test]
+fn debug_palindrome() {
+    let out = run(r#"
+class Main {
+    static boolean isPalindrome(String s) {
+        String clean = s.toLowerCase().replaceAll("[^a-z0-9]", "");
+        int l = 0, r = clean.length() - 1;
+        while (l < r) {
+            if (clean.charAt(l) != clean.charAt(r)) return false;
+            l++; r--;
+        }
+        return true;
+    }
+    public static void main(String[] args) {
+        System.out.println(isPalindrome("A man a plan a canal Panama"));
+        System.out.println(isPalindrome("hello"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\nfalse");
+}
+
+#[test]
+fn debug_string_manip_no_count() {
+    let out = run(r#"
+class Main {
+    static String reverseWords(String s) {
+        String[] words = s.trim().split("\\s+");
+        StringBuilder sb = new StringBuilder();
+        for (int i = words.length - 1; i >= 0; i--) {
+            sb.append(words[i]);
+            if (i > 0) sb.append(" ");
+        }
+        return sb.toString();
+    }
+    static boolean isPalindrome(String s) {
+        String clean = s.toLowerCase().replaceAll("[^a-z0-9]", "");
+        int l = 0, r = clean.length() - 1;
+        while (l < r) {
+            if (clean.charAt(l) != clean.charAt(r)) return false;
+            l++; r--;
+        }
+        return true;
+    }
+    public static void main(String[] args) {
+        System.out.println(reverseWords("Hello World Java"));
+        System.out.println(isPalindrome("A man a plan a canal Panama"));
+        System.out.println(isPalindrome("hello"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Java World Hello\ntrue\nfalse");
+}
+
+#[test]
+fn debug_simple_while() {
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int x = 0;
+        while (x < 3) { x++; }
+        System.out.println(x);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3");
+}
+
+#[test]
+fn debug_binary_search() {
+    let out = run(r#"
+class Main {
+    static int binarySearch(int[] arr, int target) {
+        int lo = 0, hi = arr.length - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            if (arr[mid] == target) return mid;
+            else if (arr[mid] < target) lo = mid + 1;
+            else hi = mid - 1;
+        }
+        return -1;
+    }
+    public static void main(String[] args) {
+        int[] arr = {1, 2, 3, 5, 8, 9};
+        System.out.println(binarySearch(arr, 8));
+        System.out.println(binarySearch(arr, 7));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "4\n-1");
+}
+
+#[test]
+fn debug_binary_search_verbose() {
+    let out = run(r#"
+class Main {
+    static int binarySearch(int[] arr, int target) {
+        int lo = 0, hi = arr.length - 1;
+        System.out.println("Initial: lo=" + lo + " hi=" + hi);
+        while (lo <= hi) {
+            int mid = (lo + hi) / 2;
+            System.out.println("Loop: lo=" + lo + " hi=" + hi + " mid=" + mid + " arr[mid]=" + arr[mid]);
+            if (arr[mid] == target) return mid;
+            else if (arr[mid] < target) lo = mid + 1;
+            else hi = mid - 1;
+        }
+        System.out.println("Exit: lo=" + lo + " hi=" + hi);
+        return -1;
+    }
+    public static void main(String[] args) {
+        int[] arr = {1, 2, 3, 5, 8, 9};
+        System.out.println("Result: " + binarySearch(arr, 8));
+    }
+}
+"#);
+    println!("{}", out);
+}

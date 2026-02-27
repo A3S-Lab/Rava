@@ -144,32 +144,45 @@ impl<'a> FuncCtx<'a> {
                 let body_bb   = self.new_block();
                 let exit_bb   = self.new_block();
                 self.blocks[pre_while].instrs.push(RirInstr::Jump(header_bb));
+
+                // Switch to header and evaluate condition
                 self.switch_to(header_bb);
                 let cond_val = self.lower_expr(cond)?;
                 self.emit(RirInstr::Branch { cond: cond_val, then_bb: body_bb, else_bb: exit_bb });
+
+                // Snapshot vars AFTER lowering condition (condition may create new SSA values)
+                let pre_body_vars = self.vars.clone();
+
                 self.loop_stack.push((exit_bb, header_bb));
                 self.register_pending_label(exit_bb, header_bb);
-                // Snapshot vars before lowering body
-                let pre_body_vars = self.vars.clone();
+
+                // Lower the body
                 self.switch_to(body_bb);
                 self.lower_stmt(body)?;
-                if !self.current_block_ends_with_terminator() {
-                    self.emit(RirInstr::Jump(header_bb));
-                }
-                self.loop_stack.pop();
-                // In the exit block, emit phi-like copies for variables modified in the body.
+
+                // Get post-body vars to see what changed
                 let post_body_vars = self.vars.clone();
-                self.switch_to(exit_bb);
-                for (name, post_val) in &post_body_vars {
-                    if let Some(pre_val) = pre_body_vars.get(name) {
-                        if pre_val != post_val {
-                            self.emit(RirInstr::ConstStr {
-                                ret: post_val.clone(),
-                                value: format!("__copy__{}", pre_val.0),
-                            });
+
+                // Before jumping back to header, emit __copy__ to propagate changes back to the
+                // SSA values that the header condition uses. This is necessary because the body
+                // may assign to a variable multiple times, and only the final value should be
+                // visible to the header on the next iteration.
+                if !self.current_block_ends_with_terminator() {
+                    for (name, post_val) in &post_body_vars {
+                        if let Some(pre_val) = pre_body_vars.get(name) {
+                            if pre_val != post_val {
+                                self.emit(RirInstr::ConstStr {
+                                    ret: pre_val.clone(),
+                                    value: format!("__copy__{}", post_val.0),
+                                });
+                            }
                         }
                     }
+                    self.emit(RirInstr::Jump(header_bb));
                 }
+
+                self.loop_stack.pop();
+                self.switch_to(exit_bb);
             }
             Stmt::DoWhile { body, cond } => {
                 let pre = self.current;
