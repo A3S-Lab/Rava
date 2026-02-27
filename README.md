@@ -268,6 +268,14 @@ Tools:
 
 ---
 
+## Known Limitations
+
+See [docs/known-limitations.md](docs/known-limitations.md) for detailed technical notes.
+
+**Current limitation:** While loops with assignment-in-condition patterns (e.g., `while ((x = f()) != null)`) are not yet supported due to SSA lowering constraints. Workaround: separate the assignment from the condition. Proper fix requires implementing PHI nodes at loop headers.
+
+---
+
 ## MicroRT: How Rava Handles Dynamic Java
 
 This is the fundamental difference between Rava and GraalVM.

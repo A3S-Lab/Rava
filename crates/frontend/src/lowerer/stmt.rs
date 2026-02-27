@@ -167,6 +167,12 @@ impl<'a> FuncCtx<'a> {
                 // SSA values that the header condition uses. This is necessary because the body
                 // may assign to a variable multiple times, and only the final value should be
                 // visible to the header on the next iteration.
+                //
+                // KNOWN LIMITATION: This approach fails for assignment-in-condition patterns like
+                // `while ((x = f()) != null) { x++; }` because the condition reads from x_0,
+                // assigns to x_1, the body creates x_2, and we propagate x_2 → x_1, but the next
+                // iteration still reads x_0 (which never gets updated). Proper fix requires PHI
+                // nodes at loop headers. See docs/known-limitations.md for details.
                 if !self.current_block_ends_with_terminator() {
                     for (name, post_val) in &post_body_vars {
                         if let Some(pre_val) = pre_body_vars.get(name) {
