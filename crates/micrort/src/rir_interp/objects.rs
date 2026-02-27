@@ -111,7 +111,7 @@ impl RirInterpreter {
                 let heap = self.heap.borrow();
                 let s = heap.get(&id).and_then(|o| o.fields.get("__buf__")).map(|v| v.to_display()).unwrap_or_default();
                 let ch = s.chars().nth(idx).unwrap_or('\0');
-                Some(Ok(RVal::Int(ch as i64)))
+                Some(Ok(RVal::Str(ch.to_string())))
             }
             "substring" => {
                 let start = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;

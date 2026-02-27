@@ -403,6 +403,8 @@ impl Parser {
                         while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
                             if let Some(m) = self.parse_member("__anon__")? {
                                 members.push(m);
+                                // Collect extra fields from multi-variable declarations (e.g. double w=4.0, h=3.0)
+                                members.extend(self.pending_fields.drain(..));
                             }
                         }
                         self.expect(&Token::RBrace)?;

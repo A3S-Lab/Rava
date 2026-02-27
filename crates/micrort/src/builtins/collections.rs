@@ -368,6 +368,18 @@ pub fn dispatch_array_named(arr: &Rc<RefCell<Vec<RVal>>>, method: &str, args: &[
             Some(Ok(RVal::Bool(true)))
         }
         "get" => {
+            // Optional.get() — no args, unwrap single-element Optional
+            if args.is_empty() && arr.borrow().len() == 1 {
+                let v = arr.borrow();
+                return match v.first() {
+                    Some(RVal::Null) | None => Some(Err(rava_common::error::RavaError::JavaException {
+                        exception_type: "NoSuchElementException".into(),
+                        message: "No value present".into(),
+                    })),
+                    Some(val) => Some(Ok(val.clone())),
+                };
+            }
+            // List.get(index)
             let i = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
             Some(Ok(arr.borrow().get(i).cloned().unwrap_or(RVal::Null)))
         }

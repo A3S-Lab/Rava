@@ -280,24 +280,23 @@ impl Parser {
                 // field and letting the caller loop — but the caller only calls parse_member once.
                 // Best approach: parse all names here and push extra fields to a pending list.
                 // For now, skip extra declarators (they'll be uninitialized) by consuming them.
-                let mut extra_names = vec![];
+                let mut extra_fields: Vec<(String, Option<Expr>)> = vec![];
                 while self.eat(&Token::Comma) {
                     if let Token::Ident(n) = self.peek().clone() {
                         self.advance();
-                        extra_names.push(n);
-                        // skip optional initializer
-                        if self.eat(&Token::Assign) { self.parse_expr()?; }
+                        let extra_init = if self.eat(&Token::Assign) { Some(self.parse_expr()?) } else { None };
+                        extra_fields.push((n, extra_init));
                     }
                 }
                 self.expect(&Token::Semi)?;
-                // Push extra fields as inner members via pending_fields
-                for extra_name in extra_names {
+                // Push extra fields as inner members via pending_fields, preserving initializers
+                for (extra_name, extra_init) in extra_fields {
                     self.pending_fields.push(Member::Field(FieldDecl {
                         name: extra_name,
                         modifiers: modifiers.clone(),
                         annotations: vec![],
                         ty: ty.clone(),
-                        init: None,
+                        init: extra_init,
                     }));
                 }
             } else {

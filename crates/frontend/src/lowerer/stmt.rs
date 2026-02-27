@@ -158,21 +158,11 @@ impl<'a> FuncCtx<'a> {
                 }
                 self.loop_stack.pop();
                 // In the exit block, emit phi-like copies for variables modified in the body.
-                // post_val is the fresh SSA name used after the loop.
-                // pre_val is the named slot kept current by __copy__ when the loop runs.
-                // If the loop didn't run, post_val was never set — copy from pre_val.
-                // If the loop ran, post_val was set by the body — the copy is a no-op
-                // because post_val is already in env (the __copy__ in the body set pre_val,
-                // but post_val itself was set by the BinOp/etc that produced it).
                 let post_body_vars = self.vars.clone();
                 self.switch_to(exit_bb);
                 for (name, post_val) in &post_body_vars {
                     if let Some(pre_val) = pre_body_vars.get(name) {
                         if pre_val != post_val {
-                            // Phi copy: post_val = pre_val (named slot).
-                            // When loop ran: pre_val was updated by __copy__ to final value.
-                            // When loop didn't run: pre_val has the pre-loop value.
-                            // Either way, post_val gets the correct current value.
                             self.emit(RirInstr::ConstStr {
                                 ret: post_val.clone(),
                                 value: format!("__copy__{}", pre_val.0),

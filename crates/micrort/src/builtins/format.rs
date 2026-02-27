@@ -334,6 +334,89 @@ fn match_char_repeat(
     false
 }
 
+/// Try to match `pattern` starting at `text[start]`; return end char-index on success.
+fn find_match_at(pattern: &str, text: &[char], start: usize) -> Option<usize> {
+    let pat: Vec<char> = pattern.chars().collect();
+    match_end_here(&pat, 0, text, start)
+}
+
+fn match_end_here(pat: &[char], pi: usize, text: &[char], ti: usize) -> Option<usize> {
+    if pi >= pat.len() { return Some(ti); }
+    if pat[pi] == '$' && pi + 1 == pat.len() {
+        return if ti == text.len() { Some(ti) } else { None };
+    }
+    if let Some(alt_pos) = find_top_level_alt(pat, pi) {
+        let left  = &pat[pi..alt_pos];
+        let right = &pat[alt_pos+1..];
+        return match_end_here(left, 0, text, ti)
+            .or_else(|| match_end_here(right, 0, text, ti));
+    }
+    if pat[pi] == '(' {
+        let (group_end, inner_start) = find_group_end(pat, pi);
+        let inner = &pat[inner_start..group_end];
+        let after_group = group_end + 1;
+        let (min, max, skip) = quantifier(pat, after_group);
+        return match_end_repeat_group(inner, min, max, pat, after_group + skip, text, ti);
+    }
+    if pat[pi] == '[' {
+        if let Some(class_end) = find_class_end(pat, pi) {
+            let class_pat = &pat[pi..=class_end];
+            let after = class_end + 1;
+            let (min, max, skip) = quantifier(pat, after);
+            return match_end_char_repeat(class_pat, min, max, pat, after + skip, text, ti);
+        }
+    }
+    let (atom_len, _) = atom_length(pat, pi);
+    let atom = &pat[pi..pi+atom_len];
+    let after = pi + atom_len;
+    let (min, max, skip) = quantifier(pat, after);
+    match_end_char_repeat(atom, min, max, pat, after + skip, text, ti)
+}
+
+fn match_end_char_repeat(
+    atom: &[char], min: usize, max: Option<usize>,
+    rest_pat: &[char], rest_pi: usize,
+    text: &[char], ti: usize,
+) -> Option<usize> {
+    let mut positions = vec![ti];
+    let mut cur = ti;
+    let mut count = 0usize;
+    loop {
+        if let Some(m) = max { if count >= m { break; } }
+        if cur >= text.len() { break; }
+        if char_matches(atom, text[cur]) { cur += 1; count += 1; positions.push(cur); }
+        else { break; }
+    }
+    for i in (min..=positions.len().saturating_sub(1)).rev() {
+        if let Some(end) = match_end_here(rest_pat, rest_pi, text, positions[i]) {
+            return Some(end);
+        }
+    }
+    None
+}
+
+fn match_end_repeat_group(
+    inner: &[char], min: usize, max: Option<usize>,
+    rest_pat: &[char], rest_pi: usize,
+    text: &[char], ti: usize,
+) -> Option<usize> {
+    let mut positions = vec![ti];
+    let mut count = 0usize;
+    let mut cur = ti;
+    loop {
+        if let Some(m) = max { if count >= m { break; } }
+        if let Some(next) = try_match_group(inner, text, cur) {
+            cur = next; count += 1; positions.push(cur);
+        } else { break; }
+    }
+    for i in (min..=positions.len().saturating_sub(1)).rev() {
+        if let Some(end) = match_end_here(rest_pat, rest_pi, text, positions[i]) {
+            return Some(end);
+        }
+    }
+    None
+}
+
 /// Returns (min, max, chars_consumed) for a quantifier at pat[pi].
 fn quantifier(pat: &[char], pi: usize) -> (usize, Option<usize>, usize) {
     if pi >= pat.len() { return (1, Some(1), 0); }
@@ -476,26 +559,35 @@ fn find_top_level_alt(pat: &[char], pi: usize) -> Option<usize> {
     None
 }
 
+/// Find the first match of `pattern` in `text`, returning (start, end) char indices.
+pub fn regex_find_span(pattern: &str, text: &str) -> Option<(usize, usize)> {
+    let chars: Vec<char> = text.chars().collect();
+    for start in 0..chars.len() {
+        if let Some(end) = find_match_at(pattern, &chars, start) {
+            if end > start { return Some((start, end)); }
+        }
+    }
+    None
+}
+
 /// Apply regex to find all non-overlapping matches, return split parts.
 pub fn regex_split(pattern: &str, text: &str) -> Vec<String> {
-    // Simple: split on literal pattern if no special chars, else fall back
     let special = |c: char| ".+*?[](){}\\|^$".contains(c);
     if !pattern.chars().any(special) {
         return text.split(pattern).map(|s| s.to_string()).collect();
     }
-    // Fallback: split on each char boundary where pattern matches
     let chars: Vec<char> = text.chars().collect();
     let mut result = Vec::new();
     let mut last = 0usize;
     let mut i = 0usize;
-    while i <= chars.len() {
-        // Try to match pattern at position i
-        let slice: String = chars[i..].iter().collect();
-        if regex_match_full(pattern, &chars[i..i+1].iter().collect::<String>())
-            && i < chars.len()
-        {
-            result.push(chars[last..i].iter().collect());
-            last = i + 1;
+    while i < chars.len() {
+        if let Some(end) = find_match_at(pattern, &chars, i) {
+            if end > i {
+                result.push(chars[last..i].iter().collect());
+                last = end;
+                i = end;
+                continue;
+            }
         }
         i += 1;
     }
@@ -517,34 +609,25 @@ pub fn regex_replace(pattern: &str, text: &str, replacement: &str, all: bool) ->
             };
         }
     }
-    // For regex patterns, do character-by-character matching
     let chars: Vec<char> = text.chars().collect();
     let mut result = String::new();
     let mut i = 0usize;
     let mut replaced = false;
     while i < chars.len() {
         if !all && replaced {
-            result.push(chars[i]);
-            i += 1;
-            continue;
+            result.extend(&chars[i..]);
+            break;
         }
-        // Try to find longest match starting at position i
-        let mut matched_len = 0usize;
-        for end in (i+1..=chars.len()).rev() {
-            let slice: String = chars[i..end].iter().collect();
-            if regex_match_full(pattern, &slice) {
-                matched_len = end - i;
-                break;
+        if let Some(end) = find_match_at(pattern, &chars, i) {
+            if end > i {
+                result.push_str(replacement);
+                i = end;
+                replaced = true;
+                continue;
             }
         }
-        if matched_len > 0 {
-            result.push_str(replacement);
-            i += matched_len;
-            replaced = true;
-        } else {
-            result.push(chars[i]);
-            i += 1;
-        }
+        result.push(chars[i]);
+        i += 1;
     }
     result
 }
@@ -557,5 +640,11 @@ mod tests {
         assert_eq!(regex_replace(r"\d+", "hello world 123", "NUM", true), "hello world NUM");
         assert_eq!(regex_replace(r"[a-z]+", "hello world 123", "X", false), "X world 123");
         assert!(regex_lite_match(r".*\d+.*", "hello world 123"));
+    }
+
+    #[test]
+    fn test_regex_replace_negated_class() {
+        assert_eq!(regex_replace("[^a-z]", "hello world", "", true), "helloworld");
+        assert_eq!(regex_replace("[^a-z0-9]", "a man a plan", "", true), "amanplan");
     }
 }

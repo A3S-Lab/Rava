@@ -81,7 +81,8 @@ impl RirInterpreter {
                        "ArithmeticException", "NumberFormatException",
                        "IOException", "FileNotFoundException",
                        "AssertionError", "Error", "StackOverflowError", "OutOfMemoryError",
-                       "StringBuilder", "System"] {
+                       "StringBuilder", "System",
+                       "Pattern", "Matcher", "Scanner"] {
             if crate::lowerer_hash::encode_builtin(name) == class_id {
                 return name.to_string();
             }
@@ -491,6 +492,20 @@ impl RirInterpreter {
             }
         }
 
+        // Scanner constructor: first arg is the placeholder, second is the input string
+        if let Some(RVal::Str(s)) = args.first() {
+            if s.starts_with("__scanner__") {
+                if let Some(input) = args.get(1) {
+                    let content = input.to_display();
+                    let new_enc = format!("__scanner__0@@{}", content);
+                    crate::builtins::scanner::LAST_SCANNER.with(|ls| {
+                        *ls.borrow_mut() = Some(new_enc);
+                    });
+                    return Ok(RVal::Void);
+                }
+            }
+        }
+
         if let Some(method_name) = self.resolve_method_name(func_id) {
             if let Some(receiver) = args.first() {
                 // NullPointerException on null receiver — only for builtin methods,
@@ -571,6 +586,25 @@ impl RirInterpreter {
                             let mapper = method_args.first().cloned().unwrap_or(RVal::Null);
                             let result = self.invoke_lambda(&mapper, &[val])?;
                             return Ok(RVal::Array(Rc::new(RefCell::new(vec![result]))));
+                        }
+                        // OptionalInt/OptionalLong/OptionalDouble terminal methods
+                        "getAsInt" | "getAsLong" | "getAsDouble" | "get" => {
+                            return Ok(arr.borrow().first().cloned().unwrap_or(RVal::Null));
+                        }
+                        "isPresent" => {
+                            let present = !matches!(arr.borrow().first(), Some(RVal::Null) | None);
+                            return Ok(RVal::Bool(present));
+                        }
+                        "isEmpty" => {
+                            let empty = matches!(arr.borrow().first(), Some(RVal::Null) | None);
+                            return Ok(RVal::Bool(empty));
+                        }
+                        "orElse" => {
+                            let val = arr.borrow().first().cloned().unwrap_or(RVal::Null);
+                            if matches!(val, RVal::Null) {
+                                return Ok(method_args.first().cloned().unwrap_or(RVal::Null));
+                            }
+                            return Ok(val);
                         }
                         _ => {}
                     }
@@ -745,7 +779,7 @@ impl RirInterpreter {
                                 .unwrap_or_else(|| format!("Object@{}", id));
                             return Ok(RVal::Str(s));
                         }
-                        "getClass" => return Ok(RVal::Str(class_name.clone())),
+                        "getClass" => return Ok(RVal::Str(format!("__class__{}", class_name))),
                         "getKey" => {
                             let key = self.heap.borrow().get(id)
                                 .and_then(|o| o.fields.get("__key__").cloned())
@@ -1741,6 +1775,30 @@ impl RirInterpreter {
                     }
                     Ok(RVal::Null)
                 }
+            }
+            // Anonymous class as functional interface — call its single abstract method.
+            // Tries common functional interface method names in order.
+            RVal::Object(id) => {
+                let class_name = self.heap.borrow().get(id)
+                    .map(|o| o.class_name.clone())
+                    .unwrap_or_default();
+                let method_candidates = [
+                    "compare", "apply", "test", "accept", "get",
+                    "run", "call", "execute", "compareTo", "supply",
+                ];
+                for method_name in &method_candidates {
+                    if let Some(idx) = self.find_method_in_chain(&class_name, method_name, args.len() + 1) {
+                        let func = &self.module.functions[idx];
+                        let mut call_env = HashMap::new();
+                        let mut all_args = vec![lambda.clone()];
+                        all_args.extend_from_slice(args);
+                        for ((param_name, _), val) in func.params.iter().zip(all_args.iter()) {
+                            call_env.insert(param_name.0.clone(), val.clone());
+                        }
+                        return self.exec_function_idx(idx, call_env);
+                    }
+                }
+                Ok(RVal::Null)
             }
             _ => Ok(RVal::Null),
         }

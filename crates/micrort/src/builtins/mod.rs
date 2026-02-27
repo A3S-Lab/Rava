@@ -12,6 +12,8 @@
 //!   concurrent  — Thread, Atomic*, Lock stubs
 //!   reflect     — Class.forName, reflection stubs
 //!   network     — java.net stubs
+//!   regex       — java.util.regex.Pattern and Matcher
+//!   scanner     — java.util.Scanner
 
 pub mod collections;
 pub mod concurrent;
@@ -21,6 +23,8 @@ pub mod math;
 pub mod network;
 pub mod numbers;
 pub mod reflect;
+pub mod regex;
+pub mod scanner;
 pub mod string;
 pub mod system;
 pub mod time;
@@ -45,6 +49,8 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         .or_else(|| concurrent::dispatch(func_id, args))
         .or_else(|| reflect::dispatch(func_id, args))
         .or_else(|| network::dispatch(func_id, args))
+        .or_else(|| regex::dispatch(func_id, args))
+        .or_else(|| scanner::dispatch(func_id, args))
 }
 
 /// Dispatch an instance method call on a receiver value (unnamed).
@@ -57,12 +63,40 @@ pub fn dispatch_method(receiver: &RVal, args: &[RVal]) -> Option<Result<RVal>> {
 pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
     match receiver {
         RVal::Str(s) => {
-            // java.time objects are encoded as tagged strings
+            // Class objects are encoded as "__class__ClassName" strings
+            if s.starts_with("__class__") {
+                let class_name = s.strip_prefix("__class__").unwrap_or(s);
+                return match method {
+                    "getName" | "getCanonicalName" => Some(Ok(RVal::Str(class_name.to_string()))),
+                    "getSimpleName" => {
+                        let simple = class_name.rsplit('.').next().unwrap_or(class_name);
+                        Some(Ok(RVal::Str(simple.to_string())))
+                    }
+                    "getDeclaredMethods" | "getMethods" | "getDeclaredFields" | "getFields" => {
+                        Some(Ok(RVal::Array(Rc::new(std::cell::RefCell::new(vec![])))))
+                    }
+                    "isInterface" | "isEnum" | "isArray" | "isPrimitive" => Some(Ok(RVal::Bool(false))),
+                    _ => None,
+                };
+            }
+            // java.time objects
             if s.starts_with("__date__") || s.starts_with("__time__")
                 || s.starts_with("__datetime__") || s.starts_with("__instant__")
                 || s.starts_with("__duration__") || s.starts_with("__period__")
             {
                 return time::dispatch_named(s, method, args);
+            }
+            // Pattern objects
+            if s.starts_with("__pattern__") {
+                return regex::dispatch_pattern(s, method, args);
+            }
+            // Matcher objects
+            if s.starts_with("__matcher__") {
+                return regex::dispatch_matcher(s, method, args);
+            }
+            // Scanner objects
+            if s.starts_with("__scanner__") {
+                return scanner::dispatch_scanner(s, method, args);
             }
             string::dispatch_named(s, method, args)
         }

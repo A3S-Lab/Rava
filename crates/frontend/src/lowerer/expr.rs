@@ -435,15 +435,16 @@ impl<'a> FuncCtx<'a> {
                     args: ctor_args,
                     ret:  None,
                 });
-                // For anonymous classes, store captured local variables as __cap__xxx fields
+                // For anonymous classes, store captured local variables as instance fields.
+                // Use the original variable name as field ID so anonymous class methods
+                // can read captures as regular instance fields (GetField this.varName).
                 if class_name.starts_with("__anon_") {
                     let captures: Vec<(String, Value)> = self.vars.iter()
                         .filter(|(k, _)| k.as_str() != "this")
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect();
                     for (var_name, var_val) in captures {
-                        let field_name = format!("__cap__{}", var_name);
-                        let field_id = FieldId(encode_builtin(&format!("{}.{}", class_name, field_name)));
+                        let field_id = FieldId(encode_builtin(&var_name));
                         self.emit(RirInstr::SetField {
                             obj: ret.clone(),
                             field: field_id,

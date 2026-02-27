@@ -87,7 +87,19 @@ pub fn dispatch_named(s: &str, method: &str, args: &[RVal]) -> Option<Result<RVa
                 RVal::Int(n) => char::from_u32(*n as u32).map(|c| c.to_string()).unwrap_or_default(),
                 _ => arg.to_display(),
             };
-            Some(Ok(RVal::Int(s.find(pat.as_str()).map(|i| i as i64).unwrap_or(-1))))
+            let from = args.get(1).map(|v| v.as_int()).unwrap_or(0).max(0) as usize;
+            let result = if from == 0 {
+                s.find(pat.as_str()).map(|i| i as i64).unwrap_or(-1)
+            } else {
+                let chars: Vec<char> = s.chars().collect();
+                if from >= chars.len() { -1i64 } else {
+                    let sub: String = chars[from..].iter().collect();
+                    sub.find(pat.as_str())
+                        .map(|byte_off| (from + sub[..byte_off].chars().count()) as i64)
+                        .unwrap_or(-1)
+                }
+            };
+            Some(Ok(RVal::Int(result)))
         }
         "lastIndexOf" => {
             let pat = args.first().map(|v| v.to_display()).unwrap_or_default();

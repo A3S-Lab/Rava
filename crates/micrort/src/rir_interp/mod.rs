@@ -83,7 +83,8 @@ const KNOWN_METHODS: &[&str] = &[
     // Number boxing
     "intValue", "longValue", "shortValue", "byteValue", "doubleValue", "floatValue", "booleanValue",
     // Object
-    "getClass", "notify", "wait", "getMessage", "getCause",
+    "getClass", "getSimpleName", "getName", "getCanonicalName",
+    "notify", "wait", "getMessage", "getCause",
     // Map.Entry
     "getKey", "getValue",
     // Functional interfaces (Function, Predicate, Consumer, Supplier)
@@ -102,6 +103,13 @@ const KNOWN_METHODS: &[&str] = &[
     "isPresent", "isEmpty", "get", "orElse", "orElseGet", "orElseThrow", "ifPresent",
     // Set / HashSet / TreeSet
     "contains", "first", "last", "headSet", "tailSet", "subSet",
+    // Pattern / Matcher
+    "matcher", "find", "matches", "lookingAt", "group", "start", "end",
+    "replaceAll", "replaceFirst", "reset", "groupCount", "hitEnd", "pattern",
+    // Scanner
+    "hasNext", "hasNextLine", "hasNextInt", "hasNextDouble", "hasNextFloat",
+    "nextLine", "next", "nextInt", "nextLong", "nextDouble", "nextFloat", "nextBoolean",
+    "useDelimiter", "close",
     // java.time
     "getYear", "getMonthValue", "getDayOfMonth", "getHour", "getMinute", "getSecond",
     "getNano", "getDayOfWeek", "getDayOfYear", "getMonth",

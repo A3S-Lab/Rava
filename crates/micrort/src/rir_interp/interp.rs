@@ -226,6 +226,19 @@ impl RirInterpreter {
             }
             RirInstr::Call { func: func_id, args: arg_vals, ret } => {
                 let result = self.dispatch_call(func_id.0, arg_vals, env)?;
+                // After a Matcher.find()/matches() or Scanner.next*() call, the builtin
+                // stores the updated state in a thread-local. Apply it back to env here
+                // where env is mutable.
+                if let Some(new_enc) = crate::builtins::regex::LAST_MATCHER.with(|lm| lm.borrow_mut().take()) {
+                    if let Some(recv_var) = arg_vals.first() {
+                        env.insert(recv_var.0.clone(), RVal::Str(new_enc));
+                    }
+                }
+                if let Some(new_enc) = crate::builtins::scanner::LAST_SCANNER.with(|ls| ls.borrow_mut().take()) {
+                    if let Some(recv_var) = arg_vals.first() {
+                        env.insert(recv_var.0.clone(), RVal::Str(new_enc));
+                    }
+                }
                 if let Some(r) = ret {
                     env.insert(r.0.clone(), result);
                 } else if let RVal::Array(_) = &result {
@@ -238,7 +251,11 @@ impl RirInterpreter {
             }
             RirInstr::New { class, ret } => {
                 let class_name = self.class_name_for(class.0);
-                if class_name == "ArrayList" || class_name == "LinkedList" {
+                if class_name == "Scanner" {
+                    // Scanner is initialized via constructor call; store a placeholder
+                    // that will be replaced when Scanner.<init> is called
+                    env.insert(ret.0.clone(), RVal::Str("__scanner__0@@".to_string()));
+                } else if class_name == "ArrayList" || class_name == "LinkedList" {
                     env.insert(ret.0.clone(), RVal::Array(Rc::new(RefCell::new(Vec::new()))));
                 } else if class_name == "Stack" {
                     let id = self.alloc_object("Stack");

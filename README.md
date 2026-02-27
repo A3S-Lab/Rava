@@ -445,7 +445,7 @@ common    → (none)
 | Phase | Deliverable | Status |
 |-------|------------|--------|
 | Framework | Workspace skeleton: 10 crates, all traits defined, Cranelift wired up | ✅ |
-| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add`, `rava init`, static Java | 🚧 (frontend pipeline: lexer ✅, parser ✅, lowerer ✅; builtins ✅; `rava init` ✅) |
+| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add`, `rava init`, static Java | 🚧 (frontend pipeline: lexer ✅, parser ✅, lowerer ✅; RIR interpreter ✅; builtins ✅ (String, Math, Collections, Format, I/O, Concurrency, Reflection, Network); `rava init` ✅; 380/382 e2e tests passing 99.5%) |
 | Phase 2 (3-6mo) | Reflection: AOT metadata table + dual-path dispatch | ⬜ |
 | Phase 3 (6-12mo) | MicroRT v1: bytecode interpreter + class loader + unified object model | ⬜ |
 | Phase 4 (2-3mo) | Dynamic proxy AOT: pre-generated proxy classes | ⬜ |
@@ -455,14 +455,16 @@ common    → (none)
 
 ## Test Coverage
 
-50 tests passing (`cargo test --workspace`):
+443 tests passing (`cargo test --workspace`):
 
 | Crate | Tests |
 |-------|-------|
 | `rava-aot` | 2 — 7 passes registered in correct order |
 | `rava-codegen-cranelift` | 6 — Cranelift ISA init, translator helpers |
-| `rava-frontend` | 34 — lexer (hex, binary, char, operators, keywords), parser (hello world, local var, do-while, for-each, break/continue, try/catch, lambda, enum, instanceof pattern, method ref, record, sealed class, text block, switch arrow, yield, module-info, guarded patterns, case null), lowerer (hello world, arithmetic, do-while, break/continue, ternary, for-each, record pattern), compiler, resolver |
-| `rava-micrort` | 4 — builtin dispatch (math, string, collections, format) |
+| `rava-frontend` | 37 — lexer (hex, binary, char, operators, keywords), parser (hello world, local var, do-while, for-each, break/continue, try/catch, lambda, enum, instanceof pattern, method ref, record, sealed class, text block, switch arrow, yield, module-info, guarded patterns, case null), lowerer (hello world, arithmetic, do-while, break/continue, ternary, for-each, record pattern), compiler, resolver |
+| `rava-hcl` | 6 — HCL parsing and generation |
+| `rava-micrort` | 13 — builtin dispatch (math, string, collections, format, I/O, concurrency, reflection, network) |
+| `rava-micrort` (e2e) | 380/382 (99.5%) — comprehensive Java language feature tests covering classes, inheritance, generics, lambdas, streams, collections, exceptions, pattern matching, switch expressions, records, sealed classes, text blocks, annotations, reflection, concurrency, I/O, networking, and more. 2 tests hang due to known SSA bug in while loop variable propagation. |
 | `rava` (cli) | 1 — PascalCase conversion |
 
 ---
