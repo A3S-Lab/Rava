@@ -419,17 +419,17 @@ common    → (none)
 
 ```
 .java source
-  → Frontend (Lexer → Parser → TypeChecker → SemanticAnalyzer)
+  → Frontend (Lexer → Parser → TypeChecker → Lowerer)
   → Analysis Passes (ReflectionPass, ProxyPass, ClassLoadPass)
   → RIR (SSA form)
   → AOT Optimizer:
-      1. EscapeAnalysisPass   — stack vs heap allocation
-      2. InliningPass         — inline small/hot methods
-      3. DeadCodeElimPass     — remove unreachable blocks
-      4. ConstFoldingPass     — evaluate constants at compile time
-      5. MetadataTableGenPass — embed reflection metadata (Phase 2)
-      6. ProxyPregenPass      — pre-generate proxy classes (Phase 4)
-      7. MicroRtBridgePass    — generate MicroRT interop stubs (Phase 3)
+      1. EscapeAnalysisPass   — stack vs heap allocation decision (implemented)
+      2. InliningPass         — identify and inline small/hot methods (implemented)
+      3. DeadCodeElimPass     — remove unreachable blocks and dead values (implemented)
+      4. ConstFoldingPass     — evaluate constants at compile time (implemented)
+      5. MetadataTableGenPass — embed reflection metadata (Phase 2, scaffolded)
+      6. ProxyPregenPass      — pre-generate proxy classes (Phase 4, pending)
+      7. MicroRtBridgePass    — generate MicroRT interop stubs (Phase 3, pending)
   → CraneliftBackend: CLIF IR → machine code → .o file
   → System linker (cc): .o → native binary
 ```
@@ -456,8 +456,8 @@ common    → (none)
 | Phase | Deliverable | Status |
 |-------|------------|--------|
 | Framework | Workspace skeleton: 10 crates, all traits defined, Cranelift wired up | ✅ |
-| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add`, `rava init`, static Java | 🚧 (frontend pipeline: lexer ✅, parser ✅, lowerer ✅; RIR interpreter ✅; builtins ✅ (String, Math, Collections, Format, I/O, Concurrency, Reflection, Network); `rava init` ✅; 393/393 e2e tests passing 100%) |
-| Phase 2 (3-6mo) | Reflection: AOT metadata table + dual-path dispatch | ⬜ |
+| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add/remove/update`, `rava deps`, `rava init`, static Java | ✅ (lexer ✅, parser ✅, type checker ✅, lowerer ✅; RIR interpreter ✅; builtins ✅ (String, Math, Collections, Format, I/O, Concurrency, Reflection, Network, Time, Regex); CLI ✅ (`run`, `build`, `init`, `add`, `remove`, `update`, `deps`, `test`, `fmt`); CI/CD ✅; 393/393 e2e tests 100%) |
+| Phase 2 (3-6mo) | Reflection: AOT metadata table + dual-path dispatch | 🚧 (RIR metadata structures ✅; MetadataTableGenPass scaffolded ✅; function pointer resolution and field offsets pending) |
 | Phase 3 (6-12mo) | MicroRT v1: bytecode interpreter + class loader + unified object model | ⬜ |
 | Phase 4 (2-3mo) | Dynamic proxy AOT: pre-generated proxy classes | ⬜ |
 | Phase 5 (6-12mo) | MicroRT JIT: Cranelift JIT for hot interpreted code | ⬜ |
@@ -466,16 +466,18 @@ common    → (none)
 
 ## Test Coverage
 
-447 tests passing (`cargo test --workspace`):
+559 tests passing (`cargo test --workspace`):
 
 | Crate | Tests |
 |-------|-------|
 | `rava-aot` | 2 — 7 passes registered in correct order |
-| `rava-codegen-cranelift` | 6 — Cranelift ISA init, translator helpers |
-| `rava-frontend` | 37 — lexer (hex, binary, char, operators, keywords), parser (hello world, local var, do-while, for-each, break/continue, try/catch, lambda, enum, instanceof pattern, method ref, record, sealed class, text block, switch arrow, yield, module-info, guarded patterns, case null), lowerer (hello world, arithmetic, do-while, break/continue, ternary, for-each, record pattern), compiler, resolver |
-| `rava-hcl` | 6 — HCL parsing and generation |
-| `rava-micrort` | 13 — builtin dispatch (math, string, collections, format, I/O, concurrency, reflection, network) |
-| `rava-micrort` (e2e) | 393/393 (100%) — comprehensive Java language feature tests covering classes, inheritance, generics, lambdas, streams, collections, exceptions, pattern matching, switch expressions, records, sealed classes, text blocks, annotations, reflection, concurrency, I/O, networking, and more. |
+| `rava-codegen-cranelift` | 40 — AOT e2e (38: hello world, arithmetic, control flow, classes, fields, inheritance, arrays, strings, exceptions, generics, static methods), translator helpers (2) |
+| `rava-frontend` | 90 — checker (38: generic type params, overload resolution, bounds validation, duplicate detection), lexer (10: hex/binary literals, char, operators, keywords), parser (29: hello world, local var, do-while, for-each, break/continue, try/catch, lambda, enum, instanceof pattern, method ref, record, sealed class, text block, switch arrow, yield, module-info, guarded patterns, case null), lowerer (9: hello world, arithmetic, do-while, break/continue, ternary, for-each, record pattern), compiler/resolver (4) |
+| `rava-heap` | 6 — object header, GC strategy |
+| `rava-micrort` | 22 — builtin dispatch (math, string, collections, format, I/O, concurrency, reflection, network, time, regex) |
+| `rava-micrort` (e2e) | 393/393 (100%) — comprehensive Java language feature tests covering classes, inheritance, generics, lambdas, streams, collections, exceptions, pattern matching, switch expressions, records, sealed classes, text blocks, annotations, reflection, concurrency, I/O, networking, and more |
+| `rava-pkg` | 4 — config parsing, lockfile, shortname registry |
+| `rava-rir` | 1 — module construction |
 | `rava` (cli) | 1 — PascalCase conversion |
 
 ---
