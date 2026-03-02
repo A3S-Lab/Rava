@@ -462,6 +462,37 @@ common    → (none)
 | Phase 4 (2-3mo) | Dynamic proxy AOT: pre-generated proxy classes | ⬜ |
 | Phase 5 (6-12mo) | MicroRT JIT: Cranelift JIT for hot interpreted code | ⬜ |
 
+### Near-Term Development Plan (Java Coverage)
+
+Current status: parser and type checker cover common Java syntax; generic inference and overload resolution significantly improved; 393/393 e2e tests passing. Full JLS-level parity is the next target.
+
+**P0 — Runtime Semantics Completion** *(do first)*
+
+- [ ] Implement missing interpreter semantics paths in MicroRT
+- [ ] Complete verifier behavior for stricter Java correctness checks
+- [ ] Expand reflection / runtime metadata behavior to match expected Java usage
+
+**P1 — Type System and Resolution Parity**
+
+- [ ] Refine generic type inference in complex nested and overloaded scenarios
+- [ ] Extend overload resolution toward closer JLS method-selection parity
+- [ ] Improve bound checking and edge-case diagnostics for generic constraints
+
+**P2 — Syntax and Frontend Completeness**
+
+- [ ] Chapter-by-chapter JLS parser audit — fill syntax edge gaps
+- [ ] Complete annotation semantics pipeline beyond declaration parsing
+- [ ] Expand module system semantic checks for `module-info` directives
+
+**P3 — Standard Library and Behavioral Compatibility**
+
+- [ ] Increase long-tail JDK API compatibility coverage in runtime behavior
+- [ ] Add behavior-focused regression tests for subtle API / exception differences
+- [ ] Validate edge-case parity with representative Java reference outputs
+
+**Execution order:** P0 → P1 → P2 → P3.
+**Gate:** `cargo test --workspace` must stay green after every change.
+
 ---
 
 ## Test Coverage
