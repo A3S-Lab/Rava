@@ -34,21 +34,22 @@ pub fn init(args: InitArgs) -> Result<()> {
     // Build config
     let config = ProjectConfig {
         project: ProjectMeta {
-            name:    name.clone(),
+            name: name.clone(),
             version: "0.1.0".into(),
-            java:    "21".into(),
+            java: "21".into(),
             license: "MIT".into(),
         },
         build: BuildConfig {
-            target:   "native".into(),
-            main:     format!("{main_class}"),
+            target: "native".into(),
+            main: main_class.to_string(),
             optimize: "speed".into(),
         },
         ..Default::default()
     };
 
     // Write rava.hcl
-    config.to_file(&cwd.join("rava.hcl"))
+    config
+        .to_file(&cwd.join("rava.hcl"))
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Scaffold src/
@@ -61,7 +62,7 @@ pub fn init(args: InitArgs) -> Result<()> {
         let template = match args.template.as_str() {
             "lib" => lib_template(&main_class),
             "cli" => cli_template(&main_class),
-            _     => app_template(&main_class),
+            _ => app_template(&main_class),
         };
         std::fs::write(&main_java, template)
             .with_context(|| format!("cannot write {}", main_java.display()))?;
@@ -80,7 +81,7 @@ pub fn init(args: InitArgs) -> Result<()> {
 
 fn app_template(class: &str) -> String {
     format!(
-r#"public class {class} {{
+        r#"public class {class} {{
     public static void main(String[] args) {{
         System.out.println("Hello from {class}!");
     }}
@@ -91,7 +92,7 @@ r#"public class {class} {{
 
 fn lib_template(class: &str) -> String {
     format!(
-r#"public class {class} {{
+        r#"public class {class} {{
     public String greet(String name) {{
         return "Hello, " + name + "!";
     }}
@@ -102,7 +103,7 @@ r#"public class {class} {{
 
 fn cli_template(class: &str) -> String {
     format!(
-r#"public class {class} {{
+        r#"public class {class} {{
     public static void main(String[] args) {{
         if (args.length == 0) {{
             System.out.println("Usage: {class} <name>");
@@ -117,12 +118,12 @@ r#"public class {class} {{
 
 /// Convert `my-app` or `my_app` to `MyApp`.
 fn to_pascal_case(s: &str) -> String {
-    s.split(|c| c == '-' || c == '_')
+    s.split(['-', '_'])
         .filter(|p| !p.is_empty())
         .map(|p| {
             let mut chars = p.chars();
             match chars.next() {
-                None    => String::new(),
+                None => String::new(),
                 Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
             }
         })
@@ -135,9 +136,9 @@ mod tests {
 
     #[test]
     fn pascal_case_conversion() {
-        assert_eq!(to_pascal_case("my-app"),   "MyApp");
-        assert_eq!(to_pascal_case("my_app"),   "MyApp");
-        assert_eq!(to_pascal_case("myapp"),    "Myapp");
-        assert_eq!(to_pascal_case("hello"),    "Hello");
+        assert_eq!(to_pascal_case("my-app"), "MyApp");
+        assert_eq!(to_pascal_case("my_app"), "MyApp");
+        assert_eq!(to_pascal_case("myapp"), "Myapp");
+        assert_eq!(to_pascal_case("hello"), "Hello");
     }
 }

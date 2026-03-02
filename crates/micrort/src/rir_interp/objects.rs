@@ -1,30 +1,39 @@
 //! Built-in object method dispatch: StringBuilder, HashMap, and Stream operations.
 
-use std::cell::RefCell;
-use std::rc::Rc;
-use rava_common::error::Result;
 use super::rval::{ObjId, RVal};
 use super::RirInterpreter;
+use rava_common::error::Result;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 impl RirInterpreter {
     // ── StringBuilder methods ─────────────────────────────────────────────────
 
-    pub(super) fn dispatch_string_builder(&self, id: ObjId, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
+    pub(super) fn dispatch_string_builder(
+        &self,
+        id: ObjId,
+        method: &str,
+        args: &[RVal],
+    ) -> Option<Result<RVal>> {
         match method {
             "append" => {
                 let val = args.first().map(|v| v.to_display()).unwrap_or_default();
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
-                    let current = obj.fields.get("__buf__")
+                    let current = obj
+                        .fields
+                        .get("__buf__")
                         .map(|v| v.to_display())
                         .unwrap_or_default();
-                    obj.fields.insert("__buf__".into(), RVal::Str(format!("{}{}", current, val)));
+                    obj.fields
+                        .insert("__buf__".into(), RVal::Str(format!("{}{}", current, val)));
                 }
                 Some(Ok(RVal::Object(id)))
             }
             "toString" => {
                 let heap = self.heap.borrow();
-                let s = heap.get(&id)
+                let s = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get("__buf__"))
                     .map(|v| v.to_display())
                     .unwrap_or_default();
@@ -32,7 +41,8 @@ impl RirInterpreter {
             }
             "length" => {
                 let heap = self.heap.borrow();
-                let len = heap.get(&id)
+                let len = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get("__buf__"))
                     .map(|v| v.to_display().len() as i64)
                     .unwrap_or(0);
@@ -43,7 +53,9 @@ impl RirInterpreter {
                 let val = args.get(1).map(|v| v.to_display()).unwrap_or_default();
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
-                    let mut current = obj.fields.get("__buf__")
+                    let mut current = obj
+                        .fields
+                        .get("__buf__")
                         .map(|v| v.to_display())
                         .unwrap_or_default();
                     let offset = offset.min(current.len());
@@ -55,7 +67,9 @@ impl RirInterpreter {
             "reverse" => {
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
-                    let current = obj.fields.get("__buf__")
+                    let current = obj
+                        .fields
+                        .get("__buf__")
                         .map(|v| v.to_display())
                         .unwrap_or_default();
                     let reversed: String = current.chars().rev().collect();
@@ -67,7 +81,9 @@ impl RirInterpreter {
                 let idx = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
-                    let mut current = obj.fields.get("__buf__")
+                    let mut current = obj
+                        .fields
+                        .get("__buf__")
                         .map(|v| v.to_display())
                         .unwrap_or_default();
                     if idx < current.len() {
@@ -79,24 +95,35 @@ impl RirInterpreter {
             }
             "delete" => {
                 let start = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
-                let end   = args.get(1).map(|v| v.as_int()).unwrap_or(0) as usize;
+                let end = args.get(1).map(|v| v.as_int()).unwrap_or(0) as usize;
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
-                    let current = obj.fields.get("__buf__").map(|v| v.to_display()).unwrap_or_default();
+                    let current = obj
+                        .fields
+                        .get("__buf__")
+                        .map(|v| v.to_display())
+                        .unwrap_or_default();
                     let chars: Vec<char> = current.chars().collect();
                     let end = end.min(chars.len());
-                    let new_s: String = chars[..start.min(end)].iter().chain(chars[end..].iter()).collect();
+                    let new_s: String = chars[..start.min(end)]
+                        .iter()
+                        .chain(chars[end..].iter())
+                        .collect();
                     obj.fields.insert("__buf__".into(), RVal::Str(new_s));
                 }
                 Some(Ok(RVal::Object(id)))
             }
             "replace" => {
                 let start = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
-                let end   = args.get(1).map(|v| v.as_int()).unwrap_or(0) as usize;
-                let repl  = args.get(2).map(|v| v.to_display()).unwrap_or_default();
+                let end = args.get(1).map(|v| v.as_int()).unwrap_or(0) as usize;
+                let repl = args.get(2).map(|v| v.to_display()).unwrap_or_default();
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
-                    let current = obj.fields.get("__buf__").map(|v| v.to_display()).unwrap_or_default();
+                    let current = obj
+                        .fields
+                        .get("__buf__")
+                        .map(|v| v.to_display())
+                        .unwrap_or_default();
                     let chars: Vec<char> = current.chars().collect();
                     let end = end.min(chars.len());
                     let new_s: String = chars[..start.min(end)].iter().collect::<String>()
@@ -109,18 +136,28 @@ impl RirInterpreter {
             "charAt" => {
                 let idx = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
                 let heap = self.heap.borrow();
-                let s = heap.get(&id).and_then(|o| o.fields.get("__buf__")).map(|v| v.to_display()).unwrap_or_default();
+                let s = heap
+                    .get(&id)
+                    .and_then(|o| o.fields.get("__buf__"))
+                    .map(|v| v.to_display())
+                    .unwrap_or_default();
                 let ch = s.chars().nth(idx).unwrap_or('\0');
                 Some(Ok(RVal::Str(ch.to_string())))
             }
             "substring" => {
                 let start = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
                 let heap = self.heap.borrow();
-                let s = heap.get(&id).and_then(|o| o.fields.get("__buf__")).map(|v| v.to_display()).unwrap_or_default();
+                let s = heap
+                    .get(&id)
+                    .and_then(|o| o.fields.get("__buf__"))
+                    .map(|v| v.to_display())
+                    .unwrap_or_default();
                 let chars: Vec<char> = s.chars().collect();
                 let result: String = if let Some(end_val) = args.get(1) {
                     let end = end_val.as_int() as usize;
-                    chars[start.min(chars.len())..end.min(chars.len())].iter().collect()
+                    chars[start.min(chars.len())..end.min(chars.len())]
+                        .iter()
+                        .collect()
                 } else {
                     chars[start.min(chars.len())..].iter().collect()
                 };
@@ -129,7 +166,11 @@ impl RirInterpreter {
             "indexOf" => {
                 let target = args.first().map(|v| v.to_display()).unwrap_or_default();
                 let heap = self.heap.borrow();
-                let s = heap.get(&id).and_then(|o| o.fields.get("__buf__")).map(|v| v.to_display()).unwrap_or_default();
+                let s = heap
+                    .get(&id)
+                    .and_then(|o| o.fields.get("__buf__"))
+                    .map(|v| v.to_display())
+                    .unwrap_or_default();
                 let idx = s.find(&target).map(|i| i as i64).unwrap_or(-1);
                 Some(Ok(RVal::Int(idx)))
             }
@@ -139,9 +180,25 @@ impl RirInterpreter {
 
     // ── HashMap methods ───────────────────────────────────────────────────────
 
-    pub(super) fn dispatch_hash_map(&self, id: ObjId, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
+    pub(super) fn dispatch_hash_map(
+        &self,
+        id: ObjId,
+        method: &str,
+        args: &[RVal],
+    ) -> Option<Result<RVal>> {
         // Check unmodifiable for mutating operations
-        if matches!(method, "put" | "remove" | "clear" | "putAll" | "putIfAbsent" | "replace" | "merge" | "compute" | "computeIfAbsent") {
+        if matches!(
+            method,
+            "put"
+                | "remove"
+                | "clear"
+                | "putAll"
+                | "putIfAbsent"
+                | "replace"
+                | "merge"
+                | "compute"
+                | "computeIfAbsent"
+        ) {
             let is_unmod = super::UNMODIFIABLE.with(|u| u.borrow().contains(&(id as usize)));
             if is_unmod {
                 return Some(Err(rava_common::error::RavaError::JavaException {
@@ -163,21 +220,28 @@ impl RirInterpreter {
                     if obj.class_name == "LinkedHashMap" && is_new_key {
                         let key_val = RVal::Str(key);
                         match obj.fields.get_mut("__keys__") {
-                            Some(RVal::Array(arr)) => { arr.borrow_mut().push(key_val); }
+                            Some(RVal::Array(arr)) => {
+                                arr.borrow_mut().push(key_val);
+                            }
                             _ => {
-                                obj.fields.insert("__keys__".into(),
-                                    RVal::Array(Rc::new(RefCell::new(vec![key_val]))));
+                                obj.fields.insert(
+                                    "__keys__".into(),
+                                    RVal::Array(Rc::new(RefCell::new(vec![key_val]))),
+                                );
                             }
                         }
                     }
                     old
-                } else { RVal::Null };
+                } else {
+                    RVal::Null
+                };
                 Some(Ok(old))
             }
             "get" => {
                 let key = args.first().map(|v| v.to_display()).unwrap_or_default();
                 let heap = self.heap.borrow();
-                let val = heap.get(&id)
+                let val = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get(&key).cloned())
                     .unwrap_or(RVal::Null);
                 Some(Ok(val))
@@ -186,7 +250,8 @@ impl RirInterpreter {
                 let key = args.first().map(|v| v.to_display()).unwrap_or_default();
                 let default = args.get(1).cloned().unwrap_or(RVal::Null);
                 let heap = self.heap.borrow();
-                let val = heap.get(&id)
+                let val = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get(&key).cloned())
                     .unwrap_or(default);
                 Some(Ok(val))
@@ -194,7 +259,8 @@ impl RirInterpreter {
             "containsKey" => {
                 let key = args.first().map(|v| v.to_display()).unwrap_or_default();
                 let heap = self.heap.borrow();
-                let found = heap.get(&id)
+                let found = heap
+                    .get(&id)
                     .map(|o| o.fields.contains_key(&key))
                     .unwrap_or(false);
                 Some(Ok(RVal::Bool(found)))
@@ -202,7 +268,8 @@ impl RirInterpreter {
             "containsValue" => {
                 let target = args.first().map(|v| v.to_display()).unwrap_or_default();
                 let heap = self.heap.borrow();
-                let found = heap.get(&id)
+                let found = heap
+                    .get(&id)
                     .map(|o| o.fields.values().any(|v| v.to_display() == target))
                     .unwrap_or(false);
                 Some(Ok(RVal::Bool(found)))
@@ -219,19 +286,23 @@ impl RirInterpreter {
                         }
                     }
                     old
-                } else { RVal::Null };
+                } else {
+                    RVal::Null
+                };
                 Some(Ok(old))
             }
             "size" => {
                 let heap = self.heap.borrow();
-                let size = heap.get(&id)
+                let size = heap
+                    .get(&id)
                     .map(|o| o.fields.keys().filter(|k| !k.starts_with("__")).count() as i64)
                     .unwrap_or(0);
                 Some(Ok(RVal::Int(size)))
             }
             "isEmpty" => {
                 let heap = self.heap.borrow();
-                let empty = heap.get(&id)
+                let empty = heap
+                    .get(&id)
                     .map(|o| o.fields.keys().filter(|k| !k.starts_with("__")).count() == 0)
                     .unwrap_or(true);
                 Some(Ok(RVal::Bool(empty)))
@@ -251,47 +322,64 @@ impl RirInterpreter {
                         if let Some(obj) = heap.get(&id) {
                             if obj.class_name == "LinkedHashMap" {
                                 if let Some(RVal::Array(keys_arr)) = obj.fields.get("__keys__") {
-                                    keys_arr.borrow().iter()
+                                    keys_arr
+                                        .borrow()
+                                        .iter()
                                         .filter_map(|k| {
                                             let ks = k.to_display();
                                             obj.fields.get(&ks).map(|v| (ks, v.clone()))
-                                        }).collect()
-                                } else { vec![] }
+                                        })
+                                        .collect()
+                                } else {
+                                    vec![]
+                                }
                             } else {
-                                obj.fields.iter()
+                                obj.fields
+                                    .iter()
                                     .filter(|(k, _)| !k.starts_with("__"))
                                     .map(|(k, v)| (k.clone(), v.clone()))
                                     .collect()
                             }
-                        } else { vec![] }
-                    };
-                    let entries: Vec<RVal> = pairs.into_iter().map(|(k, v)| {
-                        let eid = self.alloc_object("Map.Entry");
-                        {
-                            let mut heap = self.heap.borrow_mut();
-                            if let Some(entry) = heap.get_mut(&eid) {
-                                entry.fields.insert("__key__".into(), RVal::Str(k));
-                                entry.fields.insert("__value__".into(), v);
-                            }
+                        } else {
+                            vec![]
                         }
-                        RVal::Object(eid)
-                    }).collect();
+                    };
+                    let entries: Vec<RVal> = pairs
+                        .into_iter()
+                        .map(|(k, v)| {
+                            let eid = self.alloc_object("Map.Entry");
+                            {
+                                let mut heap = self.heap.borrow_mut();
+                                if let Some(entry) = heap.get_mut(&eid) {
+                                    entry.fields.insert("__key__".into(), RVal::Str(k));
+                                    entry.fields.insert("__value__".into(), v);
+                                }
+                            }
+                            RVal::Object(eid)
+                        })
+                        .collect();
                     return Some(Ok(RVal::Array(Rc::new(RefCell::new(entries)))));
                 }
                 let heap = self.heap.borrow();
                 let items: Vec<RVal> = if let Some(obj) = heap.get(&id) {
                     match method {
-                        "keySet" => obj.fields.keys()
+                        "keySet" => obj
+                            .fields
+                            .keys()
                             .filter(|k| !k.starts_with("__"))
                             .map(|k| RVal::Str(k.clone()))
                             .collect(),
-                        "values" => obj.fields.iter()
+                        "values" => obj
+                            .fields
+                            .iter()
                             .filter(|(k, _)| !k.starts_with("__"))
                             .map(|(_, v)| v.clone())
                             .collect(),
                         _ => vec![],
                     }
-                } else { vec![] };
+                } else {
+                    vec![]
+                };
                 Some(Ok(RVal::Array(Rc::new(RefCell::new(items)))))
             }
             "forEach" => {
@@ -299,11 +387,14 @@ impl RirInterpreter {
                 let pairs: Vec<(String, RVal)> = {
                     let heap = self.heap.borrow();
                     if let Some(obj) = heap.get(&id) {
-                        obj.fields.iter()
+                        obj.fields
+                            .iter()
                             .filter(|(k, _)| !k.starts_with("__"))
                             .map(|(k, v)| (k.clone(), v.clone()))
                             .collect()
-                    } else { vec![] }
+                    } else {
+                        vec![]
+                    }
                 };
                 let lambda = args.first().cloned().unwrap_or(RVal::Null);
                 for (k, v) in pairs {
@@ -319,11 +410,14 @@ impl RirInterpreter {
                 let pairs: Vec<(String, RVal)> = {
                     let heap = self.heap.borrow();
                     if let Some(obj) = heap.get(&id) {
-                        obj.fields.iter()
+                        obj.fields
+                            .iter()
                             .filter(|(k, _)| !k.starts_with("__"))
                             .map(|(k, v)| (k.clone(), v.clone()))
                             .collect()
-                    } else { vec![] }
+                    } else {
+                        vec![]
+                    }
                 };
                 let lambda = args.first().cloned().unwrap_or(RVal::Null);
                 for (k, v) in pairs {
@@ -388,7 +482,9 @@ impl RirInterpreter {
                 let key = args.first().map(|v| v.to_display()).unwrap_or_default();
                 let old_val = {
                     let heap = self.heap.borrow();
-                    heap.get(&id).and_then(|o| o.fields.get(&key).cloned()).unwrap_or(RVal::Null)
+                    heap.get(&id)
+                        .and_then(|o| o.fields.get(&key).cloned())
+                        .unwrap_or(RVal::Null)
                 };
                 let func = args.get(1).cloned().unwrap_or(RVal::Null);
                 let computed = match self.invoke_lambda(&func, &[RVal::Str(key.clone()), old_val]) {
@@ -406,8 +502,10 @@ impl RirInterpreter {
                 let val = args.get(1).cloned().unwrap_or(RVal::Null);
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
-                    if !obj.fields.contains_key(&key) {
-                        obj.fields.insert(key, val);
+                    if let std::collections::hash_map::Entry::Vacant(entry) =
+                        obj.fields.entry(key.clone())
+                    {
+                        entry.insert(val);
                         return Some(Ok(RVal::Null));
                     }
                     return Some(Ok(obj.fields.get(&key).cloned().unwrap_or(RVal::Null)));
@@ -417,12 +515,16 @@ impl RirInterpreter {
             "toString" => {
                 let heap = self.heap.borrow();
                 let s = if let Some(obj) = heap.get(&id) {
-                    let entries: Vec<String> = obj.fields.iter()
+                    let entries: Vec<String> = obj
+                        .fields
+                        .iter()
                         .filter(|(k, _)| !k.starts_with("__"))
                         .map(|(k, v)| format!("{}={}", k, v.to_display()))
                         .collect();
                     format!("{{{}}}", entries.join(", "))
-                } else { "{}".into() };
+                } else {
+                    "{}".into()
+                };
                 Some(Ok(RVal::Str(s)))
             }
             _ => None,
@@ -432,7 +534,12 @@ impl RirInterpreter {
     // ── Stream operations ─────────────────────────────────────────────────────
 
     /// Dispatch stream operations on arrays (eager evaluation model).
-    pub(super) fn dispatch_stream(&self, receiver: &RVal, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
+    pub(super) fn dispatch_stream(
+        &self,
+        receiver: &RVal,
+        method: &str,
+        args: &[RVal],
+    ) -> Option<Result<RVal>> {
         match method {
             "stream" | "toList" => Some(Ok(receiver.clone())),
             "of" => Some(Ok(RVal::Array(Rc::new(RefCell::new(args.to_vec()))))),
@@ -442,7 +549,7 @@ impl RirInterpreter {
                 let items = arr.borrow();
                 let mut result = Vec::with_capacity(items.len());
                 for item in items.iter() {
-                    match self.invoke_lambda(lambda, &[item.clone()]) {
+                    match self.invoke_lambda(lambda, std::slice::from_ref(item)) {
                         Ok(v) => result.push(v),
                         Err(e) => return Some(Err(e)),
                     }
@@ -455,8 +562,12 @@ impl RirInterpreter {
                 let items = arr.borrow();
                 let mut result = Vec::new();
                 for item in items.iter() {
-                    match self.invoke_lambda(lambda, &[item.clone()]) {
-                        Ok(v) => { if v.is_truthy() { result.push(item.clone()); } }
+                    match self.invoke_lambda(lambda, std::slice::from_ref(item)) {
+                        Ok(v) => {
+                            if v.is_truthy() {
+                                result.push(item.clone());
+                            }
+                        }
                         Err(e) => return Some(Err(e)),
                     }
                 }
@@ -467,7 +578,7 @@ impl RirInterpreter {
                 let lambda = args.first()?;
                 let items = arr.borrow().clone();
                 for item in items.iter() {
-                    match self.invoke_lambda(lambda, &[item.clone()]) {
+                    match self.invoke_lambda(lambda, std::slice::from_ref(item)) {
                         Ok(_) => {}
                         Err(e) => return Some(Err(e)),
                     }
@@ -480,28 +591,62 @@ impl RirInterpreter {
                     let (ctype, delim, prefix, suffix, lambda, key_fn, val_fn) = {
                         let heap = self.heap.borrow();
                         if let Some(cobj) = heap.get(cid) {
-                            let ctype = cobj.fields.get("__ctype__").map(|v| v.to_display()).unwrap_or_default();
-                            let delim = cobj.fields.get("__delim__").map(|v| v.to_display()).unwrap_or_default();
-                            let prefix = cobj.fields.get("__prefix__").map(|v| v.to_display()).unwrap_or_default();
-                            let suffix = cobj.fields.get("__suffix__").map(|v| v.to_display()).unwrap_or_default();
+                            let ctype = cobj
+                                .fields
+                                .get("__ctype__")
+                                .map(|v| v.to_display())
+                                .unwrap_or_default();
+                            let delim = cobj
+                                .fields
+                                .get("__delim__")
+                                .map(|v| v.to_display())
+                                .unwrap_or_default();
+                            let prefix = cobj
+                                .fields
+                                .get("__prefix__")
+                                .map(|v| v.to_display())
+                                .unwrap_or_default();
+                            let suffix = cobj
+                                .fields
+                                .get("__suffix__")
+                                .map(|v| v.to_display())
+                                .unwrap_or_default();
                             let lambda = cobj.fields.get("__lambda__").cloned();
                             let key_fn = cobj.fields.get("__keyfn__").cloned();
                             let val_fn = cobj.fields.get("__valfn__").cloned();
                             (ctype, delim, prefix, suffix, lambda, key_fn, val_fn)
-                        } else { (String::new(), String::new(), String::new(), String::new(), None, None, None) }
+                        } else {
+                            (
+                                String::new(),
+                                String::new(),
+                                String::new(),
+                                String::new(),
+                                None,
+                                None,
+                                None,
+                            )
+                        }
                     };
                     match ctype.as_str() {
                         "joining" => {
-                            let joined = arr.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>().join(&delim);
+                            let joined = arr
+                                .borrow()
+                                .iter()
+                                .map(|v| v.to_display())
+                                .collect::<Vec<_>>()
+                                .join(&delim);
                             let s = format!("{}{}{}", prefix, joined, suffix);
                             return Some(Ok(RVal::Str(s)));
                         }
                         "toList" => return Some(Ok(receiver.clone())),
                         "toSet" => {
                             let mut seen = std::collections::HashSet::new();
-                            let deduped: Vec<RVal> = arr.borrow().iter()
+                            let deduped: Vec<RVal> = arr
+                                .borrow()
+                                .iter()
                                 .filter(|v| seen.insert(v.to_display()))
-                                .cloned().collect();
+                                .cloned()
+                                .collect();
                             return Some(Ok(RVal::Array(Rc::new(RefCell::new(deduped)))));
                         }
                         "groupingBy" => {
@@ -509,16 +654,21 @@ impl RirInterpreter {
                             let map_id = self.alloc_object("HashMap");
                             for item in &items {
                                 let key = if let Some(ref lam) = lambda {
-                                    match self.invoke_lambda(lam, &[item.clone()]) {
+                                    match self.invoke_lambda(lam, std::slice::from_ref(item)) {
                                         Ok(k) => k.to_display(),
                                         Err(_) => continue,
                                     }
-                                } else { item.to_display() };
+                                } else {
+                                    item.to_display()
+                                };
                                 let mut heap = self.heap.borrow_mut();
                                 if let Some(map_obj) = heap.get_mut(&map_id) {
-                                    let bucket = map_obj.fields.entry(key)
-                                        .or_insert_with(|| RVal::Array(Rc::new(RefCell::new(vec![]))));
-                                    if let RVal::Array(a) = bucket { a.borrow_mut().push(item.clone()); }
+                                    let bucket = map_obj.fields.entry(key).or_insert_with(|| {
+                                        RVal::Array(Rc::new(RefCell::new(vec![])))
+                                    });
+                                    if let RVal::Array(a) = bucket {
+                                        a.borrow_mut().push(item.clone());
+                                    }
                                 }
                             }
                             return Some(Ok(RVal::Object(map_id)));
@@ -537,11 +687,19 @@ impl RirInterpreter {
                             }
                             for item in &items {
                                 let key = if let Some(ref lam) = lambda {
-                                    match self.invoke_lambda(lam, &[item.clone()]) {
-                                        Ok(v) => if v.is_truthy() { "true" } else { "false" },
+                                    match self.invoke_lambda(lam, std::slice::from_ref(item)) {
+                                        Ok(v) => {
+                                            if v.is_truthy() {
+                                                "true"
+                                            } else {
+                                                "false"
+                                            }
+                                        }
                                         Err(_) => continue,
                                     }
-                                } else { "false" };
+                                } else {
+                                    "false"
+                                };
                                 let mut heap = self.heap.borrow_mut();
                                 if let Some(map_obj) = heap.get_mut(&map_id) {
                                     if let Some(RVal::Array(a)) = map_obj.fields.get(key) {
@@ -556,17 +714,21 @@ impl RirInterpreter {
                             let map_id = self.alloc_object("HashMap");
                             for item in &items {
                                 let k = if let Some(ref kf) = key_fn {
-                                    match self.invoke_lambda(kf, &[item.clone()]) {
+                                    match self.invoke_lambda(kf, std::slice::from_ref(item)) {
                                         Ok(v) => v.to_display(),
                                         Err(_) => continue,
                                     }
-                                } else { item.to_display() };
+                                } else {
+                                    item.to_display()
+                                };
                                 let v = if let Some(ref vf) = val_fn {
-                                    match self.invoke_lambda(vf, &[item.clone()]) {
+                                    match self.invoke_lambda(vf, std::slice::from_ref(item)) {
                                         Ok(v) => v,
                                         Err(_) => continue,
                                     }
-                                } else { item.clone() };
+                                } else {
+                                    item.clone()
+                                };
                                 let mut heap = self.heap.borrow_mut();
                                 if let Some(map_obj) = heap.get_mut(&map_id) {
                                     map_obj.fields.insert(k, v);
@@ -582,7 +744,9 @@ impl RirInterpreter {
             "reduce" => {
                 let arr = self.as_array(receiver)?;
                 let items = arr.borrow();
-                if items.is_empty() { return Some(Ok(RVal::Null)); }
+                if items.is_empty() {
+                    return Some(Ok(RVal::Null));
+                }
                 if args.len() >= 2 {
                     let mut acc = args[0].clone();
                     let lambda = &args[1];
@@ -611,32 +775,39 @@ impl RirInterpreter {
                 if let Some(comparator) = args.first() {
                     match comparator {
                         RVal::Str(s) if s == "__comparator__reverse__" => {
-                            items.sort_by(|a, b| b.to_display().cmp(&a.to_display()));
+                            items.sort_by_key(|b| std::cmp::Reverse(b.to_display()));
                         }
                         RVal::Str(s) if s == "__comparator__natural__" => {
-                            items.sort_by(|a, b| a.to_display().cmp(&b.to_display()));
+                            items.sort_by_key(|a| a.to_display());
                         }
                         _ => {
                             // lambda comparator
                             let comp = comparator.clone();
                             let mut err = None;
                             items.sort_by(|a, b| {
-                                if err.is_some() { return std::cmp::Ordering::Equal; }
+                                if err.is_some() {
+                                    return std::cmp::Ordering::Equal;
+                                }
                                 match self.invoke_lambda(&comp, &[a.clone(), b.clone()]) {
                                     Ok(v) => v.as_int().cmp(&0),
-                                    Err(e) => { err = Some(e); std::cmp::Ordering::Equal }
+                                    Err(e) => {
+                                        err = Some(e);
+                                        std::cmp::Ordering::Equal
+                                    }
                                 }
                             });
-                            if let Some(e) = err { return Some(Err(e)); }
+                            if let Some(e) = err {
+                                return Some(Err(e));
+                            }
                         }
                     }
                 } else {
                     // natural order: numeric if all ints, else string
                     let all_int = items.iter().all(|v| matches!(v, RVal::Int(_)));
                     if all_int {
-                        items.sort_by(|a, b| a.as_int().cmp(&b.as_int()));
+                        items.sort_by_key(|a| a.as_int());
                     } else {
-                        items.sort_by(|a, b| a.to_display().cmp(&b.to_display()));
+                        items.sort_by_key(|a| a.to_display());
                     }
                 }
                 Some(Ok(RVal::Array(Rc::new(RefCell::new(items)))))
@@ -647,7 +818,7 @@ impl RirInterpreter {
                 let lambda = args.first().cloned().unwrap_or(RVal::Null);
                 let mut result = Vec::new();
                 for item in &items {
-                    match self.invoke_lambda(&lambda, &[item.clone()]) {
+                    match self.invoke_lambda(&lambda, std::slice::from_ref(item)) {
                         Ok(RVal::Array(a)) => result.extend(a.borrow().clone()),
                         Ok(v) => result.push(v),
                         Err(e) => return Some(Err(e)),
@@ -667,7 +838,9 @@ impl RirInterpreter {
             "average" => {
                 let arr = self.as_array(receiver)?;
                 let v = arr.borrow();
-                if v.is_empty() { return Some(Ok(RVal::Null)); }
+                if v.is_empty() {
+                    return Some(Ok(RVal::Null));
+                }
                 let total: f64 = v.iter().map(|x| x.as_float()).sum();
                 Some(Ok(RVal::Float(total / v.len() as f64)))
             }
@@ -709,8 +882,12 @@ impl RirInterpreter {
                 let lambda = args.first()?;
                 let items = arr.borrow();
                 for item in items.iter() {
-                    match self.invoke_lambda(lambda, &[item.clone()]) {
-                        Ok(v) => { if v.is_truthy() { return Some(Ok(RVal::Bool(true))); } }
+                    match self.invoke_lambda(lambda, std::slice::from_ref(item)) {
+                        Ok(v) => {
+                            if v.is_truthy() {
+                                return Some(Ok(RVal::Bool(true)));
+                            }
+                        }
                         Err(e) => return Some(Err(e)),
                     }
                 }
@@ -721,8 +898,12 @@ impl RirInterpreter {
                 let lambda = args.first()?;
                 let items = arr.borrow();
                 for item in items.iter() {
-                    match self.invoke_lambda(lambda, &[item.clone()]) {
-                        Ok(v) => { if !v.is_truthy() { return Some(Ok(RVal::Bool(false))); } }
+                    match self.invoke_lambda(lambda, std::slice::from_ref(item)) {
+                        Ok(v) => {
+                            if !v.is_truthy() {
+                                return Some(Ok(RVal::Bool(false)));
+                            }
+                        }
                         Err(e) => return Some(Err(e)),
                     }
                 }
@@ -733,8 +914,12 @@ impl RirInterpreter {
                 let lambda = args.first()?;
                 let items = arr.borrow();
                 for item in items.iter() {
-                    match self.invoke_lambda(lambda, &[item.clone()]) {
-                        Ok(v) => { if v.is_truthy() { return Some(Ok(RVal::Bool(false))); } }
+                    match self.invoke_lambda(lambda, std::slice::from_ref(item)) {
+                        Ok(v) => {
+                            if v.is_truthy() {
+                                return Some(Ok(RVal::Bool(false)));
+                            }
+                        }
                         Err(e) => return Some(Err(e)),
                     }
                 }
@@ -745,7 +930,7 @@ impl RirInterpreter {
                 let lambda = args.first()?;
                 let items = arr.borrow().clone();
                 for item in &items {
-                    match self.invoke_lambda(lambda, &[item.clone()]) {
+                    match self.invoke_lambda(lambda, std::slice::from_ref(item)) {
                         Ok(_) => {}
                         Err(e) => return Some(Err(e)),
                     }
@@ -758,8 +943,14 @@ impl RirInterpreter {
                 let items = arr.borrow();
                 let mut result = Vec::new();
                 for item in items.iter() {
-                    match self.invoke_lambda(lambda, &[item.clone()]) {
-                        Ok(v) => { if v.is_truthy() { result.push(item.clone()); } else { break; } }
+                    match self.invoke_lambda(lambda, std::slice::from_ref(item)) {
+                        Ok(v) => {
+                            if v.is_truthy() {
+                                result.push(item.clone());
+                            } else {
+                                break;
+                            }
+                        }
                         Err(e) => return Some(Err(e)),
                     }
                 }
@@ -773,8 +964,13 @@ impl RirInterpreter {
                 let mut result = Vec::new();
                 for item in items.iter() {
                     if dropping {
-                        match self.invoke_lambda(lambda, &[item.clone()]) {
-                            Ok(v) => { if !v.is_truthy() { dropping = false; result.push(item.clone()); } }
+                        match self.invoke_lambda(lambda, std::slice::from_ref(item)) {
+                            Ok(v) => {
+                                if !v.is_truthy() {
+                                    dropping = false;
+                                    result.push(item.clone());
+                                }
+                            }
                             Err(e) => return Some(Err(e)),
                         }
                     } else {
@@ -786,13 +982,19 @@ impl RirInterpreter {
             "min" => {
                 let arr = self.as_array(receiver)?;
                 let items = arr.borrow();
-                if items.is_empty() { return Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![]))))); }
+                if items.is_empty() {
+                    return Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![])))));
+                }
                 let result = if let Some(comparator) = args.first() {
                     let comp = comparator.clone();
                     let mut min = items[0].clone();
                     for item in items.iter().skip(1) {
                         match self.invoke_lambda(&comp, &[item.clone(), min.clone()]) {
-                            Ok(v) => { if v.as_int() < 0 { min = item.clone(); } }
+                            Ok(v) => {
+                                if v.as_int() < 0 {
+                                    min = item.clone();
+                                }
+                            }
                             Err(e) => return Some(Err(e)),
                         }
                     }
@@ -800,9 +1002,17 @@ impl RirInterpreter {
                 } else {
                     let all_int = items.iter().all(|v| matches!(v, RVal::Int(_)));
                     if all_int {
-                        items.iter().min_by_key(|v| v.as_int()).cloned().unwrap_or(RVal::Null)
+                        items
+                            .iter()
+                            .min_by_key(|v| v.as_int())
+                            .cloned()
+                            .unwrap_or(RVal::Null)
                     } else {
-                        items.iter().min_by(|a, b| a.to_display().cmp(&b.to_display())).cloned().unwrap_or(RVal::Null)
+                        items
+                            .iter()
+                            .min_by(|a, b| a.to_display().cmp(&b.to_display()))
+                            .cloned()
+                            .unwrap_or(RVal::Null)
                     }
                 };
                 // Wrap in Optional (single-element array) so .get() works
@@ -811,13 +1021,19 @@ impl RirInterpreter {
             "max" => {
                 let arr = self.as_array(receiver)?;
                 let items = arr.borrow();
-                if items.is_empty() { return Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![]))))); }
+                if items.is_empty() {
+                    return Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![])))));
+                }
                 let result = if let Some(comparator) = args.first() {
                     let comp = comparator.clone();
                     let mut max = items[0].clone();
                     for item in items.iter().skip(1) {
                         match self.invoke_lambda(&comp, &[item.clone(), max.clone()]) {
-                            Ok(v) => { if v.as_int() > 0 { max = item.clone(); } }
+                            Ok(v) => {
+                                if v.as_int() > 0 {
+                                    max = item.clone();
+                                }
+                            }
                             Err(e) => return Some(Err(e)),
                         }
                     }
@@ -825,9 +1041,17 @@ impl RirInterpreter {
                 } else {
                     let all_int = items.iter().all(|v| matches!(v, RVal::Int(_)));
                     if all_int {
-                        items.iter().max_by_key(|v| v.as_int()).cloned().unwrap_or(RVal::Null)
+                        items
+                            .iter()
+                            .max_by_key(|v| v.as_int())
+                            .cloned()
+                            .unwrap_or(RVal::Null)
                     } else {
-                        items.iter().max_by(|a, b| a.to_display().cmp(&b.to_display())).cloned().unwrap_or(RVal::Null)
+                        items
+                            .iter()
+                            .max_by(|a, b| a.to_display().cmp(&b.to_display()))
+                            .cloned()
+                            .unwrap_or(RVal::Null)
                     }
                 };
                 // Wrap in Optional (single-element array) so .get() works
@@ -838,7 +1062,11 @@ impl RirInterpreter {
                 let f = receiver.clone();
                 let after = args.first().cloned().unwrap_or(RVal::Null);
                 // Return a composed lambda sentinel
-                let composed_name = format!("__composed_andThen__{}__{}", f.to_display(), after.to_display());
+                let composed_name = format!(
+                    "__composed_andThen__{}__{}",
+                    f.to_display(),
+                    after.to_display()
+                );
                 super::LAMBDA_CAPTURES.with(|lc| {
                     let mut map = lc.borrow_mut();
                     let mut captures = std::collections::HashMap::new();
@@ -852,7 +1080,11 @@ impl RirInterpreter {
             "compose" => {
                 let f = receiver.clone();
                 let before = args.first().cloned().unwrap_or(RVal::Null);
-                let composed_name = format!("__composed_compose__{}__{}", f.to_display(), before.to_display());
+                let composed_name = format!(
+                    "__composed_compose__{}__{}",
+                    f.to_display(),
+                    before.to_display()
+                );
                 super::LAMBDA_CAPTURES.with(|lc| {
                     let mut map = lc.borrow_mut();
                     let mut captures = std::collections::HashMap::new();
@@ -866,7 +1098,8 @@ impl RirInterpreter {
             "and" => {
                 let f = receiver.clone();
                 let other = args.first().cloned().unwrap_or(RVal::Null);
-                let composed_name = format!("__composed_and__{}__{}", f.to_display(), other.to_display());
+                let composed_name =
+                    format!("__composed_and__{}__{}", f.to_display(), other.to_display());
                 super::LAMBDA_CAPTURES.with(|lc| {
                     let mut map = lc.borrow_mut();
                     let mut captures = std::collections::HashMap::new();
@@ -880,7 +1113,8 @@ impl RirInterpreter {
             "or" => {
                 let f = receiver.clone();
                 let other = args.first().cloned().unwrap_or(RVal::Null);
-                let composed_name = format!("__composed_or__{}__{}", f.to_display(), other.to_display());
+                let composed_name =
+                    format!("__composed_or__{}__{}", f.to_display(), other.to_display());
                 super::LAMBDA_CAPTURES.with(|lc| {
                     let mut map = lc.borrow_mut();
                     let mut captures = std::collections::HashMap::new();
@@ -906,7 +1140,11 @@ impl RirInterpreter {
             "thenComparing" | "thenComparingInt" | "thenComparingLong" | "thenComparingDouble" => {
                 let primary = receiver.clone();
                 let secondary = args.first().cloned().unwrap_or(RVal::Null);
-                let composed_name = format!("__comparator__then__{}__{}", primary.to_display(), secondary.to_display());
+                let composed_name = format!(
+                    "__comparator__then__{}__{}",
+                    primary.to_display(),
+                    secondary.to_display()
+                );
                 super::LAMBDA_CAPTURES.with(|lc| {
                     let mut map = lc.borrow_mut();
                     let mut captures = std::collections::HashMap::new();
@@ -964,21 +1202,24 @@ impl RirInterpreter {
                 let arr = self.as_array(receiver)?;
                 Some(Ok(arr.borrow().last().cloned().unwrap_or(RVal::Null)))
             }
-            // Java Stack.peek — LIFO, peeks from back
-            "peek" if matches!(receiver, RVal::Array(_)) && args.is_empty() => {
-                let arr = self.as_array(receiver)?;
-                Some(Ok(arr.borrow().last().cloned().unwrap_or(RVal::Null)))
-            }
             // Java Stack.pop — LIFO, removes from back
             "pop" => {
                 let arr = self.as_array(receiver)?;
                 let mut b = arr.borrow_mut();
-                if b.is_empty() { Some(Ok(RVal::Null)) } else { Some(Ok(b.pop().unwrap())) }
+                if b.is_empty() {
+                    Some(Ok(RVal::Null))
+                } else {
+                    Some(Ok(b.pop().unwrap()))
+                }
             }
             "removeFirst" | "pollFirst" => {
                 let arr = self.as_array(receiver)?;
                 let mut b = arr.borrow_mut();
-                if b.is_empty() { Some(Ok(RVal::Null)) } else { Some(Ok(b.remove(0))) }
+                if b.is_empty() {
+                    Some(Ok(RVal::Null))
+                } else {
+                    Some(Ok(b.remove(0)))
+                }
             }
             "removeLast" | "pollLast" => {
                 let arr = self.as_array(receiver)?;
@@ -991,12 +1232,22 @@ impl RirInterpreter {
 
     /// Extract the inner Rc<RefCell<Vec<RVal>>> from an Array value.
     pub(super) fn as_array<'b>(&self, val: &'b RVal) -> Option<&'b Rc<RefCell<Vec<RVal>>>> {
-        if let RVal::Array(arr) = val { Some(arr) } else { None }
+        if let RVal::Array(arr) = val {
+            Some(arr)
+        } else {
+            None
+        }
     }
 
     // ── HashSet / TreeSet methods ─────────────────────────────────────────────
 
-    pub(super) fn dispatch_set(&self, id: ObjId, class_name: &str, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
+    pub(super) fn dispatch_set(
+        &self,
+        id: ObjId,
+        class_name: &str,
+        method: &str,
+        args: &[RVal],
+    ) -> Option<Result<RVal>> {
         let sorted = class_name == "TreeSet";
         match method {
             "add" => {
@@ -1011,7 +1262,7 @@ impl RirInterpreter {
                         if !already {
                             arr.borrow_mut().push(val);
                             if sorted {
-                                arr.borrow_mut().sort_by(|a, b| crate::builtins::rval_cmp(a, b));
+                                arr.borrow_mut().sort_by(crate::builtins::rval_cmp);
                             }
                         }
                         return Some(Ok(RVal::Bool(!already)));
@@ -1036,41 +1287,76 @@ impl RirInterpreter {
             "contains" => {
                 let key = args.first().map(|v| v.to_display()).unwrap_or_default();
                 let heap = self.heap.borrow();
-                let found = heap.get(&id)
+                let found = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get("__items__"))
-                    .map(|v| if let RVal::Array(a) = v { a.borrow().iter().any(|x| x.to_display() == key) } else { false })
+                    .map(|v| {
+                        if let RVal::Array(a) = v {
+                            a.borrow().iter().any(|x| x.to_display() == key)
+                        } else {
+                            false
+                        }
+                    })
                     .unwrap_or(false);
                 Some(Ok(RVal::Bool(found)))
             }
             "size" => {
                 let heap = self.heap.borrow();
-                let n = heap.get(&id)
+                let n = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get("__items__"))
-                    .map(|v| if let RVal::Array(a) = v { a.borrow().len() as i64 } else { 0 })
+                    .map(|v| {
+                        if let RVal::Array(a) = v {
+                            a.borrow().len() as i64
+                        } else {
+                            0
+                        }
+                    })
                     .unwrap_or(0);
                 Some(Ok(RVal::Int(n)))
             }
             "isEmpty" => {
                 let heap = self.heap.borrow();
-                let empty = heap.get(&id)
+                let empty = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get("__items__"))
-                    .map(|v| if let RVal::Array(a) = v { a.borrow().is_empty() } else { true })
+                    .map(|v| {
+                        if let RVal::Array(a) = v {
+                            a.borrow().is_empty()
+                        } else {
+                            true
+                        }
+                    })
                     .unwrap_or(true);
                 Some(Ok(RVal::Bool(empty)))
             }
             "first" => {
                 let heap = self.heap.borrow();
-                let val = heap.get(&id)
+                let val = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get("__items__"))
-                    .and_then(|v| if let RVal::Array(a) = v { a.borrow().first().cloned() } else { None })
+                    .and_then(|v| {
+                        if let RVal::Array(a) = v {
+                            a.borrow().first().cloned()
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(RVal::Null);
                 Some(Ok(val))
             }
             "last" => {
                 let heap = self.heap.borrow();
-                let val = heap.get(&id)
+                let val = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get("__items__"))
-                    .and_then(|v| if let RVal::Array(a) = v { a.borrow().last().cloned() } else { None })
+                    .and_then(|v| {
+                        if let RVal::Array(a) = v {
+                            a.borrow().last().cloned()
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(RVal::Null);
                 Some(Ok(val))
             }
@@ -1081,7 +1367,13 @@ impl RirInterpreter {
                         let heap = self.heap.borrow();
                         heap.get(src_id)
                             .and_then(|o| o.fields.get("__items__"))
-                            .and_then(|v| if let RVal::Array(a) = v { Some(a.borrow().clone()) } else { None })
+                            .and_then(|v| {
+                                if let RVal::Array(a) = v {
+                                    Some(a.borrow().clone())
+                                } else {
+                                    None
+                                }
+                            })
                             .unwrap_or_default()
                     }
                     _ => vec![],
@@ -1099,7 +1391,7 @@ impl RirInterpreter {
                             }
                         }
                         if sorted {
-                            arr.borrow_mut().sort_by(|a, b| crate::builtins::rval_cmp(a, b));
+                            arr.borrow_mut().sort_by(crate::builtins::rval_cmp);
                         }
                     }
                 }
@@ -1113,7 +1405,13 @@ impl RirInterpreter {
                         let heap = self.heap.borrow();
                         heap.get(src_id)
                             .and_then(|o| o.fields.get("__items__"))
-                            .and_then(|v| if let RVal::Array(a) = v { Some(a.borrow().iter().map(|x| x.to_display()).collect()) } else { None })
+                            .and_then(|v| {
+                                if let RVal::Array(a) = v {
+                                    Some(a.borrow().iter().map(|x| x.to_display()).collect())
+                                } else {
+                                    None
+                                }
+                            })
                             .unwrap_or_default()
                     }
                     _ => std::collections::HashSet::new(),
@@ -1121,7 +1419,8 @@ impl RirInterpreter {
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
                     if let Some(RVal::Array(arr)) = obj.fields.get("__items__") {
-                        arr.borrow_mut().retain(|v| keep_keys.contains(&v.to_display()));
+                        arr.borrow_mut()
+                            .retain(|v| keep_keys.contains(&v.to_display()));
                     }
                 }
                 Some(Ok(RVal::Bool(true)))
@@ -1133,7 +1432,13 @@ impl RirInterpreter {
                         let heap = self.heap.borrow();
                         heap.get(src_id)
                             .and_then(|o| o.fields.get("__items__"))
-                            .and_then(|v| if let RVal::Array(a) = v { Some(a.borrow().iter().map(|x| x.to_display()).collect()) } else { None })
+                            .and_then(|v| {
+                                if let RVal::Array(a) = v {
+                                    Some(a.borrow().iter().map(|x| x.to_display()).collect())
+                                } else {
+                                    None
+                                }
+                            })
                             .unwrap_or_default()
                     }
                     _ => std::collections::HashSet::new(),
@@ -1141,7 +1446,8 @@ impl RirInterpreter {
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
                     if let Some(RVal::Array(arr)) = obj.fields.get("__items__") {
-                        arr.borrow_mut().retain(|v| !remove_keys.contains(&v.to_display()));
+                        arr.borrow_mut()
+                            .retain(|v| !remove_keys.contains(&v.to_display()));
                     }
                 }
                 Some(Ok(RVal::Bool(true)))
@@ -1149,15 +1455,25 @@ impl RirInterpreter {
             "clear" => {
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
-                    obj.fields.insert("__items__".into(), RVal::Array(Rc::new(RefCell::new(vec![]))));
+                    obj.fields.insert(
+                        "__items__".into(),
+                        RVal::Array(Rc::new(RefCell::new(vec![]))),
+                    );
                 }
                 Some(Ok(RVal::Void))
             }
             "iterator" | "stream" | "toList" => {
                 let heap = self.heap.borrow();
-                let items = heap.get(&id)
+                let items = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get("__items__"))
-                    .map(|v| if let RVal::Array(a) = v { a.borrow().clone() } else { vec![] })
+                    .map(|v| {
+                        if let RVal::Array(a) = v {
+                            a.borrow().clone()
+                        } else {
+                            vec![]
+                        }
+                    })
                     .unwrap_or_default();
                 Some(Ok(RVal::Array(Rc::new(RefCell::new(items)))))
             }
@@ -1166,12 +1482,18 @@ impl RirInterpreter {
                     let heap = self.heap.borrow();
                     heap.get(&id)
                         .and_then(|o| o.fields.get("__items__"))
-                        .map(|v| if let RVal::Array(a) = v { a.borrow().clone() } else { vec![] })
+                        .map(|v| {
+                            if let RVal::Array(a) = v {
+                                a.borrow().clone()
+                            } else {
+                                vec![]
+                            }
+                        })
                         .unwrap_or_default()
                 };
                 let lambda = args.first().cloned().unwrap_or(RVal::Null);
                 for item in &items {
-                    match self.invoke_lambda(&lambda, &[item.clone()]) {
+                    match self.invoke_lambda(&lambda, std::slice::from_ref(item)) {
                         Ok(_) => {}
                         Err(e) => return Some(Err(e)),
                     }
@@ -1180,12 +1502,18 @@ impl RirInterpreter {
             }
             "toString" => {
                 let heap = self.heap.borrow();
-                let s = heap.get(&id)
+                let s = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get("__items__"))
-                    .map(|v| if let RVal::Array(a) = v {
-                        let items: Vec<String> = a.borrow().iter().map(|x| x.to_display()).collect();
-                        format!("[{}]", items.join(", "))
-                    } else { "[]".into() })
+                    .map(|v| {
+                        if let RVal::Array(a) = v {
+                            let items: Vec<String> =
+                                a.borrow().iter().map(|x| x.to_display()).collect();
+                            format!("[{}]", items.join(", "))
+                        } else {
+                            "[]".into()
+                        }
+                    })
                     .unwrap_or_else(|| "[]".into());
                 Some(Ok(RVal::Str(s)))
             }
@@ -1193,17 +1521,26 @@ impl RirInterpreter {
         }
     }
 
-    pub(super) fn dispatch_priority_queue(&self, id: ObjId, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
+    pub(super) fn dispatch_priority_queue(
+        &self,
+        id: ObjId,
+        method: &str,
+        args: &[RVal],
+    ) -> Option<Result<RVal>> {
         match method {
             "offer" | "add" => {
                 let val = args.first().cloned().unwrap_or(RVal::Null);
                 let comparator = {
                     let heap = self.heap.borrow();
-                    heap.get(&id).and_then(|o| o.fields.get("__comparator__").cloned())
+                    heap.get(&id)
+                        .and_then(|o| o.fields.get("__comparator__").cloned())
                 };
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
-                    let items = obj.fields.entry("__items__".into()).or_insert(RVal::Array(Rc::new(RefCell::new(vec![]))));
+                    let items = obj
+                        .fields
+                        .entry("__items__".into())
+                        .or_insert(RVal::Array(Rc::new(RefCell::new(vec![]))));
                     if let RVal::Array(arr) = items {
                         arr.borrow_mut().push(val);
                         let arr_clone = arr.clone();
@@ -1213,16 +1550,22 @@ impl RirInterpreter {
                             for i in 1..elems.len() {
                                 let mut j = i;
                                 while j > 0 {
-                                    let cmp_result = self.invoke_lambda(&cmp, &[elems[j-1].clone(), elems[j].clone()]);
+                                    let cmp_result = self.invoke_lambda(
+                                        &cmp,
+                                        &[elems[j - 1].clone(), elems[j].clone()],
+                                    );
                                     match cmp_result {
-                                        Ok(r) if r.as_int() > 0 => { elems.swap(j-1, j); j -= 1; }
+                                        Ok(r) if r.as_int() > 0 => {
+                                            elems.swap(j - 1, j);
+                                            j -= 1;
+                                        }
                                         _ => break,
                                     }
                                 }
                             }
                             *arr_clone.borrow_mut() = elems;
                         } else {
-                            arr_clone.borrow_mut().sort_by(|a, b| crate::builtins::rval_cmp(a, b));
+                            arr_clone.borrow_mut().sort_by(crate::builtins::rval_cmp);
                         }
                     }
                 }
@@ -1233,7 +1576,9 @@ impl RirInterpreter {
                 if let Some(obj) = heap.get_mut(&id) {
                     if let Some(RVal::Array(arr)) = obj.fields.get("__items__") {
                         let mut v = arr.borrow_mut();
-                        if !v.is_empty() { return Some(Ok(v.remove(0))); }
+                        if !v.is_empty() {
+                            return Some(Ok(v.remove(0)));
+                        }
                     }
                 }
                 Some(Ok(RVal::Null))
@@ -1249,24 +1594,41 @@ impl RirInterpreter {
             }
             "size" => {
                 let heap = self.heap.borrow();
-                let n = heap.get(&id)
+                let n = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get("__items__"))
-                    .and_then(|v| if let RVal::Array(a) = v { Some(a.borrow().len() as i64) } else { None })
+                    .and_then(|v| {
+                        if let RVal::Array(a) = v {
+                            Some(a.borrow().len() as i64)
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(0);
                 Some(Ok(RVal::Int(n)))
             }
             "isEmpty" => {
                 let heap = self.heap.borrow();
-                let empty = heap.get(&id)
+                let empty = heap
+                    .get(&id)
                     .and_then(|o| o.fields.get("__items__"))
-                    .and_then(|v| if let RVal::Array(a) = v { Some(a.borrow().is_empty()) } else { None })
+                    .and_then(|v| {
+                        if let RVal::Array(a) = v {
+                            Some(a.borrow().is_empty())
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(true);
                 Some(Ok(RVal::Bool(empty)))
             }
             "clear" => {
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
-                    obj.fields.insert("__items__".into(), RVal::Array(Rc::new(RefCell::new(vec![]))));
+                    obj.fields.insert(
+                        "__items__".into(),
+                        RVal::Array(Rc::new(RefCell::new(vec![]))),
+                    );
                 }
                 Some(Ok(RVal::Void))
             }

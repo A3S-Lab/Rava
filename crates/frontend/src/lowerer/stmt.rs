@@ -3,6 +3,77 @@
 use super::*;
 
 impl<'a> FuncCtx<'a> {
+    fn collect_condition_assigned_names(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+        match expr {
+            Expr::Assign { lhs, rhs } | Expr::CompoundAssign { lhs, rhs, .. } => {
+                if let Expr::Ident(name) = lhs.as_ref() {
+                    out.insert(name.clone());
+                }
+                Self::collect_condition_assigned_names(lhs, out);
+                Self::collect_condition_assigned_names(rhs, out);
+            }
+            Expr::UnaryOp { op, expr } => {
+                if matches!(
+                    op,
+                    UnaryOp::PreInc | UnaryOp::PreDec | UnaryOp::PostInc | UnaryOp::PostDec
+                ) && matches!(expr.as_ref(), Expr::Ident(_))
+                {
+                    if let Expr::Ident(name) = expr.as_ref() {
+                        out.insert(name.clone());
+                    }
+                }
+                Self::collect_condition_assigned_names(expr, out);
+            }
+            Expr::Field { obj, .. }
+            | Expr::Cast { expr: obj, .. }
+            | Expr::Instanceof { expr: obj, .. }
+            | Expr::InstanceofPattern { expr: obj, .. }
+            | Expr::RecordPattern { expr: obj, .. }
+            | Expr::NewArray { len: obj, .. }
+            | Expr::MethodRef { obj, .. } => Self::collect_condition_assigned_names(obj, out),
+            Expr::Call {
+                callee,
+                args,
+                type_args_raw: _,
+            } => {
+                Self::collect_condition_assigned_names(callee, out);
+                for arg in args {
+                    Self::collect_condition_assigned_names(arg, out);
+                }
+            }
+            Expr::New { args, .. }
+            | Expr::NewMultiArray { dims: args, .. }
+            | Expr::ArrayInit { elements: args, .. } => {
+                for arg in args {
+                    Self::collect_condition_assigned_names(arg, out);
+                }
+            }
+            Expr::Index { arr, idx }
+            | Expr::BinOp {
+                lhs: arr, rhs: idx, ..
+            } => {
+                Self::collect_condition_assigned_names(arr, out);
+                Self::collect_condition_assigned_names(idx, out);
+            }
+            Expr::Ternary { cond, then, else_ } => {
+                Self::collect_condition_assigned_names(cond, out);
+                Self::collect_condition_assigned_names(then, out);
+                Self::collect_condition_assigned_names(else_, out);
+            }
+            Expr::Lambda { .. }
+            | Expr::SwitchExpr { .. }
+            | Expr::IntLit(_)
+            | Expr::FloatLit(_)
+            | Expr::StrLit(_)
+            | Expr::CharLit(_)
+            | Expr::BoolLit(_)
+            | Expr::Null
+            | Expr::Ident(_)
+            | Expr::This
+            | Expr::Super => {}
+        }
+    }
+
     /// Lower a single switch case label against `switch_val`, returning a boolean Value.
     /// For type patterns and guarded patterns, also populates `bindings` with the bound name.
     pub(super) fn lower_switch_label(
@@ -14,10 +85,15 @@ impl<'a> FuncCtx<'a> {
         // case null — emit null-equality check
         if matches!(label, Expr::Null) {
             let null_val = self.fresh_value();
-            self.emit(RirInstr::ConstNull { ret: null_val.clone() });
+            self.emit(RirInstr::ConstNull {
+                ret: null_val.clone(),
+            });
             let cmp = self.fresh_value();
             self.emit(RirInstr::BinOp {
-                op: RirBinOp::Eq, lhs: switch_val.clone(), rhs: null_val, ret: cmp.clone(),
+                op: RirBinOp::Eq,
+                lhs: switch_val.clone(),
+                rhs: null_val,
+                ret: cmp.clone(),
             });
             return Ok(cmp);
         }
@@ -37,7 +113,10 @@ impl<'a> FuncCtx<'a> {
             }
         }
         // Guarded pattern: Ternary { cond: InstanceofPattern { .. }, then: guard, else_: false }
-        if let Expr::Ternary { cond, then: guard, .. } = label {
+        if let Expr::Ternary {
+            cond, then: guard, ..
+        } = label
+        {
             if let Expr::InstanceofPattern { ty, name, .. } = cond.as_ref() {
                 let instanceof = self.fresh_value();
                 self.emit(RirInstr::Instanceof {
@@ -48,12 +127,14 @@ impl<'a> FuncCtx<'a> {
                 bindings.push((name.clone(), switch_val.clone()));
                 // Short-circuit: only eval guard if instanceof passes
                 let pre = self.current;
-                let guard_bb  = self.new_block();
-                let merge_bb  = self.new_block();
-                let false_bb  = self.new_block();
-                let result    = self.fresh_value();
+                let guard_bb = self.new_block();
+                let merge_bb = self.new_block();
+                let false_bb = self.new_block();
+                let result = self.fresh_value();
                 self.blocks[pre].instrs.push(RirInstr::Branch {
-                    cond: instanceof, then_bb: guard_bb, else_bb: false_bb,
+                    cond: instanceof,
+                    then_bb: guard_bb,
+                    else_bb: false_bb,
                 });
                 self.switch_to(guard_bb);
                 // Temporarily bind the pattern variable so the guard can reference it
@@ -65,7 +146,10 @@ impl<'a> FuncCtx<'a> {
                 });
                 self.emit(RirInstr::Jump(merge_bb));
                 self.switch_to(false_bb);
-                self.emit(RirInstr::ConstBool { ret: result.clone(), value: false });
+                self.emit(RirInstr::ConstBool {
+                    ret: result.clone(),
+                    value: false,
+                });
                 self.emit(RirInstr::Jump(merge_bb));
                 self.switch_to(merge_bb);
                 return Ok(result);
@@ -76,10 +160,16 @@ impl<'a> FuncCtx<'a> {
         if let Expr::Ident(name) = label {
             if !self.vars.contains_key(name.as_str()) {
                 let label_val = self.fresh_value();
-                self.emit(RirInstr::ConstStr { ret: label_val.clone(), value: name.clone() });
+                self.emit(RirInstr::ConstStr {
+                    ret: label_val.clone(),
+                    value: name.clone(),
+                });
                 let cmp = self.fresh_value();
                 self.emit(RirInstr::BinOp {
-                    op: RirBinOp::Eq, lhs: switch_val.clone(), rhs: label_val, ret: cmp.clone(),
+                    op: RirBinOp::Eq,
+                    lhs: switch_val.clone(),
+                    rhs: label_val,
+                    ret: cmp.clone(),
                 });
                 return Ok(cmp);
             }
@@ -88,7 +178,10 @@ impl<'a> FuncCtx<'a> {
         let label_val = self.lower_expr(label)?;
         let cmp = self.fresh_value();
         self.emit(RirInstr::BinOp {
-            op: RirBinOp::Eq, lhs: switch_val.clone(), rhs: label_val, ret: cmp.clone(),
+            op: RirBinOp::Eq,
+            lhs: switch_val.clone(),
+            rhs: label_val,
+            ret: cmp.clone(),
         });
         Ok(cmp)
     }
@@ -103,7 +196,9 @@ impl<'a> FuncCtx<'a> {
     pub(super) fn lower_stmt(&mut self, stmt: &Stmt) -> Result<()> {
         match stmt {
             Stmt::Empty => {}
-            Stmt::Expr(e) => { self.lower_expr(e)?; }
+            Stmt::Expr(e) => {
+                self.lower_expr(e)?;
+            }
             Stmt::Return(e) => {
                 let val = e.as_ref().map(|e| self.lower_expr(e)).transpose()?;
                 self.emit(RirInstr::Return(val));
@@ -117,12 +212,14 @@ impl<'a> FuncCtx<'a> {
             Stmt::Block(b) => self.lower_block(b)?,
             Stmt::If { cond, then, else_ } => {
                 let cond_val = self.lower_expr(cond)?;
-                let pre_if   = self.current;
-                let then_bb  = self.new_block();
-                let else_bb  = self.new_block();
+                let pre_if = self.current;
+                let then_bb = self.new_block();
+                let else_bb = self.new_block();
                 let merge_bb = self.new_block();
                 self.blocks[pre_if].instrs.push(RirInstr::Branch {
-                    cond: cond_val, then_bb, else_bb,
+                    cond: cond_val,
+                    then_bb,
+                    else_bb,
                 });
                 self.switch_to(then_bb);
                 self.lower_stmt(then)?;
@@ -141,14 +238,23 @@ impl<'a> FuncCtx<'a> {
             Stmt::While { cond, body } => {
                 let pre_while = self.current;
                 let header_bb = self.new_block();
-                let body_bb   = self.new_block();
-                let exit_bb   = self.new_block();
-                self.blocks[pre_while].instrs.push(RirInstr::Jump(header_bb));
+                let body_bb = self.new_block();
+                let exit_bb = self.new_block();
+                self.blocks[pre_while]
+                    .instrs
+                    .push(RirInstr::Jump(header_bb));
 
                 // Switch to header and evaluate condition
                 self.switch_to(header_bb);
+                let pre_cond_vars = self.vars.clone();
+                let mut cond_assigned_names = std::collections::HashSet::new();
+                Self::collect_condition_assigned_names(cond, &mut cond_assigned_names);
                 let cond_val = self.lower_expr(cond)?;
-                self.emit(RirInstr::Branch { cond: cond_val, then_bb: body_bb, else_bb: exit_bb });
+                self.emit(RirInstr::Branch {
+                    cond: cond_val,
+                    then_bb: body_bb,
+                    else_bb: exit_bb,
+                });
 
                 // Snapshot vars AFTER lowering condition (condition may create new SSA values)
                 let pre_body_vars = self.vars.clone();
@@ -167,12 +273,6 @@ impl<'a> FuncCtx<'a> {
                 // SSA values that the header condition uses. This is necessary because the body
                 // may assign to a variable multiple times, and only the final value should be
                 // visible to the header on the next iteration.
-                //
-                // KNOWN LIMITATION: This approach fails for assignment-in-condition patterns like
-                // `while ((x = f()) != null) { x++; }` because the condition reads from x_0,
-                // assigns to x_1, the body creates x_2, and we propagate x_2 → x_1, but the next
-                // iteration still reads x_0 (which never gets updated). Proper fix requires PHI
-                // nodes at loop headers. See docs/known-limitations.md for details.
                 if !self.current_block_ends_with_terminator() {
                     for (name, post_val) in &post_body_vars {
                         if let Some(pre_val) = pre_body_vars.get(name) {
@@ -183,18 +283,32 @@ impl<'a> FuncCtx<'a> {
                                 });
                             }
                         }
+                        if cond_assigned_names.contains(name) {
+                            if let Some(pre_cond_val) = pre_cond_vars.get(name) {
+                                if pre_cond_val != post_val {
+                                    self.emit(RirInstr::ConstStr {
+                                        ret: pre_cond_val.clone(),
+                                        value: format!("__copy__{}", post_val.0),
+                                    });
+                                }
+                            }
+                        }
                     }
                     self.emit(RirInstr::Jump(header_bb));
                 }
 
                 self.loop_stack.pop();
                 self.switch_to(exit_bb);
+                // After loop exit, continue with pre-body SSA names.
+                // These names are updated by back-edge copies and avoid stale
+                // post-body-only SSA slots when the body does not execute.
+                self.vars = pre_body_vars;
             }
             Stmt::DoWhile { body, cond } => {
                 let pre = self.current;
-                let body_bb   = self.new_block();
+                let body_bb = self.new_block();
                 let header_bb = self.new_block();
-                let exit_bb   = self.new_block();
+                let exit_bb = self.new_block();
                 self.blocks[pre].instrs.push(RirInstr::Jump(body_bb));
                 self.loop_stack.push((exit_bb, header_bb));
                 self.register_pending_label(exit_bb, header_bb);
@@ -206,21 +320,36 @@ impl<'a> FuncCtx<'a> {
                 self.loop_stack.pop();
                 self.switch_to(header_bb);
                 let cond_val = self.lower_expr(cond)?;
-                self.emit(RirInstr::Branch { cond: cond_val, then_bb: body_bb, else_bb: exit_bb });
+                self.emit(RirInstr::Branch {
+                    cond: cond_val,
+                    then_bb: body_bb,
+                    else_bb: exit_bb,
+                });
                 self.switch_to(exit_bb);
             }
-            Stmt::For { init, cond, update, body } => {
-                if let Some(init) = init { self.lower_stmt(init)?; }
-                let pre_for   = self.current;
+            Stmt::For {
+                init,
+                cond,
+                update,
+                body,
+            } => {
+                if let Some(init) = init {
+                    self.lower_stmt(init)?;
+                }
+                let pre_for = self.current;
                 let header_bb = self.new_block();
-                let body_bb   = self.new_block();
+                let body_bb = self.new_block();
                 let update_bb = self.new_block();
-                let exit_bb   = self.new_block();
+                let exit_bb = self.new_block();
                 self.blocks[pre_for].instrs.push(RirInstr::Jump(header_bb));
                 self.switch_to(header_bb);
                 if let Some(cond) = cond {
                     let cond_val = self.lower_expr(cond)?;
-                    self.emit(RirInstr::Branch { cond: cond_val, then_bb: body_bb, else_bb: exit_bb });
+                    self.emit(RirInstr::Branch {
+                        cond: cond_val,
+                        then_bb: body_bb,
+                        else_bb: exit_bb,
+                    });
                 } else {
                     self.emit(RirInstr::Jump(body_bb));
                 }
@@ -235,7 +364,9 @@ impl<'a> FuncCtx<'a> {
                 }
                 self.loop_stack.pop();
                 self.switch_to(update_bb);
-                for u in update { self.lower_expr(u)?; }
+                for u in update {
+                    self.lower_expr(u)?;
+                }
                 if !self.current_block_ends_with_terminator() {
                     self.emit(RirInstr::Jump(header_bb));
                 }
@@ -243,20 +374,25 @@ impl<'a> FuncCtx<'a> {
                 // Restore vars to pre-body snapshot
                 self.vars = pre_body_vars;
             }
-            Stmt::ForEach { ty: _, name, iterable, body } => {
+            Stmt::ForEach {
+                ty: _,
+                name,
+                iterable,
+                body,
+            } => {
                 let collection = self.lower_expr(iterable)?;
 
                 let iter_var = self.fresh_value();
                 self.emit(RirInstr::Call {
                     func: FuncId(encode_builtin("__method__iterator")),
                     args: vec![collection],
-                    ret:  Some(iter_var.clone()),
+                    ret: Some(iter_var.clone()),
                 });
 
                 let pre = self.current;
                 let header_bb = self.new_block();
-                let body_bb   = self.new_block();
-                let exit_bb   = self.new_block();
+                let body_bb = self.new_block();
+                let exit_bb = self.new_block();
                 self.blocks[pre].instrs.push(RirInstr::Jump(header_bb));
 
                 self.switch_to(header_bb);
@@ -264,9 +400,13 @@ impl<'a> FuncCtx<'a> {
                 self.emit(RirInstr::Call {
                     func: FuncId(encode_builtin("__method__hasNext")),
                     args: vec![iter_var.clone()],
-                    ret:  Some(has_next.clone()),
+                    ret: Some(has_next.clone()),
                 });
-                self.emit(RirInstr::Branch { cond: has_next, then_bb: body_bb, else_bb: exit_bb });
+                self.emit(RirInstr::Branch {
+                    cond: has_next,
+                    then_bb: body_bb,
+                    else_bb: exit_bb,
+                });
 
                 self.loop_stack.push((exit_bb, header_bb));
                 self.register_pending_label(exit_bb, header_bb);
@@ -275,7 +415,7 @@ impl<'a> FuncCtx<'a> {
                 self.emit(RirInstr::Call {
                     func: FuncId(encode_builtin("__method__next")),
                     args: vec![iter_var.clone()],
-                    ret:  Some(elem.clone()),
+                    ret: Some(elem.clone()),
                 });
                 self.vars.insert(name.clone(), elem);
                 self.lower_stmt(body)?;
@@ -317,14 +457,24 @@ impl<'a> FuncCtx<'a> {
                 let val = self.lower_expr(e)?;
                 self.emit(RirInstr::Throw(val));
             }
-            Stmt::TryCatch { try_body, catches, finally_body } => {
-                let finally_bb = if finally_body.is_some() { Some(self.new_block()) } else { None };
+            Stmt::TryCatch {
+                try_body,
+                catches,
+                finally_body,
+            } => {
+                let finally_bb = if finally_body.is_some() {
+                    Some(self.new_block())
+                } else {
+                    None
+                };
                 let exit_bb = self.new_block();
 
                 let mut catch_blocks: Vec<(BlockId, Vec<String>)> = Vec::new();
                 for catch in catches {
                     let cbb = self.new_block();
-                    let types: Vec<String> = catch.exception_types.iter()
+                    let types: Vec<String> = catch
+                        .exception_types
+                        .iter()
                         .map(|t| t.name.clone())
                         .collect();
                     catch_blocks.push((cbb, types));
@@ -412,13 +562,20 @@ impl<'a> FuncCtx<'a> {
                             let mut or_val = None;
                             let mut pattern_bindings: Vec<(String, Value)> = Vec::new();
                             for label_expr in labels {
-                                let cmp = self.lower_switch_label(label_expr, &switch_val, &mut pattern_bindings)?;
+                                let cmp = self.lower_switch_label(
+                                    label_expr,
+                                    &switch_val,
+                                    &mut pattern_bindings,
+                                )?;
                                 or_val = Some(match or_val {
                                     None => cmp,
                                     Some(prev) => {
                                         let merged = self.fresh_value();
                                         self.emit(RirInstr::BinOp {
-                                            op: RirBinOp::Or, lhs: prev, rhs: cmp, ret: merged.clone(),
+                                            op: RirBinOp::Or,
+                                            lhs: prev,
+                                            rhs: cmp,
+                                            ret: merged.clone(),
                                         });
                                         merged
                                     }
@@ -426,14 +583,18 @@ impl<'a> FuncCtx<'a> {
                             }
                             let cond_ret = or_val.unwrap();
                             let next_bb = self.new_block();
-                            self.blocks[check].instrs.push(
-                                RirInstr::Branch { cond: cond_ret, then_bb: body_bb, else_bb: next_bb }
-                            );
+                            self.blocks[check].instrs.push(RirInstr::Branch {
+                                cond: cond_ret,
+                                then_bb: body_bb,
+                                else_bb: next_bb,
+                            });
                             self.switch_to(body_bb);
                             for (name, val) in pattern_bindings {
                                 self.vars.insert(name, val);
                             }
-                            for stmt in &case.body { self.lower_stmt(stmt)?; }
+                            for stmt in &case.body {
+                                self.lower_stmt(stmt)?;
+                            }
                             if !self.current_block_ends_with_terminator() {
                                 // Fall through to next case body (colon-syntax) or exit (arrow-syntax)
                                 self.emit(RirInstr::Jump(next_body_bb));
@@ -444,7 +605,9 @@ impl<'a> FuncCtx<'a> {
                             self.switch_to(self.blocks[check].id);
                             self.emit(RirInstr::Jump(body_bb));
                             self.switch_to(body_bb);
-                            for stmt in &case.body { self.lower_stmt(stmt)?; }
+                            for stmt in &case.body {
+                                self.lower_stmt(stmt)?;
+                            }
                             if !self.current_block_ends_with_terminator() {
                                 self.emit(RirInstr::Jump(exit_bb));
                             }
@@ -465,16 +628,21 @@ impl<'a> FuncCtx<'a> {
                 let cond_val = self.lower_expr(expr)?;
                 let pre = self.current;
                 let throw_bb = self.new_block();
-                let cont_bb  = self.new_block();
+                let cont_bb = self.new_block();
                 self.blocks[pre].instrs.push(RirInstr::Branch {
-                    cond: cond_val, then_bb: cont_bb, else_bb: throw_bb,
+                    cond: cond_val,
+                    then_bb: cont_bb,
+                    else_bb: throw_bb,
                 });
                 self.switch_to(throw_bb);
                 let msg = if let Some(m) = message {
                     self.lower_expr(m)?
                 } else {
                     let v = self.fresh_value();
-                    self.emit(RirInstr::ConstStr { ret: v.clone(), value: "Assertion failed".into() });
+                    self.emit(RirInstr::ConstStr {
+                        ret: v.clone(),
+                        value: "Assertion failed".into(),
+                    });
                     v
                 };
                 // Throw as AssertionError object so catch(AssertionError e) works

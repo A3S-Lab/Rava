@@ -18,13 +18,13 @@
 //!   ▼ system linker (lld / ld / link.exe): object file → native binary
 //! ```
 
-use std::path::Path;
+use rava_aot::CodegenBackend;
 use rava_common::error::{RavaError, Result};
 use rava_rir::Module;
-use rava_aot::CodegenBackend;
+use std::path::Path;
 
-use cranelift_codegen::settings::{self, Configurable};
 use cranelift_codegen::isa;
+use cranelift_codegen::settings::{self, Configurable};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use target_lexicon::Triple;
 
@@ -43,14 +43,17 @@ impl CraneliftBackend {
     /// Create a backend targeting the host platform with speed optimization.
     pub fn new() -> Self {
         Self {
-            target:    Triple::host(),
+            target: Triple::host(),
             opt_level: "speed",
         }
     }
 
     /// Create a backend for a specific target triple (cross-compilation).
     pub fn for_target(target: Triple) -> Self {
-        Self { target, opt_level: "speed" }
+        Self {
+            target,
+            opt_level: "speed",
+        }
     }
 
     pub fn with_opt_level(mut self, level: &'static str) -> Self {
@@ -61,17 +64,17 @@ impl CraneliftBackend {
     /// Build a Cranelift `ObjectModule` configured for our target.
     fn make_object_module(&self) -> Result<ObjectModule> {
         let mut flag_builder = settings::builder();
-        flag_builder.set("opt_level", self.opt_level).map_err(|e| {
-            RavaError::Codegen(format!("cranelift flag error: {e}"))
-        })?;
+        flag_builder
+            .set("opt_level", self.opt_level)
+            .map_err(|e| RavaError::Codegen(format!("cranelift flag error: {e}")))?;
         // Enable frame pointers for better stack unwinding / GC stack maps.
-        flag_builder.set("preserve_frame_pointers", "true").map_err(|e| {
-            RavaError::Codegen(format!("cranelift flag error: {e}"))
-        })?;
+        flag_builder
+            .set("preserve_frame_pointers", "true")
+            .map_err(|e| RavaError::Codegen(format!("cranelift flag error: {e}")))?;
         // Enable PIC for macOS compatibility (required for linking).
-        flag_builder.set("is_pic", "true").map_err(|e| {
-            RavaError::Codegen(format!("cranelift flag error: {e}"))
-        })?;
+        flag_builder
+            .set("is_pic", "true")
+            .map_err(|e| RavaError::Codegen(format!("cranelift flag error: {e}")))?;
 
         let flags = settings::Flags::new(flag_builder);
         let isa = isa::lookup(self.target.clone())
@@ -83,7 +86,8 @@ impl CraneliftBackend {
             isa,
             "rava_output",
             cranelift_module::default_libcall_names(),
-        ).map_err(|e| RavaError::Codegen(format!("object builder error: {e}")))?;
+        )
+        .map_err(|e| RavaError::Codegen(format!("object builder error: {e}")))?;
 
         Ok(ObjectModule::new(obj_builder))
     }
@@ -92,15 +96,13 @@ impl CraneliftBackend {
     fn link(&self, obj_module: ObjectModule, output: &Path) -> Result<()> {
         // Finalize all function definitions and get the object product.
         let product = obj_module.finish();
-        let obj_bytes = product.emit().map_err(|e| {
-            RavaError::Codegen(format!("object emission failed: {e}"))
-        })?;
+        let obj_bytes = product
+            .emit()
+            .map_err(|e| RavaError::Codegen(format!("object emission failed: {e}")))?;
 
         // Write the object file next to the output binary.
         let obj_path = output.with_extension("o");
-        std::fs::write(&obj_path, &obj_bytes).map_err(|e| {
-            RavaError::Io(e)
-        })?;
+        std::fs::write(&obj_path, &obj_bytes).map_err(RavaError::Io)?;
 
         // Invoke the system linker.
         self.invoke_linker(&obj_path, output)?;

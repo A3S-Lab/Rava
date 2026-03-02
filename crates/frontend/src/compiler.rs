@@ -1,23 +1,27 @@
 //! Frontend compiler — orchestrates the lex → parse → lower pipeline.
 
-use std::path::{Path, PathBuf};
+use crate::{checker::GenericChecker, lexer::Lexer, lowerer::Lowerer, parser::Parser};
 use rava_common::error::Result;
 use rava_rir::Module;
-use crate::{lexer::Lexer, lowerer::Lowerer, parser::Parser};
+use std::path::{Path, PathBuf};
 
 /// Compiles Java source files to RIR.
 pub struct Compiler;
 
 impl Compiler {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     /// Compile a single Java source file to a RIR module.
     pub fn compile(&self, source: &str, file: &Path) -> Result<Module> {
-        let module_name = file.file_stem()
+        let module_name = file
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("module");
         let tokens = Lexer::new(source).tokenize()?;
-        let ast    = Parser::new(tokens).parse_file()?;
+        let ast = Parser::new(tokens).parse_file()?;
+        GenericChecker::check_file(&ast)?;
         Lowerer::new(module_name).lower_file(&ast)
     }
 
@@ -51,7 +55,9 @@ impl Compiler {
 }
 
 impl Default for Compiler {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

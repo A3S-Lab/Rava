@@ -63,9 +63,13 @@ fn find_java_files() -> Result<Vec<PathBuf>> {
     let dirs = ["src", "."];
     for dir in &dirs {
         let dir_path = PathBuf::from(dir);
-        if !dir_path.exists() { continue; }
+        if !dir_path.exists() {
+            continue;
+        }
         collect_java_files(&dir_path, &mut files)?;
-        if !files.is_empty() { break; } // prefer src/ if it has files
+        if !files.is_empty() {
+            break;
+        } // prefer src/ if it has files
     }
     files.sort();
     Ok(files)
@@ -106,7 +110,9 @@ fn format_java(source: &str) -> String {
         // Decrease indent for closing braces
         if trimmed.starts_with('}') || trimmed.starts_with(')') {
             indent -= 1;
-            if indent < 0 { indent = 0; }
+            if indent < 0 {
+                indent = 0;
+            }
         }
 
         // Write indented line
@@ -124,7 +130,9 @@ fn format_java(source: &str) -> String {
             // Already decremented above, add back the close we counted
             indent += 1;
         }
-        if indent < 0 { indent = 0; }
+        if indent < 0 {
+            indent = 0;
+        }
     }
 
     // Ensure trailing newline

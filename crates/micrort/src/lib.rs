@@ -1,7 +1,8 @@
-//! Rava MicroRT — Phase 1: RIR interpreter for direct execution.
+//! Rava MicroRT — Phase 3: RIR interpreter + JVM bytecode interpreter.
 //!
-//! In Phase 1, MicroRT executes RIR directly (no bytecode).
-//! Phase 3 will add the full bytecode interpreter + class loader.
+//! Phase 1/2: executes RIR directly (`RirInterpreter`).
+//! Phase 3: JVM bytecode interpreter (`Interpreter`) + structural verifier
+//!          (`BytecodeVerifier`) + reflection engine (`ReflectionEngine`).
 
 pub mod builtins;
 pub mod interpreter;
@@ -11,7 +12,7 @@ pub mod reflection;
 pub mod rir_interp;
 pub mod verifier;
 
-pub use interpreter::{BytecodeDispatcher, Interpreter};
+pub use interpreter::{BytecodeDispatcher, Interpreter, MatchDispatcher};
 pub use loader::ClassLoader;
 pub use reflection::ReflectionEngine;
 pub use rir_interp::RirInterpreter;

@@ -1,7 +1,7 @@
 //! Runtime value types: ObjId, JavaObject, RVal.
 
-use std::collections::HashMap;
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 pub type ObjId = u64;
@@ -10,7 +10,7 @@ pub type ObjId = u64;
 #[derive(Debug, Clone)]
 pub struct JavaObject {
     pub class_name: String,
-    pub fields:     HashMap<String, RVal>,
+    pub fields: HashMap<String, RVal>,
 }
 
 /// A runtime value.
@@ -31,10 +31,16 @@ pub enum RVal {
 impl RVal {
     pub(crate) fn as_int(&self) -> i64 {
         match self {
-            RVal::Int(n)   => *n,
+            RVal::Int(n) => *n,
             RVal::Float(f) => *f as i64,
-            RVal::Bool(b)  => if *b { 1 } else { 0 },
-            RVal::Str(s)   => {
+            RVal::Bool(b) => {
+                if *b {
+                    1
+                } else {
+                    0
+                }
+            }
+            RVal::Str(s) => {
                 // Single-char string: return the char's code point (for (int) c casts)
                 if s.len() == 1 {
                     s.chars().next().map(|c| c as i64).unwrap_or(0)
@@ -42,30 +48,36 @@ impl RVal {
                     s.parse::<i64>().unwrap_or(0)
                 }
             }
-            _              => 0,
+            _ => 0,
         }
     }
 
     pub(crate) fn as_float(&self) -> f64 {
         match self {
             RVal::Float(f) => *f,
-            RVal::Int(n)   => *n as f64,
-            RVal::Bool(b)  => if *b { 1.0 } else { 0.0 },
-            RVal::Str(s)   => s.parse::<f64>().unwrap_or(0.0),
-            _              => 0.0,
+            RVal::Int(n) => *n as f64,
+            RVal::Bool(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            RVal::Str(s) => s.parse::<f64>().unwrap_or(0.0),
+            _ => 0.0,
         }
     }
 
     pub(crate) fn is_truthy(&self) -> bool {
         match self {
-            RVal::Bool(b)       => *b,
-            RVal::Int(n)        => *n != 0,
-            RVal::Float(f)      => *f != 0.0,
-            RVal::Null          => false,
-            RVal::Void          => false,
-            RVal::Str(s)        => !s.is_empty(),
-            RVal::Object(_)     => true,
-            RVal::Array(_)      => true,
+            RVal::Bool(b) => *b,
+            RVal::Int(n) => *n != 0,
+            RVal::Float(f) => *f != 0.0,
+            RVal::Null => false,
+            RVal::Void => false,
+            RVal::Str(s) => !s.is_empty(),
+            RVal::Object(_) => true,
+            RVal::Array(_) => true,
             RVal::ArrayIter(..) => true,
         }
     }
@@ -76,17 +88,20 @@ impl RVal {
 
     pub fn to_display(&self) -> String {
         match self {
-            RVal::Int(n)   => n.to_string(),
+            RVal::Int(n) => n.to_string(),
             RVal::Float(f) => {
-                if f.fract() == 0.0 && f.abs() < 1e15 { format!("{:.1}", f) }
-                else { f.to_string() }
+                if f.fract() == 0.0 && f.abs() < 1e15 {
+                    format!("{:.1}", f)
+                } else {
+                    f.to_string()
+                }
             }
-            RVal::Str(s)        => s.clone(),
-            RVal::Bool(b)       => b.to_string(),
-            RVal::Null          => "null".into(),
-            RVal::Void          => "".into(),
-            RVal::Object(id)    => format!("Object@{id}"),
-            RVal::Array(arr)    => {
+            RVal::Str(s) => s.clone(),
+            RVal::Bool(b) => b.to_string(),
+            RVal::Null => "null".into(),
+            RVal::Void => "".into(),
+            RVal::Object(id) => format!("Object@{id}"),
+            RVal::Array(arr) => {
                 let v = arr.borrow();
                 let items: Vec<_> = v.iter().map(|x| x.to_display()).collect();
                 format!("[{}]", items.join(", "))

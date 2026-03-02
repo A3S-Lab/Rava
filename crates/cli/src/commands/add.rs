@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::Args;
-use rava_pkg::{ProjectConfig, ShortNameRegistry, latest_version, parse_coordinate};
+use rava_pkg::{latest_version, parse_coordinate, ProjectConfig, ShortNameRegistry};
 
 #[derive(Args)]
 pub struct AddArgs {
@@ -28,35 +28,41 @@ pub fn add(args: AddArgs) -> Result<()> {
     let registry = ShortNameRegistry::builtin();
     let coordinate = registry.resolve(&args.package).to_string();
 
-    parse_coordinate(&coordinate)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    parse_coordinate(&coordinate).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let version = match args.version {
         Some(v) => v,
         None => {
             print!("  fetching latest version of {coordinate} ... ");
-            let v = latest_version(&coordinate)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let v = latest_version(&coordinate).map_err(|e| anyhow::anyhow!("{e}"))?;
             println!("{v}");
             v
         }
     };
 
-    let mut config = ProjectConfig::from_file(&hcl_path)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut config = ProjectConfig::from_file(&hcl_path).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let display_key = args.package.clone();
 
     if args.dev {
-        config.dev_dependencies.insert(display_key.clone(), version.clone());
+        config
+            .dev_dependencies
+            .insert(display_key.clone(), version.clone());
     } else {
-        config.dependencies.insert(display_key.clone(), version.clone());
+        config
+            .dependencies
+            .insert(display_key.clone(), version.clone());
     }
 
-    config.to_file(&hcl_path)
+    config
+        .to_file(&hcl_path)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let dep_type = if args.dev { "dev dependency" } else { "dependency" };
+    let dep_type = if args.dev {
+        "dev dependency"
+    } else {
+        "dependency"
+    };
     println!("  added {dep_type}: {display_key} = \"{version}\"");
 
     Ok(())

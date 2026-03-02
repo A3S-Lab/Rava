@@ -6,11 +6,14 @@ use rava_micrort::RirInterpreter;
 /// Compile and run a Java snippet, capturing stdout output.
 fn run(src: &str) -> String {
     let compiler = Compiler::new();
-    let module = compiler.compile(src, std::path::Path::new("Test.java"))
+    let module = compiler
+        .compile(src, std::path::Path::new("Test.java"))
         .expect("compile failed");
     let interp = RirInterpreter::new(module);
     let mut output = Vec::new();
-    interp.run_main_with_output(&mut output).expect("run failed");
+    interp
+        .run_main_with_output(&mut output)
+        .expect("run failed");
     String::from_utf8(output).unwrap()
 }
 
@@ -1002,7 +1005,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Hello, World!\nHello, World!\nabcabcabc\na-b-c\n2\nhello Java");
+    assert_eq!(
+        out.trim(),
+        "Hello, World!\nHello, World!\nabcabcabc\na-b-c\n2\nhello Java"
+    );
 }
 
 #[test]
@@ -1251,7 +1257,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Hello from A\nHello from B\nHello from C\nHello from C via C");
+    assert_eq!(
+        out.trim(),
+        "Hello from A\nHello from B\nHello from C\nHello from C via C"
+    );
 }
 
 #[test]
@@ -1972,7 +1981,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "5\n3.14\n1.4142\n1.0000\n1.0000\n1024.0\n7\n3\n3.0\n4.0\n4");
+    assert_eq!(
+        out.trim(),
+        "5\n3.14\n1.4142\n1.0000\n1.0000\n1024.0\n7\n3\n3.0\n4.0\n4"
+    );
 }
 
 #[test]
@@ -2155,7 +2167,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "42\n00042\nleft      |\n     right|\n3.142\n1.234568e+05\ntrue");
+    assert_eq!(
+        out.trim(),
+        "42\n00042\nleft      |\n     right|\n3.142\n1.234568e+05\ntrue"
+    );
 }
 
 #[test]
@@ -2286,7 +2301,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "NFE: For input string: \"abc\"\nAIOOBE\nNPE\ndone");
+    assert_eq!(
+        out.trim(),
+        "NFE: For input string: \"abc\"\nAIOOBE\nNPE\ndone"
+    );
 }
 
 #[test]
@@ -2488,7 +2506,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "inner catch\ninner finally\nafter inner\nouter finally");
+    assert_eq!(
+        out.trim(),
+        "inner catch\ninner finally\nafter inner\nouter finally"
+    );
 }
 
 #[test]
@@ -2636,7 +2657,6 @@ class Main {
     assert_eq!(out.trim(), "7 7 7 7 7 \n7 7 7 \n1 2 3 4 5");
 }
 
-
 #[test]
 fn collectors_partitioning_by() {
     let out = run(r#"
@@ -2757,7 +2777,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "abcabcabc\na-b-c\nel\nhello Java\n4\nhello world");
+    assert_eq!(
+        out.trim(),
+        "abcabcabc\na-b-c\nel\nhello Java\n4\nhello world"
+    );
 }
 
 #[test]
@@ -2888,7 +2911,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Doc: hello\nsaved:hello\nDoc: hello\nsaved:hello");
+    assert_eq!(
+        out.trim(),
+        "Doc: hello\nsaved:hello\nDoc: hello\nsaved:hello"
+    );
 }
 
 #[test]
@@ -3252,7 +3278,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Rex says woof\nWhiskers says meow\nUnknown says ...");
+    assert_eq!(
+        out.trim(),
+        "Rex says woof\nWhiskers says meow\nUnknown says ..."
+    );
 }
 
 #[test]
@@ -3429,7 +3458,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "[1, 2, 3, 5, 8, 9]\n4\n[apple, banana, cherry]\n[2, 3, 5]");
+    assert_eq!(
+        out.trim(),
+        "[1, 2, 3, 5, 8, 9]\n4\n[apple, banana, cherry]\n[2, 3, 5]"
+    );
 }
 
 #[test]
@@ -3564,7 +3596,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "3 + 4 = 7\n3.14\n00042\nleft      |\n     right|\njava is true");
+    assert_eq!(
+        out.trim(),
+        "3 + 4 = 7\n3.14\n00042\nleft      |\n     right|\njava is true"
+    );
 }
 
 #[test]
@@ -3793,7 +3828,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "[5, 4, 3, 2, 1]\n[1, 2, 3, 4, 5]\n[a, b, c]\n[c, b, a]");
+    assert_eq!(
+        out.trim(),
+        "[5, 4, 3, 2, 1]\n[1, 2, 3, 4, 5]\n[a, b, c]\n[c, b, a]"
+    );
 }
 
 #[test]
@@ -3811,7 +3849,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "true\ntrue\nHello World NUM\nXello World 123\nabc\nhello");
+    assert_eq!(
+        out.trim(),
+        "true\ntrue\nHello World NUM\nXello World 123\nabc\nhello"
+    );
 }
 
 #[test]
@@ -3886,7 +3927,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "5\ncaught: division by zero\n-1\nouter: division by zero");
+    assert_eq!(
+        out.trim(),
+        "5\ncaught: division by zero\n-1\nouter: division by zero"
+    );
 }
 
 #[test]
@@ -3928,7 +3972,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "-42\n9876543210\n3.14\n2.5\n2147483647\n-2147483648\n-1\n1\n0");
+    assert_eq!(
+        out.trim(),
+        "-42\n9876543210\n3.14\n2.5\n2147483647\n-2147483648\n-1\n1\n0"
+    );
 }
 
 #[test]
@@ -3981,7 +4028,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "red shape with area 78.5\nblue shape with area 24.0");
+    assert_eq!(
+        out.trim(),
+        "red shape with area 78.5\nblue shape with area 24.0"
+    );
 }
 
 #[test]
@@ -4005,7 +4055,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "hello, world, java\n[hello, world, java]\n15\n3.0");
+    assert_eq!(
+        out.trim(),
+        "hello, world, java\n[hello, world, java]\n15\n3.0"
+    );
 }
 
 #[test]
@@ -4060,7 +4113,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "level1 caught: bad arg\nmain caught: wrapped: bad arg\ndone");
+    assert_eq!(
+        out.trim(),
+        "level1 caught: bad arg\nmain caught: wrapped: bad arg\ndone"
+    );
 }
 
 #[test]
@@ -4119,7 +4175,6 @@ class Main {
     assert_eq!(out.trim(), "[2, 4, 6, 8, 10]\n[2, 4]\n2");
 }
 
-
 #[test]
 fn collections_sort_with_comparator() {
     let out = run(r#"
@@ -4143,7 +4198,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "[apple, banana, cherry, date]\n[date, cherry, banana, apple]\n[1, 1, 3, 4, 5]\n1\n5");
+    assert_eq!(
+        out.trim(),
+        "[apple, banana, cherry, date]\n[date, cherry, banana, apple]\n[1, 1, 3, 4, 5]\n1\n5"
+    );
 }
 
 #[test]
@@ -4170,7 +4228,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "caught: / by zero\nfinally1\nnfe caught\nfinally2\ndone");
+    assert_eq!(
+        out.trim(),
+        "caught: / by zero\nfinally1\nnfe caught\nfinally2\ndone"
+    );
 }
 
 #[test]
@@ -4200,7 +4261,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Good day, Alice\nGOOD DAY, ALICE\nHey Bob!\nHEY BOB!!!");
+    assert_eq!(
+        out.trim(),
+        "Good day, Alice\nGOOD DAY, ALICE\nHey Bob!\nHEY BOB!!!"
+    );
 }
 
 #[test]
@@ -4276,7 +4340,6 @@ class Main {
 "#);
     assert_eq!(out.trim(), "3\n2\n1\n3\n3\n42");
 }
-
 
 #[test]
 fn string_builder_method_chaining() {
@@ -4358,7 +4421,6 @@ class Main {
     assert_eq!(out.trim(), "3\n3\n2\nfalse\ntrue");
 }
 
-
 #[test]
 fn comparable_custom_sort() {
     let out = run(r#"
@@ -4406,7 +4468,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "4\none\nfour\none | two | three | four\n2\nhello-world");
+    assert_eq!(
+        out.trim(),
+        "4\none\nfour\none | two | three | four\n2\nhello-world"
+    );
 }
 
 #[test]
@@ -4466,7 +4531,6 @@ class Main {
 "#);
     assert_eq!(out.trim(), "true\nfalse\n28.27\nfalse\ntrue\n20.00");
 }
-
 
 #[test]
 fn stream_filter_chain() {
@@ -4633,7 +4697,6 @@ class Main {
     assert_eq!(out.trim(), "5\n4\n3\n1\n2");
 }
 
-
 #[test]
 fn string_advanced_methods() {
     let out = run(r#"
@@ -4650,7 +4713,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Hello, Java!\nH*ll*, W*rld!\nhello\nabcabcabc\ntrue\ntrue\ntrue");
+    assert_eq!(
+        out.trim(),
+        "Hello, Java!\nH*ll*, W*rld!\nhello\nabcabcabc\ntrue\ntrue\ntrue"
+    );
 }
 
 #[test]
@@ -4674,7 +4740,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Alice: 95\nBob: 87\nCharlie: 92\nAlice\nCharlie\ntrue\nfalse");
+    assert_eq!(
+        out.trim(),
+        "Alice: 95\nBob: 87\nCharlie: 92\nAlice\nCharlie\ntrue\nfalse"
+    );
 }
 
 #[test]
@@ -4697,7 +4766,6 @@ class Main {
 "#);
     assert_eq!(out.trim(), "8\n14\n6\n-11\n20\n5\ntrue\nfalse");
 }
-
 
 #[test]
 fn interface_polymorphism() {
@@ -4728,7 +4796,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Shape with area 78.5\nShape with area 16.0\nShape with area 24.0");
+    assert_eq!(
+        out.trim(),
+        "Shape with area 78.5\nShape with area 16.0\nShape with area 24.0"
+    );
 }
 
 #[test]
@@ -4826,7 +4897,6 @@ class Main {
     assert_eq!(out.trim(), "Monday\nTuesday\nWednesday\nSunday");
 }
 
-
 #[test]
 fn pascal_triangle() {
     let out = run(r#"
@@ -4894,7 +4964,6 @@ class Main {
 "#);
     assert_eq!(out.trim(), "3\n1\n2\ntrue\nfalse\nimmutable");
 }
-
 
 #[test]
 fn string_palindrome_and_reverse() {
@@ -4987,7 +5056,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Point[x=3, y=4]\nPoint[x=4, y=5]\n5.0\ntrue\nfalse");
+    assert_eq!(
+        out.trim(),
+        "Point[x=3, y=4]\nPoint[x=4, y=5]\n5.0\ntrue\nfalse"
+    );
 }
 
 #[test]
@@ -5082,7 +5154,6 @@ class Main {
     assert_eq!(out.trim(), "true\ntrue\n-1\n0\n1\nhello world\nHELLO WORLD");
 }
 
-
 #[test]
 fn linkedlist_queue_deque() {
     let out = run(r#"
@@ -5169,7 +5240,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "true\nfalse\nA\nff\n10\n1.234568e+05\n      3.14\nleft      !");
+    assert_eq!(
+        out.trim(),
+        "true\nfalse\nA\nff\n10\n1.234568e+05\n      3.14\nleft      !"
+    );
 }
 
 #[test]
@@ -5297,7 +5371,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "apple\nbanana\ncherry\ndate\n4\napple\nbanana,cherry,date");
+    assert_eq!(
+        out.trim(),
+        "apple\nbanana\ncherry\ndate\n4\napple\nbanana,cherry,date"
+    );
 }
 
 #[test]
@@ -5339,7 +5416,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "42\n20\n10\n1.4142\n1024.0000\n3.0\n4.0\n4\n3\n1.0000\n3.0000");
+    assert_eq!(
+        out.trim(),
+        "42\n20\n10\n1.4142\n1024.0000\n3.0\n4.0\n4\n3\n1.0000\n3.0000"
+    );
 }
 
 #[test]
@@ -5386,7 +5466,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "1\n9\n[1, 2, 3, 5, 8, 9]\n[9, 8, 5, 3, 2, 1]\n1");
+    assert_eq!(
+        out.trim(),
+        "1\n9\n[1, 2, 3, 5, 8, 9]\n[9, 8, 5, 3, 2, 1]\n1"
+    );
 }
 
 #[test]
@@ -5412,7 +5495,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "42\n3.14\n9876543210\nff\n1010\n10\nff\ntrue\n3.14");
+    assert_eq!(
+        out.trim(),
+        "42\n3.14\n9876543210\nff\n1010\n10\nff\ntrue\n3.14"
+    );
 }
 
 #[test]
@@ -5436,7 +5522,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Printing: Hello World\nSaving: Hello World\nPrinting: Hello World");
+    assert_eq!(
+        out.trim(),
+        "Printing: Hello World\nSaving: Hello World\nPrinting: Hello World"
+    );
 }
 
 #[test]
@@ -5502,11 +5591,14 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "1, 2, 3, 4, 5\n13\n[1, 2, 3, 4, 5]\n]5 ,4 ,3 ,2 ,1[");
+    assert_eq!(
+        out.trim(),
+        "1, 2, 3, 4, 5\n13\n[1, 2, 3, 4, 5]\n]5 ,4 ,3 ,2 ,1["
+    );
 }
 
 #[test]
-fn collections_nCopies_fill() {
+fn collections_n_copies_fill() {
     let out = run(r#"
 import java.util.*;
 class Main {
@@ -5521,7 +5613,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "[hello, hello, hello]\n[0, 0, 0, 0, 0]\n[7, 7, 7, 7, 7]");
+    assert_eq!(
+        out.trim(),
+        "[hello, hello, hello]\n[0, 0, 0, 0, 0]\n[7, 7, 7, 7, 7]"
+    );
 }
 
 #[test]
@@ -5543,11 +5638,14 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "2147483647\n-2147483648\n8\n64\n4\n31\n3\n-2147483648\n-1\n0\n1");
+    assert_eq!(
+        out.trim(),
+        "2147483647\n-2147483648\n8\n64\n4\n31\n3\n-2147483648\n-1\n0\n1"
+    );
 }
 
 #[test]
-fn map_computeIfAbsent_grouping() {
+fn map_compute_if_absent_grouping() {
     let out = run(r#"
 import java.util.*;
 class Main {
@@ -5562,7 +5660,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "a: [apple, ant]\nb: [banana, bear]\nc: [cherry, cat]");
+    assert_eq!(
+        out.trim(),
+        "a: [apple, ant]\nb: [banana, bear]\nc: [cherry, cat]"
+    );
 }
 
 #[test]
@@ -5641,7 +5742,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "|     hello|\n|hello     |\n|0000000042|\nAlice is 30 years old\n3.142\n(10, 20)");
+    assert_eq!(
+        out.trim(),
+        "|     hello|\n|hello     |\n|0000000042|\nAlice is 30 years old\n3.142\n(10, 20)"
+    );
 }
 
 #[test]
@@ -5671,7 +5775,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "3\n1\ncaught UnsupportedOperationException\n3\nList.of is immutable");
+    assert_eq!(
+        out.trim(),
+        "3\n1\ncaught UnsupportedOperationException\n3\nList.of is immutable"
+    );
 }
 
 #[test]
@@ -5706,7 +5813,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Rex says woof\nWhiskers says meow\nTiny says mew\ntrue\ntrue\nfalse");
+    assert_eq!(
+        out.trim(),
+        "Rex says woof\nWhiskers says meow\nTiny says mew\ntrue\ntrue\nfalse"
+    );
 }
 
 #[test]
@@ -5728,7 +5838,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "a: [ant, apple]\nb: [banana, bear]\nc: [cherry]");
+    assert_eq!(
+        out.trim(),
+        "a: [ant, apple]\nb: [banana, bear]\nc: [cherry]"
+    );
 }
 
 #[test]
@@ -5752,7 +5865,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "1000000\n+42\n-42\nff\nFF\n10\n1.234568e+05\ntrue\nfalse");
+    assert_eq!(
+        out.trim(),
+        "1000000\n+42\n-42\nff\nFF\n10\n1.234568e+05\ntrue\nfalse"
+    );
 }
 
 #[test]
@@ -5913,7 +6029,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "[2, 4, 6, 8, 10, 12]\n[2, 4, 6]\n[item1, item2, item3, item4, item5, item6]");
+    assert_eq!(
+        out.trim(),
+        "[2, 4, 6, 8, 10, 12]\n[2, 4, 6]\n[item1, item2, item3, item4, item5, item6]"
+    );
 }
 
 #[test]
@@ -6081,7 +6200,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "true\nRex says woof\nfalse\nWhiskers says meow\ntrue\nBuddy says woof");
+    assert_eq!(
+        out.trim(),
+        "true\nRex says woof\nfalse\nWhiskers says meow\ntrue\nBuddy says woof"
+    );
 }
 
 #[test]
@@ -6186,7 +6308,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "4\napple\nbanana\ncherry\ndate\napple | banana | cherry | date\n3");
+    assert_eq!(
+        out.trim(),
+        "4\napple\nbanana\ncherry\ndate\napple | banana | cherry | date\n3"
+    );
 }
 
 #[test]
@@ -6215,7 +6340,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Alice=90\nBob=85\nCharlie=92\ntotal=267\ntrue\nfalse\n2");
+    assert_eq!(
+        out.trim(),
+        "Alice=90\nBob=85\nCharlie=92\ntotal=267\ntrue\nfalse\n2"
+    );
 }
 
 #[test]
@@ -6296,7 +6424,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Hello, World!\n13\nHello there, World!\nHello, World!\n!dlroW ,olleH\nabc123true");
+    assert_eq!(
+        out.trim(),
+        "Hello, World!\n13\nHello there, World!\nHello, World!\n!dlroW ,olleH\nabc123true"
+    );
 }
 
 #[test]
@@ -6337,7 +6468,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "field=email\nmsg=email is required\ncode=400\nok");
+    assert_eq!(
+        out.trim(),
+        "field=email\nmsg=email is required\ncode=400\nok"
+    );
 }
 
 #[test]
@@ -6361,7 +6495,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "[1, 2, 3, 5, 8, 9]\nfound 8 at 4\n[1, 2, 3, 5]\n[3, 5, 8]\n[7, 7, 7, 7, 7]");
+    assert_eq!(
+        out.trim(),
+        "[1, 2, 3, 5, 8, 9]\nfound 8 at 4\n[1, 2, 3, 5]\n[3, 5, 8]\n[7, 7, 7, 7, 7]"
+    );
 }
 
 #[test]
@@ -6393,7 +6530,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "weekend weekday weekday weekday weekday weekday weekend \n4\n3\n0");
+    assert_eq!(
+        out.trim(),
+        "weekend weekday weekday weekday weekday weekday weekend \n4\n3\n0"
+    );
 }
 
 #[test]
@@ -6451,7 +6591,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "1 -> 2 -> 3 -> 4 -> 5\n5\n5 -> 4 -> 3 -> 2 -> 1");
+    assert_eq!(
+        out.trim(),
+        "1 -> 2 -> 3 -> 4 -> 5\n5\n5 -> 4 -> 3 -> 2 -> 1"
+    );
 }
 
 #[test]
@@ -6553,7 +6696,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "[HELLO, WORLD, STREAM]\n23\n3\napi hello java stream world \n4");
+    assert_eq!(
+        out.trim(),
+        "[HELLO, WORLD, STREAM]\n23\n3\napi hello java stream world \n4"
+    );
 }
 
 #[test]
@@ -6583,7 +6729,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "SPRING warm=true\nSUMMER warm=true\nFALL warm=false\nWINTER warm=false\nSPRING");
+    assert_eq!(
+        out.trim(),
+        "SPRING warm=true\nSUMMER warm=true\nFALL warm=false\nWINTER warm=false\nSPRING"
+    );
 }
 
 #[test]
@@ -6611,7 +6760,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Good day, Alice\nGOOD DAY, BOB\nHey Alice!\nHEY BOB!");
+    assert_eq!(
+        out.trim(),
+        "Good day, Alice\nGOOD DAY, BOB\nHey Alice!\nHEY BOB!"
+    );
 }
 
 #[test]
@@ -6655,7 +6807,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Name: Alice, Age: 30\nPi: 3.1416\n00042\nleft      |\n     right|\n(3, 4)");
+    assert_eq!(
+        out.trim(),
+        "Name: Alice, Age: 30\nPi: 3.1416\n00042\nleft      |\n     right|\n(3, 4)"
+    );
 }
 
 #[test]
@@ -6680,7 +6835,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "[1, 1, 2, 3, 4, 5, 6, 9]\n1\n9\n9\n3\ntrue\nfalse");
+    assert_eq!(
+        out.trim(),
+        "[1, 1, 2, 3, 4, 5, 6, 9]\n1\n9\n9\n3\ntrue\nfalse"
+    );
 }
 
 #[test]
@@ -6754,7 +6912,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "42\n9876543210\n3.14\nff\n1010\nff\n10\n100\n5.0");
+    assert_eq!(
+        out.trim(),
+        "42\n9876543210\n3.14\nff\n1010\nff\n10\n100\n5.0"
+    );
 }
 
 #[test]
@@ -6848,7 +7009,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Person{name=Alice, age=30, email=alice@example.com}\nAlice\n30");
+    assert_eq!(
+        out.trim(),
+        "Person{name=Alice, age=30, email=alice@example.com}\nAlice\n30"
+    );
 }
 
 #[test]
@@ -7363,7 +7527,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "a: [apple, apricot, avocado]\nb: [banana, blueberry]\nc: [cherry]");
+    assert_eq!(
+        out.trim(),
+        "a: [apple, apricot, avocado]\nb: [banana, blueberry]\nc: [cherry]"
+    );
 }
 
 #[test]
@@ -7426,7 +7593,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Rex says woof\nWhiskers says meow\nBuddy says woof\nRex fetches!\nBuddy fetches!");
+    assert_eq!(
+        out.trim(),
+        "Rex says woof\nWhiskers says meow\nBuddy says woof\nRex fetches!\nBuddy fetches!"
+    );
 }
 
 #[test]
@@ -7513,7 +7683,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "true\ntrue\ntrue\n4\n8\nHello, Java!\nWorld\nH\n72");
+    assert_eq!(
+        out.trim(),
+        "true\ntrue\ntrue\n4\n8\nHello, Java!\nWorld\nH\n72"
+    );
 }
 
 #[test]
@@ -7563,7 +7736,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "42\n3.14\n20\n10\n1024.0\n12.0\n3.0\n4.0\n4\n3\n3");
+    assert_eq!(
+        out.trim(),
+        "42\n3.14\n20\n10\n1024.0\n12.0\n3.0\n4.0\n4\n3\n3"
+    );
 }
 
 #[test]
@@ -7585,7 +7761,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "42\n-17\n1010\nff\n10\n3\n-2147483648\n-1\n7\n3\n10");
+    assert_eq!(
+        out.trim(),
+        "42\n-17\n1010\nff\n10\n3\n-2147483648\n-1\n7\n3\n10"
+    );
 }
 
 #[test]
@@ -7644,7 +7823,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Hello, Alice!\nGoodbye, Bob!\nGood day, Charlie.\nFarewell, Diana.");
+    assert_eq!(
+        out.trim(),
+        "Hello, Alice!\nGoodbye, Bob!\nGood day, Charlie.\nFarewell, Diana."
+    );
 }
 
 #[test]
@@ -7686,7 +7868,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "3 + 4 = 7\n3.14\nlist has 5 items\n00042\nleft      |\n     right|\nHello World!");
+    assert_eq!(
+        out.trim(),
+        "3 + 4 = 7\n3.14\nlist has 5 items\n00042\nleft      |\n     right|\nHello World!"
+    );
 }
 
 #[test]
@@ -7704,7 +7889,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "4\nLINE1\nLINE2\nLINE3\nLINE4\nline1 | line2 | line3 | line4");
+    assert_eq!(
+        out.trim(),
+        "4\nLINE1\nLINE2\nLINE3\nLINE4\nline1 | line2 | line3 | line4"
+    );
 }
 
 #[test]
@@ -7728,7 +7916,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "(hello, 42, true)\nhello\n42\ntrue\n(true, 42, hello)");
+    assert_eq!(
+        out.trim(),
+        "(hello, 42, true)\nhello\n42\ntrue\n(true, 42, hello)"
+    );
 }
 
 #[test]
@@ -7789,7 +7980,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "20\nHELLO, WORLD, JAVA, STREAM\n3\nhelloworldjavastream");
+    assert_eq!(
+        out.trim(),
+        "20\nHELLO, WORLD, JAVA, STREAM\n3\nhelloworldjavastream"
+    );
 }
 
 #[test]
@@ -7849,7 +8043,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "[1, 2, 3, 6, 9, 8, 7, 4, 5]\n[1, 2, 3, 4, 8, 12, 11, 10, 9, 5, 6, 7]");
+    assert_eq!(
+        out.trim(),
+        "[1, 2, 3, 6, 9, 8, 7, 4, 5]\n[1, 2, 3, 4, 8, 12, 11, 10, 9, 5, 6, 7]"
+    );
 }
 
 #[test]
@@ -7871,7 +8068,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "ff\n11111111\n377\n1234567.89\n1.234568e+06\n|        42|\n|42        |");
+    assert_eq!(
+        out.trim(),
+        "ff\n11111111\n377\n1234567.89\n1.234568e+06\n|        42|\n|42        |"
+    );
 }
 
 #[test]
@@ -7949,7 +8149,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Windows Button\nWindows Checkbox\nMac Button\nMac Checkbox");
+    assert_eq!(
+        out.trim(),
+        "Windows Button\nWindows Checkbox\nMac Button\nMac Checkbox"
+    );
 }
 
 #[test]
@@ -8022,11 +8225,13 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "true\nfalse\n[2, 3, 5, 7, 11, 13, 17, 19, 23, 29]\n36\n35");
+    assert_eq!(
+        out.trim(),
+        "true\nfalse\n[2, 3, 5, 7, 11, 13, 17, 19, 23, 29]\n36\n35"
+    );
 }
 
 #[test]
-#[ignore = "Known limitation: assignment-in-condition pattern (see docs/known-limitations.md)"]
 fn string_manipulation_advanced() {
     let out = run(r#"
 class Main {
@@ -8066,7 +8271,6 @@ class Main {
 }
 
 #[test]
-#[ignore = "Known limitation: assignment-in-condition pattern (see docs/known-limitations.md)"]
 fn index_of_with_from_index() {
     let out = run(r#"
 class Main {
@@ -8317,7 +8521,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Mon weekday\nTue weekday\nWed weekday\nThu weekday\nFri weekday\nSat weekend\nSun weekend");
+    assert_eq!(
+        out.trim(),
+        "Mon weekday\nTue weekday\nWed weekday\nThu weekday\nFri weekday\nSat weekend\nSun weekend"
+    );
 }
 
 #[test]
@@ -8339,7 +8546,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "World!\nHello\nHello, Java!\nhello, world!\nHELLO, WORLD!\ntrue\ntrue\ntrue\n4\n8");
+    assert_eq!(
+        out.trim(),
+        "World!\nHello\nHello, Java!\nhello, world!\nHELLO, WORLD!\ntrue\ntrue\ntrue\n4\n8"
+    );
 }
 
 #[test]
@@ -8393,7 +8603,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Rex says woof\nWhiskers says meow\nBuddy says woof");
+    assert_eq!(
+        out.trim(),
+        "Rex says woof\nWhiskers says meow\nBuddy says woof"
+    );
 }
 
 #[test]
@@ -8453,7 +8666,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Network error: Connection refused code=503\nconnected");
+    assert_eq!(
+        out.trim(),
+        "Network error: Connection refused code=503\nconnected"
+    );
 }
 
 #[test]
@@ -8528,7 +8744,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "[1, 2, 3, 4, 5, 6, 7, 8, 9]\n6\n[apple, banana, cherry]");
+    assert_eq!(
+        out.trim(),
+        "[1, 2, 3, 4, 5, 6, 7, 8, 9]\n6\n[apple, banana, cherry]"
+    );
 }
 
 #[test]
@@ -8887,7 +9106,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Hello, World!\n13\nHello Beautiful, World!\nHello, World!\n!dlroW ,olleH\n!");
+    assert_eq!(
+        out.trim(),
+        "Hello, World!\n13\nHello Beautiful, World!\nHello, World!\n!dlroW ,olleH\n!"
+    );
 }
 
 #[test]
@@ -8941,7 +9163,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "red Circle: area=78.54\nblue Rectangle: area=24.00");
+    assert_eq!(
+        out.trim(),
+        "red Circle: area=78.54\nblue Rectangle: area=24.00"
+    );
 }
 
 #[test]
@@ -9055,7 +9280,10 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "Hello World\n11\ntrue\nfalse\nfalse\n42\n3.14\ntrue");
+    assert_eq!(
+        out.trim(),
+        "Hello World\n11\ntrue\nfalse\nfalse\n42\n3.14\ntrue"
+    );
 }
 
 #[test]

@@ -1,9 +1,9 @@
 //! Typed `rava.hcl` config — read via hcl-rs serde, write via template.
 
+use rava_common::error::{RavaError, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use serde::{Deserialize, Serialize};
-use rava_common::error::{RavaError, Result};
 
 /// Parsed `rava.hcl` project configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -40,32 +40,35 @@ pub struct BuildConfig {
     pub optimize: String,
 }
 
-fn default_java()     -> String { "21".into() }
-fn default_target()   -> String { "native".into() }
-fn default_optimize() -> String { "speed".into() }
+fn default_java() -> String {
+    "21".into()
+}
+fn default_target() -> String {
+    "native".into()
+}
+fn default_optimize() -> String {
+    "speed".into()
+}
 
 impl ProjectConfig {
     /// Load and parse a `rava.hcl` file.
     pub fn from_file(path: &Path) -> Result<Self> {
-        let src = std::fs::read_to_string(path).map_err(|e| {
-            RavaError::Other(format!("cannot read {}: {e}", path.display()))
-        })?;
+        let src = std::fs::read_to_string(path)
+            .map_err(|e| RavaError::Other(format!("cannot read {}: {e}", path.display())))?;
         Self::from_str(&src)
     }
 
     /// Parse from HCL source string.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(src: &str) -> Result<Self> {
-        hcl::from_str(src).map_err(|e| {
-            RavaError::Other(format!("rava.hcl parse error: {e}"))
-        })
+        hcl::from_str(src).map_err(|e| RavaError::Other(format!("rava.hcl parse error: {e}")))
     }
 
     /// Write a human-readable `rava.hcl` to `path`.
     pub fn to_file(&self, path: &Path) -> Result<()> {
         let content = self.to_hcl_string();
-        std::fs::write(path, content).map_err(|e| {
-            RavaError::Other(format!("cannot write {}: {e}", path.display()))
-        })
+        std::fs::write(path, content)
+            .map_err(|e| RavaError::Other(format!("cannot write {}: {e}", path.display())))
     }
 
     /// Render as a pretty HCL string (hand-templated for readability).
@@ -147,11 +150,15 @@ mod tests {
         cfg.project.name = "test".into();
         cfg.project.version = "1.0.0".into();
         cfg.dependencies.insert("junit".into(), "5.10.1".into());
-        cfg.dependencies.insert("spring-boot-web".into(), "3.2.0".into());
+        cfg.dependencies
+            .insert("spring-boot-web".into(), "3.2.0".into());
 
         let hcl = cfg.to_hcl_string();
         let parsed = ProjectConfig::from_str(&hcl).unwrap();
-        assert_eq!(parsed.dependencies.get("junit").map(|s| s.as_str()), Some("5.10.1"));
+        assert_eq!(
+            parsed.dependencies.get("junit").map(|s| s.as_str()),
+            Some("5.10.1")
+        );
         assert_eq!(parsed.dependencies.len(), 2);
     }
 }

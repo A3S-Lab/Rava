@@ -22,7 +22,10 @@ pub enum RavaError {
     Io(#[from] std::io::Error),
 
     #[error("Java exception: {exception_type}: {message}")]
-    JavaException { exception_type: String, message: String },
+    JavaException {
+        exception_type: String,
+        message: String,
+    },
 
     #[error("{0}")]
     Other(String),

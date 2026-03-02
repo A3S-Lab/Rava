@@ -32,43 +32,43 @@ pub enum DiagnosticLevel {
 /// by the constructor requiring `help`.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
-    pub level:   DiagnosticLevel,
+    pub level: DiagnosticLevel,
     /// Short error code, e.g. `"E0042"`.
-    pub code:    &'static str,
+    pub code: &'static str,
     /// Human-readable description of the problem.
     pub message: String,
     /// Source location where the problem was detected.
-    pub span:    Span,
+    pub span: Span,
     /// Annotation displayed inline at the span (what is wrong here).
-    pub label:   Option<String>,
+    pub label: Option<String>,
     /// Fix suggestion — how to resolve the problem.
-    pub help:    Option<String>,
+    pub help: Option<String>,
     /// Additional context notes.
-    pub notes:   Vec<String>,
+    pub notes: Vec<String>,
 }
 
 impl Diagnostic {
     pub fn error(code: &'static str, message: impl Into<String>, span: Span) -> Self {
         Self {
-            level:   DiagnosticLevel::Error,
+            level: DiagnosticLevel::Error,
             code,
             message: message.into(),
             span,
-            label:   None,
-            help:    None,
-            notes:   Vec::new(),
+            label: None,
+            help: None,
+            notes: Vec::new(),
         }
     }
 
     pub fn warning(code: &'static str, message: impl Into<String>, span: Span) -> Self {
         Self {
-            level:   DiagnosticLevel::Warning,
+            level: DiagnosticLevel::Warning,
             code,
             message: message.into(),
             span,
-            label:   None,
-            help:    None,
-            notes:   Vec::new(),
+            label: None,
+            help: None,
+            notes: Vec::new(),
         }
     }
 
@@ -107,9 +107,9 @@ pub struct TerminalEmitter;
 impl DiagnosticEmitter for TerminalEmitter {
     fn emit(&self, d: &Diagnostic) {
         let level = match d.level {
-            DiagnosticLevel::Error   => "error",
+            DiagnosticLevel::Error => "error",
             DiagnosticLevel::Warning => "warning",
-            DiagnosticLevel::Note    => "note",
+            DiagnosticLevel::Note => "note",
         };
         eprintln!("{}[{}]: {}", level, d.code, d.message);
         eprintln!("  --> {}", d.span);

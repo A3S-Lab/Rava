@@ -20,11 +20,11 @@ pub trait CodegenBackend: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct GcMap {
     /// Instruction offset from function start (in bytes).
-    pub pc_offset:        u32,
+    pub pc_offset: u32,
     /// Bitmap of stack slots that contain object references (1 bit = 1 slot).
     pub stack_ref_bitmap: u64,
     /// Bitmap of registers that contain object references.
-    pub reg_ref_bitmap:   u32,
+    pub reg_ref_bitmap: u32,
 }
 
 /// Relocation entry — a symbol reference in the emitted machine code that needs linking.

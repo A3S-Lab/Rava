@@ -21,7 +21,9 @@ pub fn format_java_string(args: &[RVal]) -> String {
             }
             let mut width: Option<usize> = None;
             let w_start = i;
-            while i < chars.len() && chars[i].is_ascii_digit() { i += 1; }
+            while i < chars.len() && chars[i].is_ascii_digit() {
+                i += 1;
+            }
             if i > w_start {
                 width = chars[w_start..i].iter().collect::<String>().parse().ok();
             }
@@ -29,13 +31,26 @@ pub fn format_java_string(args: &[RVal]) -> String {
             if i < chars.len() && chars[i] == '.' {
                 i += 1;
                 let p_start = i;
-                while i < chars.len() && chars[i].is_ascii_digit() { i += 1; }
-                precision = Some(chars[p_start..i].iter().collect::<String>().parse().unwrap_or(6));
+                while i < chars.len() && chars[i].is_ascii_digit() {
+                    i += 1;
+                }
+                precision = Some(
+                    chars[p_start..i]
+                        .iter()
+                        .collect::<String>()
+                        .parse()
+                        .unwrap_or(6),
+                );
             }
-            if i >= chars.len() { break; }
+            if i >= chars.len() {
+                break;
+            }
             match chars[i] {
                 's' => {
-                    let val = args.get(arg_idx).map(|v| v.to_display()).unwrap_or_default();
+                    let val = args
+                        .get(arg_idx)
+                        .map(|v| v.to_display())
+                        .unwrap_or_default();
                     if let Some(w) = width {
                         if flags.contains('-') {
                             result.push_str(&format!("{:<width$}", val, width = w));
@@ -52,13 +67,25 @@ pub fn format_java_string(args: &[RVal]) -> String {
                     let plus = flags.contains('+');
                     if let Some(w) = width {
                         if flags.contains('0') {
-                            let s = if plus && val >= 0 { format!("+{:0>width$}", val, width = w.saturating_sub(1)) } else { format!("{:0>width$}", val, width = w) };
+                            let s = if plus && val >= 0 {
+                                format!("+{:0>width$}", val, width = w.saturating_sub(1))
+                            } else {
+                                format!("{:0>width$}", val, width = w)
+                            };
                             result.push_str(&s);
                         } else if flags.contains('-') {
-                            let s = if plus && val >= 0 { format!("+{:<width$}", val, width = w.saturating_sub(1)) } else { format!("{:<width$}", val, width = w) };
+                            let s = if plus && val >= 0 {
+                                format!("+{:<width$}", val, width = w.saturating_sub(1))
+                            } else {
+                                format!("{:<width$}", val, width = w)
+                            };
                             result.push_str(&s);
                         } else {
-                            let s = if plus && val >= 0 { format!("+{:>width$}", val, width = w.saturating_sub(1)) } else { format!("{:>width$}", val, width = w) };
+                            let s = if plus && val >= 0 {
+                                format!("+{:>width$}", val, width = w.saturating_sub(1))
+                            } else {
+                                format!("{:>width$}", val, width = w)
+                            };
                             result.push_str(&s);
                         }
                     } else if plus && val >= 0 {
@@ -73,9 +100,19 @@ pub fn format_java_string(args: &[RVal]) -> String {
                     let prec = precision.unwrap_or(6);
                     if let Some(w) = width {
                         if flags.contains('-') {
-                            result.push_str(&format!("{:<width$.prec$}", val, width = w, prec = prec));
+                            result.push_str(&format!(
+                                "{:<width$.prec$}",
+                                val,
+                                width = w,
+                                prec = prec
+                            ));
                         } else {
-                            result.push_str(&format!("{:>width$.prec$}", val, width = w, prec = prec));
+                            result.push_str(&format!(
+                                "{:>width$.prec$}",
+                                val,
+                                width = w,
+                                prec = prec
+                            ));
                         }
                     } else {
                         result.push_str(&format!("{:.prec$}", val, prec = prec));
@@ -89,10 +126,12 @@ pub fn format_java_string(args: &[RVal]) -> String {
                     let raw = format!("{:.prec$e}", val, prec = prec);
                     let formatted = if let Some(e_pos) = raw.find('e') {
                         let mantissa = &raw[..e_pos];
-                        let exp_str = &raw[e_pos+1..];
+                        let exp_str = &raw[e_pos + 1..];
                         let exp: i32 = exp_str.parse().unwrap_or(0);
                         format!("{}e{:+03}", mantissa, exp)
-                    } else { raw };
+                    } else {
+                        raw
+                    };
                     result.push_str(&formatted);
                     arg_idx += 1;
                 }
@@ -103,7 +142,9 @@ pub fn format_java_string(args: &[RVal]) -> String {
                 }
                 'c' => {
                     let val = args.get(arg_idx).map(|v| v.as_int()).unwrap_or(0);
-                    if let Some(c) = char::from_u32(val as u32) { result.push(c); }
+                    if let Some(c) = char::from_u32(val as u32) {
+                        result.push(c);
+                    }
                     arg_idx += 1;
                 }
                 'x' => {
@@ -131,7 +172,10 @@ pub fn format_java_string(args: &[RVal]) -> String {
                 }
                 'n' => result.push('\n'),
                 '%' => result.push('%'),
-                _ => { result.push('%'); result.push(chars[i]); }
+                _ => {
+                    result.push('%');
+                    result.push(chars[i]);
+                }
             }
         } else {
             result.push(chars[i]);
@@ -144,17 +188,20 @@ pub fn format_java_string(args: &[RVal]) -> String {
 /// FNV-1a hash for builtin name lookup.
 pub fn fnv(name: &str) -> u32 {
     let mut h: u32 = 2166136261;
-    for b in name.bytes() { h ^= b as u32; h = h.wrapping_mul(16777619); }
+    for b in name.bytes() {
+        h ^= b as u32;
+        h = h.wrapping_mul(16777619);
+    }
     h
 }
 
 /// Simple pseudo-random f64 in [0.0, 1.0).
 pub fn rand_f64() -> f64 {
+    use std::cell::Cell;
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    use std::cell::Cell;
     thread_local! {
-        static SEED: Cell<u64> = Cell::new(0);
+        static SEED: Cell<u64> = const { Cell::new(0) };
     }
     SEED.with(|s| {
         let mut val = s.get();
@@ -177,9 +224,9 @@ pub fn rand_f64() -> f64 {
 pub fn regex_lite_match(pattern: &str, text: &str) -> bool {
     // Java String.matches() anchors the entire string
     let pat = if pattern.starts_with('^') && pattern.ends_with('$') {
-        pattern[1..pattern.len()-1].to_string()
-    } else if pattern.starts_with('^') {
-        pattern[1..].to_string()
+        pattern[1..pattern.len() - 1].to_string()
+    } else if let Some(stripped) = pattern.strip_prefix('^') {
+        stripped.to_string()
     } else {
         pattern.to_string()
     };
@@ -221,10 +268,9 @@ fn matches_here(pat: &[char], pi: usize, text: &[char], ti: usize, full: bool) -
 
     // Alternation: split on top-level `|`
     if let Some(alt_pos) = find_top_level_alt(pat, pi) {
-        let left  = &pat[pi..alt_pos];
-        let right = &pat[alt_pos+1..];
-        return matches_here(left, 0, text, ti, full)
-            || matches_here(right, 0, text, ti, full);
+        let left = &pat[pi..alt_pos];
+        let right = &pat[alt_pos + 1..];
+        return matches_here(left, 0, text, ti, full) || matches_here(right, 0, text, ti, full);
     }
 
     // Group: `(...)` or `(?:...)`
@@ -234,7 +280,13 @@ fn matches_here(pat: &[char], pi: usize, text: &[char], ti: usize, full: bool) -
         let after_group = group_end + 1;
         // Check for quantifier after group
         let (min, max, skip) = quantifier(pat, after_group);
-        return match_repeat(inner, true, min, max, pat, after_group + skip, text, ti, full);
+        let tail = MatchTail {
+            rest_pat: pat,
+            rest_pi: after_group + skip,
+            text,
+            full,
+        };
+        return match_repeat(inner, true, min, max, &tail, ti);
     }
 
     // Character class `[...]`
@@ -243,34 +295,59 @@ fn matches_here(pat: &[char], pi: usize, text: &[char], ti: usize, full: bool) -
             let class_pat = &pat[pi..=class_end];
             let after = class_end + 1;
             let (min, max, skip) = quantifier(pat, after);
-            return match_char_repeat(class_pat, min, max, pat, after + skip, text, ti, full);
+            let tail = MatchTail {
+                rest_pat: pat,
+                rest_pi: after + skip,
+                text,
+                full,
+            };
+            return match_char_repeat(class_pat, min, max, &tail, ti);
         }
     }
 
     // Escape sequences or literal with quantifier
-    let (atom_len, atom_end) = atom_length(pat, pi);
-    let atom = &pat[pi..pi+atom_len];
+    let (atom_len, _atom_end) = atom_length(pat, pi);
+    let atom = &pat[pi..pi + atom_len];
     let after = pi + atom_len;
     let (min, max, skip) = quantifier(pat, after);
-    match_char_repeat(atom, min, max, pat, after + skip, text, ti, full)
+    let tail = MatchTail {
+        rest_pat: pat,
+        rest_pi: after + skip,
+        text,
+        full,
+    };
+    match_char_repeat(atom, min, max, &tail, ti)
+}
+
+struct MatchTail<'a> {
+    rest_pat: &'a [char],
+    rest_pi: usize,
+    text: &'a [char],
+    full: bool,
 }
 
 fn match_repeat(
-    inner: &[char], is_group: bool,
-    min: usize, max: Option<usize>,
-    rest_pat: &[char], rest_pi: usize,
-    text: &[char], ti: usize, full: bool,
+    inner: &[char],
+    is_group: bool,
+    min: usize,
+    max: Option<usize>,
+    tail: &MatchTail,
+    ti: usize,
 ) -> bool {
     // Greedy: try max first, then back off
     let mut positions = vec![ti];
     let mut count = 0usize;
     let mut cur = ti;
     loop {
-        if let Some(m) = max { if count >= m { break; } }
+        if let Some(m) = max {
+            if count >= m {
+                break;
+            }
+        }
         // Try to match inner once at cur
         if is_group {
             // Find how far inner matches
-            if let Some(next) = try_match_group(inner, text, cur) {
+            if let Some(next) = try_match_group(inner, tail.text, cur) {
                 cur = next;
                 count += 1;
                 positions.push(cur);
@@ -284,7 +361,7 @@ fn match_repeat(
     // Try from longest match down to min
     for i in (min..=positions.len().saturating_sub(1)).rev() {
         let pos = positions[i];
-        if matches_here(rest_pat, rest_pi, text, pos, full) {
+        if matches_here(tail.rest_pat, tail.rest_pi, tail.text, pos, tail.full) {
             return true;
         }
     }
@@ -305,18 +382,25 @@ fn try_match_group(inner: &[char], text: &[char], ti: usize) -> Option<usize> {
 
 fn match_char_repeat(
     atom: &[char],
-    min: usize, max: Option<usize>,
-    rest_pat: &[char], rest_pi: usize,
-    text: &[char], ti: usize, full: bool,
+    min: usize,
+    max: Option<usize>,
+    tail: &MatchTail,
+    ti: usize,
 ) -> bool {
     // Greedy: collect all positions where atom matches consecutively
     let mut positions = vec![ti];
     let mut cur = ti;
     let mut count = 0usize;
     loop {
-        if let Some(m) = max { if count >= m { break; } }
-        if cur >= text.len() { break; }
-        if char_matches(atom, text[cur]) {
+        if let Some(m) = max {
+            if count >= m {
+                break;
+            }
+        }
+        if cur >= tail.text.len() {
+            break;
+        }
+        if char_matches(atom, tail.text[cur]) {
             cur += 1;
             count += 1;
             positions.push(cur);
@@ -327,7 +411,7 @@ fn match_char_repeat(
     // Try from longest down to min
     for i in (min..=positions.len().saturating_sub(1)).rev() {
         let pos = positions[i];
-        if matches_here(rest_pat, rest_pi, text, pos, full) {
+        if matches_here(tail.rest_pat, tail.rest_pi, tail.text, pos, tail.full) {
             return true;
         }
     }
@@ -341,15 +425,16 @@ fn find_match_at(pattern: &str, text: &[char], start: usize) -> Option<usize> {
 }
 
 fn match_end_here(pat: &[char], pi: usize, text: &[char], ti: usize) -> Option<usize> {
-    if pi >= pat.len() { return Some(ti); }
+    if pi >= pat.len() {
+        return Some(ti);
+    }
     if pat[pi] == '$' && pi + 1 == pat.len() {
         return if ti == text.len() { Some(ti) } else { None };
     }
     if let Some(alt_pos) = find_top_level_alt(pat, pi) {
-        let left  = &pat[pi..alt_pos];
-        let right = &pat[alt_pos+1..];
-        return match_end_here(left, 0, text, ti)
-            .or_else(|| match_end_here(right, 0, text, ti));
+        let left = &pat[pi..alt_pos];
+        let right = &pat[alt_pos + 1..];
+        return match_end_here(left, 0, text, ti).or_else(|| match_end_here(right, 0, text, ti));
     }
     if pat[pi] == '(' {
         let (group_end, inner_start) = find_group_end(pat, pi);
@@ -367,25 +452,40 @@ fn match_end_here(pat: &[char], pi: usize, text: &[char], ti: usize) -> Option<u
         }
     }
     let (atom_len, _) = atom_length(pat, pi);
-    let atom = &pat[pi..pi+atom_len];
+    let atom = &pat[pi..pi + atom_len];
     let after = pi + atom_len;
     let (min, max, skip) = quantifier(pat, after);
     match_end_char_repeat(atom, min, max, pat, after + skip, text, ti)
 }
 
 fn match_end_char_repeat(
-    atom: &[char], min: usize, max: Option<usize>,
-    rest_pat: &[char], rest_pi: usize,
-    text: &[char], ti: usize,
+    atom: &[char],
+    min: usize,
+    max: Option<usize>,
+    rest_pat: &[char],
+    rest_pi: usize,
+    text: &[char],
+    ti: usize,
 ) -> Option<usize> {
     let mut positions = vec![ti];
     let mut cur = ti;
     let mut count = 0usize;
     loop {
-        if let Some(m) = max { if count >= m { break; } }
-        if cur >= text.len() { break; }
-        if char_matches(atom, text[cur]) { cur += 1; count += 1; positions.push(cur); }
-        else { break; }
+        if let Some(m) = max {
+            if count >= m {
+                break;
+            }
+        }
+        if cur >= text.len() {
+            break;
+        }
+        if char_matches(atom, text[cur]) {
+            cur += 1;
+            count += 1;
+            positions.push(cur);
+        } else {
+            break;
+        }
     }
     for i in (min..=positions.len().saturating_sub(1)).rev() {
         if let Some(end) = match_end_here(rest_pat, rest_pi, text, positions[i]) {
@@ -396,18 +496,30 @@ fn match_end_char_repeat(
 }
 
 fn match_end_repeat_group(
-    inner: &[char], min: usize, max: Option<usize>,
-    rest_pat: &[char], rest_pi: usize,
-    text: &[char], ti: usize,
+    inner: &[char],
+    min: usize,
+    max: Option<usize>,
+    rest_pat: &[char],
+    rest_pi: usize,
+    text: &[char],
+    ti: usize,
 ) -> Option<usize> {
     let mut positions = vec![ti];
     let mut count = 0usize;
     let mut cur = ti;
     loop {
-        if let Some(m) = max { if count >= m { break; } }
+        if let Some(m) = max {
+            if count >= m {
+                break;
+            }
+        }
         if let Some(next) = try_match_group(inner, text, cur) {
-            cur = next; count += 1; positions.push(cur);
-        } else { break; }
+            cur = next;
+            count += 1;
+            positions.push(cur);
+        } else {
+            break;
+        }
     }
     for i in (min..=positions.len().saturating_sub(1)).rev() {
         if let Some(end) = match_end_here(rest_pat, rest_pi, text, positions[i]) {
@@ -419,7 +531,9 @@ fn match_end_repeat_group(
 
 /// Returns (min, max, chars_consumed) for a quantifier at pat[pi].
 fn quantifier(pat: &[char], pi: usize) -> (usize, Option<usize>, usize) {
-    if pi >= pat.len() { return (1, Some(1), 0); }
+    if pi >= pat.len() {
+        return (1, Some(1), 0);
+    }
     match pat[pi] {
         '*' => (0, None, 1),
         '+' => (1, None, 1),
@@ -428,7 +542,10 @@ fn quantifier(pat: &[char], pi: usize) -> (usize, Option<usize>, usize) {
             // {n}, {n,}, {n,m}
             let mut i = pi + 1;
             let mut n_str = String::new();
-            while i < pat.len() && pat[i].is_ascii_digit() { n_str.push(pat[i]); i += 1; }
+            while i < pat.len() && pat[i].is_ascii_digit() {
+                n_str.push(pat[i]);
+                i += 1;
+            }
             let n: usize = n_str.parse().unwrap_or(1);
             if i < pat.len() && pat[i] == '}' {
                 return (n, Some(n), i - pi + 1);
@@ -436,9 +553,16 @@ fn quantifier(pat: &[char], pi: usize) -> (usize, Option<usize>, usize) {
             if i < pat.len() && pat[i] == ',' {
                 i += 1;
                 let mut m_str = String::new();
-                while i < pat.len() && pat[i].is_ascii_digit() { m_str.push(pat[i]); i += 1; }
+                while i < pat.len() && pat[i].is_ascii_digit() {
+                    m_str.push(pat[i]);
+                    i += 1;
+                }
                 if i < pat.len() && pat[i] == '}' {
-                    let max = if m_str.is_empty() { None } else { m_str.parse().ok() };
+                    let max = if m_str.is_empty() {
+                        None
+                    } else {
+                        m_str.parse().ok()
+                    };
                     return (n, max, i - pi + 1);
                 }
             }
@@ -450,15 +574,23 @@ fn quantifier(pat: &[char], pi: usize) -> (usize, Option<usize>, usize) {
 
 /// Returns (atom_len, atom_end) — how many pattern chars form one atom.
 fn atom_length(pat: &[char], pi: usize) -> (usize, usize) {
-    if pi >= pat.len() { return (0, pi); }
-    if pat[pi] == '\\' && pi + 1 < pat.len() { return (2, pi + 2); }
+    if pi >= pat.len() {
+        return (0, pi);
+    }
+    if pat[pi] == '\\' && pi + 1 < pat.len() {
+        return (2, pi + 2);
+    }
     (1, pi + 1)
 }
 
 /// Check if a single text char matches an atom (literal, `.`, `\d`, etc.) or char class `[...]`.
 fn char_matches(atom: &[char], c: char) -> bool {
-    if atom.is_empty() { return false; }
-    if atom[0] == '.' { return c != '\n'; }
+    if atom.is_empty() {
+        return false;
+    }
+    if atom[0] == '.' {
+        return c != '\n';
+    }
     if atom[0] == '\\' && atom.len() >= 2 {
         return match atom[1] {
             'd' => c.is_ascii_digit(),
@@ -481,36 +613,60 @@ fn char_matches(atom: &[char], c: char) -> bool {
 
 /// Match a char against a `[...]` or `[^...]` class.
 fn char_class_matches(class: &[char], c: char) -> bool {
-    if class.len() < 2 { return false; }
-    let (negate, start) = if class[1] == '^' { (true, 2) } else { (false, 1) };
+    if class.len() < 2 {
+        return false;
+    }
+    let (negate, start) = if class[1] == '^' {
+        (true, 2)
+    } else {
+        (false, 1)
+    };
     let end = class.len() - 1; // skip closing ]
     let mut i = start;
     let mut matched = false;
     while i < end {
         if i + 2 < end && class[i + 1] == '-' {
             // range a-z
-            if c >= class[i] && c <= class[i + 2] { matched = true; }
+            if c >= class[i] && c <= class[i + 2] {
+                matched = true;
+            }
             i += 3;
         } else if class[i] == '\\' && i + 1 < end {
-            let atom = &class[i..i+2];
-            if char_matches(atom, c) { matched = true; }
+            let atom = &class[i..i + 2];
+            if char_matches(atom, c) {
+                matched = true;
+            }
             i += 2;
         } else {
-            if class[i] == c { matched = true; }
+            if class[i] == c {
+                matched = true;
+            }
             i += 1;
         }
     }
-    if negate { !matched } else { matched }
+    if negate {
+        !matched
+    } else {
+        matched
+    }
 }
 
 /// Find the end index of a `[...]` class starting at pi.
 fn find_class_end(pat: &[char], pi: usize) -> Option<usize> {
     let mut i = pi + 1;
-    if i < pat.len() && pat[i] == '^' { i += 1; }
-    if i < pat.len() && pat[i] == ']' { i += 1; } // ] at start is literal
+    if i < pat.len() && pat[i] == '^' {
+        i += 1;
+    }
+    if i < pat.len() && pat[i] == ']' {
+        i += 1;
+    } // ] at start is literal
     while i < pat.len() {
-        if pat[i] == ']' { return Some(i); }
-        if pat[i] == '\\' { i += 1; } // skip escaped char
+        if pat[i] == ']' {
+            return Some(i);
+        }
+        if pat[i] == '\\' {
+            i += 1;
+        } // skip escaped char
         i += 1;
     }
     None
@@ -518,7 +674,7 @@ fn find_class_end(pat: &[char], pi: usize) -> Option<usize> {
 
 /// Find the closing `)` of a group starting at pi, return (close_idx, inner_start).
 fn find_group_end(pat: &[char], pi: usize) -> (usize, usize) {
-    let inner_start = if pat.len() > pi + 2 && pat[pi+1] == '?' && pat[pi+2] == ':' {
+    let inner_start = if pat.len() > pi + 2 && pat[pi + 1] == '?' && pat[pi + 2] == ':' {
         pi + 3
     } else {
         pi + 1
@@ -528,8 +684,15 @@ fn find_group_end(pat: &[char], pi: usize) -> (usize, usize) {
     while i < pat.len() {
         match pat[i] {
             '(' => depth += 1,
-            ')' => { depth -= 1; if depth == 0 { return (i, inner_start); } }
-            '\\' => { i += 1; }
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return (i, inner_start);
+                }
+            }
+            '\\' => {
+                i += 1;
+            }
             _ => {}
         }
         i += 1;
@@ -548,9 +711,13 @@ fn find_top_level_alt(pat: &[char], pi: usize) -> Option<usize> {
             '[' => {
                 // skip class
                 i += 1;
-                while i < pat.len() && pat[i] != ']' { i += 1; }
+                while i < pat.len() && pat[i] != ']' {
+                    i += 1;
+                }
             }
-            '\\' => { i += 1; }
+            '\\' => {
+                i += 1;
+            }
             '|' if depth == 0 => return Some(i),
             _ => {}
         }
@@ -564,7 +731,9 @@ pub fn regex_find_span(pattern: &str, text: &str) -> Option<(usize, usize)> {
     let chars: Vec<char> = text.chars().collect();
     for start in 0..chars.len() {
         if let Some(end) = find_match_at(pattern, &chars, start) {
-            if end > start { return Some((start, end)); }
+            if end > start {
+                return Some((start, end));
+            }
         }
     }
     None
@@ -603,7 +772,12 @@ pub fn regex_replace(pattern: &str, text: &str, replacement: &str, all: bool) ->
             return text.replace(pattern, replacement);
         } else {
             return if let Some(pos) = text.find(pattern) {
-                format!("{}{}{}", &text[..pos], replacement, &text[pos+pattern.len()..])
+                format!(
+                    "{}{}{}",
+                    &text[..pos],
+                    replacement,
+                    &text[pos + pattern.len()..]
+                )
             } else {
                 text.to_string()
             };
@@ -637,14 +811,26 @@ mod tests {
     use super::*;
     #[test]
     fn test_regex_replace_digit() {
-        assert_eq!(regex_replace(r"\d+", "hello world 123", "NUM", true), "hello world NUM");
-        assert_eq!(regex_replace(r"[a-z]+", "hello world 123", "X", false), "X world 123");
+        assert_eq!(
+            regex_replace(r"\d+", "hello world 123", "NUM", true),
+            "hello world NUM"
+        );
+        assert_eq!(
+            regex_replace(r"[a-z]+", "hello world 123", "X", false),
+            "X world 123"
+        );
         assert!(regex_lite_match(r".*\d+.*", "hello world 123"));
     }
 
     #[test]
     fn test_regex_replace_negated_class() {
-        assert_eq!(regex_replace("[^a-z]", "hello world", "", true), "helloworld");
-        assert_eq!(regex_replace("[^a-z0-9]", "a man a plan", "", true), "amanplan");
+        assert_eq!(
+            regex_replace("[^a-z]", "hello world", "", true),
+            "helloworld"
+        );
+        assert_eq!(
+            regex_replace("[^a-z0-9]", "a man a plan", "", true),
+            "amanaplan"
+        );
     }
 }

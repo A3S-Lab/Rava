@@ -22,6 +22,10 @@ impl GcStrategy for NoopGc {
     fn collect(&mut self) -> Result<usize> {
         Ok(0) // nothing freed
     }
-    fn used_bytes(&self) -> usize     { 0 }
-    fn capacity_bytes(&self) -> usize { 0 }
+    fn used_bytes(&self) -> usize {
+        0
+    }
+    fn capacity_bytes(&self) -> usize {
+        0
+    }
 }

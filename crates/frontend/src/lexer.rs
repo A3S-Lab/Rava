@@ -62,6 +62,7 @@ pub enum Token {
     Record,
     Sealed,
     Permits,
+    NonSealed,
 
     // Primitive type keywords
     Int,
@@ -131,15 +132,20 @@ pub enum Token {
 }
 
 pub struct Lexer<'a> {
-    src:  &'a [u8],
-    pos:  usize,
+    src: &'a [u8],
+    pos: usize,
     line: u32,
-    col:  u32,
+    col: u32,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(src: &'a str) -> Self {
-        Self { src: src.as_bytes(), pos: 0, line: 1, col: 1 }
+        Self {
+            src: src.as_bytes(),
+            pos: 0,
+            line: 1,
+            col: 1,
+        }
     }
 
     pub fn tokenize(mut self) -> Result<Vec<Token>> {
@@ -148,7 +154,9 @@ impl<'a> Lexer<'a> {
             let tok = self.next_token()?;
             let done = tok == Token::Eof;
             tokens.push(tok);
-            if done { break; }
+            if done {
+                break;
+            }
         }
         Ok(tokens)
     }
@@ -169,7 +177,12 @@ impl<'a> Lexer<'a> {
     fn advance(&mut self) -> Option<u8> {
         let ch = self.src.get(self.pos).copied()?;
         self.pos += 1;
-        if ch == b'\n' { self.line += 1; self.col = 1; } else { self.col += 1; }
+        if ch == b'\n' {
+            self.line += 1;
+            self.col = 1;
+        } else {
+            self.col += 1;
+        }
         Some(ch)
     }
 
@@ -181,16 +194,22 @@ impl<'a> Lexer<'a> {
             }
             // line comment
             if self.peek() == Some(b'/') && self.peek2() == Some(b'/') {
-                while !matches!(self.peek(), Some(b'\n') | None) { self.advance(); }
+                while !matches!(self.peek(), Some(b'\n') | None) {
+                    self.advance();
+                }
                 continue;
             }
             // block comment
             if self.peek() == Some(b'/') && self.peek2() == Some(b'*') {
-                self.advance(); self.advance();
+                self.advance();
+                self.advance();
                 loop {
                     match self.advance() {
                         None => break,
-                        Some(b'*') if self.peek() == Some(b'/') => { self.advance(); break; }
+                        Some(b'*') if self.peek() == Some(b'/') => {
+                            self.advance();
+                            break;
+                        }
                         _ => {}
                     }
                 }
@@ -204,10 +223,12 @@ impl<'a> Lexer<'a> {
         let mut s = String::new();
         loop {
             match self.advance() {
-                None | Some(b'\n') => return Err(RavaError::Parse {
-                    location: format!("{}:{}", self.line, self.col),
-                    message: "unterminated string literal".into(),
-                }),
+                None | Some(b'\n') => {
+                    return Err(RavaError::Parse {
+                        location: format!("{}:{}", self.line, self.col),
+                        message: "unterminated string literal".into(),
+                    })
+                }
                 Some(b'"') => break,
                 Some(b'\\') => s.push(self.read_escape()?),
                 Some(c) => s.push(c as char),
@@ -227,19 +248,25 @@ impl<'a> Lexer<'a> {
             self.advance();
         } else if self.peek() == Some(b'\r') {
             self.advance();
-            if self.peek() == Some(b'\n') { self.advance(); }
+            if self.peek() == Some(b'\n') {
+                self.advance();
+            }
         }
 
         // Read until closing """
         let mut raw = String::new();
         loop {
             match self.peek() {
-                None => return Err(RavaError::Parse {
-                    location: format!("{}:{}", self.line, self.col),
-                    message: "unterminated text block".into(),
-                }),
+                None => {
+                    return Err(RavaError::Parse {
+                        location: format!("{}:{}", self.line, self.col),
+                        message: "unterminated text block".into(),
+                    })
+                }
                 Some(b'"') if self.peek2() == Some(b'"') && self.peek3() == Some(b'"') => {
-                    self.advance(); self.advance(); self.advance();
+                    self.advance();
+                    self.advance();
+                    self.advance();
                     break;
                 }
                 Some(b'\\') => {
@@ -256,19 +283,29 @@ impl<'a> Lexer<'a> {
         // Strip trailing newline before closing """
         if raw.ends_with('\n') {
             raw.pop();
-            if raw.ends_with('\r') { raw.pop(); }
+            if raw.ends_with('\r') {
+                raw.pop();
+            }
         }
 
         // Strip common leading whitespace (Java text block spec)
         let lines: Vec<&str> = raw.split('\n').collect();
-        let min_indent = lines.iter()
+        let min_indent = lines
+            .iter()
             .filter(|l| !l.trim().is_empty())
             .map(|l| l.len() - l.trim_start().len())
             .min()
             .unwrap_or(0);
 
-        let stripped: Vec<&str> = lines.iter()
-            .map(|l| if l.len() >= min_indent { &l[min_indent..] } else { l.trim_start() })
+        let stripped: Vec<&str> = lines
+            .iter()
+            .map(|l| {
+                if l.len() >= min_indent {
+                    &l[min_indent..]
+                } else {
+                    l.trim_start()
+                }
+            })
             .collect();
 
         Ok(Token::StrLit(stripped.join("\n")))
@@ -276,25 +313,27 @@ impl<'a> Lexer<'a> {
 
     fn read_escape(&mut self) -> Result<char> {
         match self.advance() {
-            Some(b'n')  => Ok('\n'),
-            Some(b't')  => Ok('\t'),
-            Some(b'r')  => Ok('\r'),
-            Some(b'"')  => Ok('"'),
+            Some(b'n') => Ok('\n'),
+            Some(b't') => Ok('\t'),
+            Some(b'r') => Ok('\r'),
+            Some(b'"') => Ok('"'),
             Some(b'\'') => Ok('\''),
             Some(b'\\') => Ok('\\'),
-            Some(b'0')  => Ok('\0'),
-            Some(b'b')  => Ok('\u{0008}'), // backspace
-            Some(b'f')  => Ok('\u{000C}'), // form feed
-            Some(b'u')  => {
+            Some(b'0') => Ok('\0'),
+            Some(b'b') => Ok('\u{0008}'), // backspace
+            Some(b'f') => Ok('\u{000C}'), // form feed
+            Some(b'u') => {
                 // Unicode escape: \uXXXX
                 let mut hex = String::with_capacity(4);
                 for _ in 0..4 {
                     match self.advance() {
                         Some(c) if (c as char).is_ascii_hexdigit() => hex.push(c as char),
-                        _ => return Err(RavaError::Parse {
-                            location: format!("{}:{}", self.line, self.col),
-                            message: "invalid unicode escape".into(),
-                        }),
+                        _ => {
+                            return Err(RavaError::Parse {
+                                location: format!("{}:{}", self.line, self.col),
+                                message: "invalid unicode escape".into(),
+                            })
+                        }
                     }
                 }
                 let code = u32::from_str_radix(&hex, 16).unwrap_or(0);
@@ -309,7 +348,9 @@ impl<'a> Lexer<'a> {
                         if d.is_ascii_digit() && d <= b'7' {
                             self.advance();
                             oct.push(d as char);
-                        } else { break; }
+                        } else {
+                            break;
+                        }
                     }
                 }
                 let code = u32::from_str_radix(&oct, 8).unwrap_or(0);
@@ -327,18 +368,22 @@ impl<'a> Lexer<'a> {
         let c = match self.advance() {
             Some(b'\\') => self.read_escape()?,
             Some(c) => c as char,
-            None => return Err(RavaError::Parse {
-                location: format!("{}:{}", self.line, self.col),
-                message: "unterminated char literal".into(),
-            }),
+            None => {
+                return Err(RavaError::Parse {
+                    location: format!("{}:{}", self.line, self.col),
+                    message: "unterminated char literal".into(),
+                })
+            }
         };
         // consume closing quote
         match self.advance() {
             Some(b'\'') => {}
-            _ => return Err(RavaError::Parse {
-                location: format!("{}:{}", self.line, self.col),
-                message: "unterminated char literal".into(),
-            }),
+            _ => {
+                return Err(RavaError::Parse {
+                    location: format!("{}:{}", self.line, self.col),
+                    message: "unterminated char literal".into(),
+                })
+            }
         }
         Ok(Token::CharLit(c as i64))
     }
@@ -351,11 +396,17 @@ impl<'a> Lexer<'a> {
             while let Some(c) = self.peek() {
                 if c.is_ascii_hexdigit() || c == b'_' {
                     self.advance();
-                    if c != b'_' { hex.push(c as char); }
-                } else { break; }
+                    if c != b'_' {
+                        hex.push(c as char);
+                    }
+                } else {
+                    break;
+                }
             }
             // skip type suffix
-            if matches!(self.peek(), Some(b'l' | b'L')) { self.advance(); }
+            if matches!(self.peek(), Some(b'l' | b'L')) {
+                self.advance();
+            }
             return Token::IntLit(i64::from_str_radix(&hex, 16).unwrap_or(0));
         }
         // Binary: 0b or 0B
@@ -365,10 +416,16 @@ impl<'a> Lexer<'a> {
             while let Some(c) = self.peek() {
                 if c == b'0' || c == b'1' || c == b'_' {
                     self.advance();
-                    if c != b'_' { bin.push(c as char); }
-                } else { break; }
+                    if c != b'_' {
+                        bin.push(c as char);
+                    }
+                } else {
+                    break;
+                }
             }
-            if matches!(self.peek(), Some(b'l' | b'L')) { self.advance(); }
+            if matches!(self.peek(), Some(b'l' | b'L')) {
+                self.advance();
+            }
             return Token::IntLit(i64::from_str_radix(&bin, 2).unwrap_or(0));
         }
         // Octal: starts with 0 and followed by digits (not a float)
@@ -377,10 +434,16 @@ impl<'a> Lexer<'a> {
             while let Some(c) = self.peek() {
                 if (b'0'..=b'7').contains(&c) || c == b'_' {
                     self.advance();
-                    if c != b'_' { oct.push(c as char); }
-                } else { break; }
+                    if c != b'_' {
+                        oct.push(c as char);
+                    }
+                } else {
+                    break;
+                }
             }
-            if matches!(self.peek(), Some(b'l' | b'L')) { self.advance(); }
+            if matches!(self.peek(), Some(b'l' | b'L')) {
+                self.advance();
+            }
             return Token::IntLit(i64::from_str_radix(&oct, 8).unwrap_or(0));
         }
 
@@ -391,10 +454,12 @@ impl<'a> Lexer<'a> {
         while let Some(c) = self.peek() {
             if c.is_ascii_digit() || c == b'_' {
                 self.advance();
-                if c != b'_' { num.push(c as char); }
+                if c != b'_' {
+                    num.push(c as char);
+                }
             } else if c == b'.' && !is_float {
                 // check it's not a method call like 123.toString()
-                if matches!(self.peek2(), Some(d) if d.is_ascii_digit()) || self.peek2() == None {
+                if matches!(self.peek2(), Some(d) if d.is_ascii_digit()) || self.peek2().is_none() {
                     is_float = true;
                     self.advance();
                     num.push('.');
@@ -419,7 +484,9 @@ impl<'a> Lexer<'a> {
                     if d.is_ascii_digit() {
                         self.advance();
                         num.push(d as char);
-                    } else { break; }
+                    } else {
+                        break;
+                    }
                 }
             } else if matches!(c, b'l' | b'L') {
                 self.advance();
@@ -450,71 +517,89 @@ impl<'a> Lexer<'a> {
                 break;
             }
         }
+
+        // Java keyword `non-sealed` contains a hyphen, so it must be handled
+        // after reading the `non` identifier prefix.
+        if s == "non"
+            && self.peek() == Some(b'-')
+            && self.src.get(self.pos + 1..self.pos + 7) == Some(b"sealed")
+        {
+            // Ensure a token boundary after `sealed`.
+            let boundary = self.src.get(self.pos + 7).copied();
+            if !matches!(boundary, Some(c) if c.is_ascii_alphanumeric() || c == b'_' || c == b'$') {
+                self.advance(); // '-'
+                for _ in 0..6 {
+                    self.advance();
+                }
+                return Token::NonSealed;
+            }
+        }
+
         match s.as_str() {
-            "class"        => Token::Class,
-            "public"       => Token::Public,
-            "private"      => Token::Private,
-            "protected"    => Token::Protected,
-            "static"       => Token::Static,
-            "void"         => Token::Void,
-            "return"       => Token::Return,
-            "new"          => Token::New,
-            "if"           => Token::If,
-            "else"         => Token::Else,
-            "while"        => Token::While,
-            "for"          => Token::For,
-            "do"           => Token::Do,
-            "this"         => Token::This,
-            "super"        => Token::Super,
-            "import"       => Token::Import,
-            "package"      => Token::Package,
-            "final"        => Token::Final,
-            "extends"      => Token::Extends,
-            "implements"   => Token::Implements,
-            "interface"    => Token::Interface,
-            "throws"       => Token::Throws,
-            "throw"        => Token::Throw,
-            "try"          => Token::Try,
-            "catch"        => Token::Catch,
-            "finally"      => Token::Finally,
-            "var"          => Token::Var,
-            "switch"       => Token::Switch,
-            "case"         => Token::Case,
-            "default"      => Token::Default,
-            "break"        => Token::Break,
-            "continue"     => Token::Continue,
-            "abstract"     => Token::Abstract,
+            "class" => Token::Class,
+            "public" => Token::Public,
+            "private" => Token::Private,
+            "protected" => Token::Protected,
+            "static" => Token::Static,
+            "void" => Token::Void,
+            "return" => Token::Return,
+            "new" => Token::New,
+            "if" => Token::If,
+            "else" => Token::Else,
+            "while" => Token::While,
+            "for" => Token::For,
+            "do" => Token::Do,
+            "this" => Token::This,
+            "super" => Token::Super,
+            "import" => Token::Import,
+            "package" => Token::Package,
+            "final" => Token::Final,
+            "extends" => Token::Extends,
+            "implements" => Token::Implements,
+            "interface" => Token::Interface,
+            "throws" => Token::Throws,
+            "throw" => Token::Throw,
+            "try" => Token::Try,
+            "catch" => Token::Catch,
+            "finally" => Token::Finally,
+            "var" => Token::Var,
+            "switch" => Token::Switch,
+            "case" => Token::Case,
+            "default" => Token::Default,
+            "break" => Token::Break,
+            "continue" => Token::Continue,
+            "abstract" => Token::Abstract,
             "synchronized" => Token::Synchronized,
-            "native"       => Token::Native,
-            "volatile"     => Token::Volatile,
-            "transient"    => Token::Transient,
-            "strictfp"     => Token::Strictfp,
-            "enum"         => Token::Enum,
-            "instanceof"   => Token::Instanceof,
-            "assert"       => Token::Assert,
-            "yield"        => Token::Yield,
-            "record"       => Token::Record,
-            "sealed"       => Token::Sealed,
-            "permits"      => Token::Permits,
-            "int"          => Token::Int,
-            "long"         => Token::Long,
-            "double"       => Token::Double,
-            "float"        => Token::Float,
-            "boolean"      => Token::Boolean,
-            "byte"         => Token::Byte,
-            "short"        => Token::Short,
-            "char"         => Token::Char,
-            "true"         => Token::BoolLit(true),
-            "false"        => Token::BoolLit(false),
-            "null"         => Token::Null,
-            _              => Token::Ident(s),
+            "native" => Token::Native,
+            "volatile" => Token::Volatile,
+            "transient" => Token::Transient,
+            "strictfp" => Token::Strictfp,
+            "enum" => Token::Enum,
+            "instanceof" => Token::Instanceof,
+            "assert" => Token::Assert,
+            "yield" => Token::Yield,
+            "record" => Token::Record,
+            "sealed" => Token::Sealed,
+            "permits" => Token::Permits,
+            "int" => Token::Int,
+            "long" => Token::Long,
+            "double" => Token::Double,
+            "float" => Token::Float,
+            "boolean" => Token::Boolean,
+            "byte" => Token::Byte,
+            "short" => Token::Short,
+            "char" => Token::Char,
+            "true" => Token::BoolLit(true),
+            "false" => Token::BoolLit(false),
+            "null" => Token::Null,
+            _ => Token::Ident(s),
         }
     }
 
     fn next_token(&mut self) -> Result<Token> {
         self.skip_whitespace_and_comments();
         let ch = match self.advance() {
-            None    => return Ok(Token::Eof),
+            None => return Ok(Token::Eof),
             Some(c) => c,
         };
         let tok = match ch {
@@ -530,70 +615,157 @@ impl<'a> Lexer<'a> {
             b'?' => Token::Question,
             b'~' => Token::Tilde,
             b':' => {
-                if self.peek() == Some(b':') { self.advance(); Token::ColonColon }
-                else { Token::Colon }
+                if self.peek() == Some(b':') {
+                    self.advance();
+                    Token::ColonColon
+                } else {
+                    Token::Colon
+                }
             }
             b'.' => {
                 if self.peek() == Some(b'.') && self.peek2() == Some(b'.') {
-                    self.advance(); self.advance();
+                    self.advance();
+                    self.advance();
                     Token::Ellipsis
                 } else {
                     Token::Dot
                 }
             }
-            b'=' => if self.peek() == Some(b'=') { self.advance(); Token::Eq   } else { Token::Assign },
-            b'!' => if self.peek() == Some(b'=') { self.advance(); Token::Ne   } else { Token::Not    },
-            b'<' => {
-                if self.peek() == Some(b'=') { self.advance(); Token::Le }
-                else if self.peek() == Some(b'<') {
+            b'=' => {
+                if self.peek() == Some(b'=') {
                     self.advance();
-                    if self.peek() == Some(b'=') { self.advance(); Token::ShlAssign }
-                    else { Token::Shl }
+                    Token::Eq
+                } else {
+                    Token::Assign
                 }
-                else { Token::Lt }
+            }
+            b'!' => {
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    Token::Ne
+                } else {
+                    Token::Not
+                }
+            }
+            b'<' => {
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    Token::Le
+                } else if self.peek() == Some(b'<') {
+                    self.advance();
+                    if self.peek() == Some(b'=') {
+                        self.advance();
+                        Token::ShlAssign
+                    } else {
+                        Token::Shl
+                    }
+                } else {
+                    Token::Lt
+                }
             }
             b'>' => {
-                if self.peek() == Some(b'=') { self.advance(); Token::Ge }
-                else if self.peek() == Some(b'>') {
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    Token::Ge
+                } else if self.peek() == Some(b'>') {
                     self.advance();
                     if self.peek() == Some(b'>') {
                         self.advance();
-                        if self.peek() == Some(b'=') { self.advance(); Token::UShrAssign }
-                        else { Token::UShr }
+                        if self.peek() == Some(b'=') {
+                            self.advance();
+                            Token::UShrAssign
+                        } else {
+                            Token::UShr
+                        }
                     } else if self.peek() == Some(b'=') {
-                        self.advance(); Token::ShrAssign
-                    } else { Token::Shr }
+                        self.advance();
+                        Token::ShrAssign
+                    } else {
+                        Token::Shr
+                    }
+                } else {
+                    Token::Gt
                 }
-                else { Token::Gt }
             }
             b'&' => {
-                if self.peek() == Some(b'&') { self.advance(); Token::And }
-                else if self.peek() == Some(b'=') { self.advance(); Token::BitAndAssign }
-                else { Token::BitAnd }
+                if self.peek() == Some(b'&') {
+                    self.advance();
+                    Token::And
+                } else if self.peek() == Some(b'=') {
+                    self.advance();
+                    Token::BitAndAssign
+                } else {
+                    Token::BitAnd
+                }
             }
             b'|' => {
-                if self.peek() == Some(b'|') { self.advance(); Token::Or }
-                else if self.peek() == Some(b'=') { self.advance(); Token::BitOrAssign }
-                else { Token::BitOr }
+                if self.peek() == Some(b'|') {
+                    self.advance();
+                    Token::Or
+                } else if self.peek() == Some(b'=') {
+                    self.advance();
+                    Token::BitOrAssign
+                } else {
+                    Token::BitOr
+                }
             }
             b'^' => {
-                if self.peek() == Some(b'=') { self.advance(); Token::BitXorAssign }
-                else { Token::BitXor }
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    Token::BitXorAssign
+                } else {
+                    Token::BitXor
+                }
             }
             b'+' => {
-                if self.peek() == Some(b'+') { self.advance(); Token::PlusPlus }
-                else if self.peek() == Some(b'=') { self.advance(); Token::PlusAssign }
-                else { Token::Plus }
+                if self.peek() == Some(b'+') {
+                    self.advance();
+                    Token::PlusPlus
+                } else if self.peek() == Some(b'=') {
+                    self.advance();
+                    Token::PlusAssign
+                } else {
+                    Token::Plus
+                }
             }
             b'-' => {
-                if self.peek() == Some(b'-') { self.advance(); Token::MinusMinus }
-                else if self.peek() == Some(b'=') { self.advance(); Token::MinusAssign }
-                else if self.peek() == Some(b'>') { self.advance(); Token::Arrow }
-                else { Token::Minus }
+                if self.peek() == Some(b'-') {
+                    self.advance();
+                    Token::MinusMinus
+                } else if self.peek() == Some(b'=') {
+                    self.advance();
+                    Token::MinusAssign
+                } else if self.peek() == Some(b'>') {
+                    self.advance();
+                    Token::Arrow
+                } else {
+                    Token::Minus
+                }
             }
-            b'*' => if self.peek() == Some(b'=') { self.advance(); Token::StarAssign  } else { Token::Star    },
-            b'/' => if self.peek() == Some(b'=') { self.advance(); Token::SlashAssign } else { Token::Slash   },
-            b'%' => if self.peek() == Some(b'=') { self.advance(); Token::PercentAssign } else { Token::Percent },
+            b'*' => {
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    Token::StarAssign
+                } else {
+                    Token::Star
+                }
+            }
+            b'/' => {
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    Token::SlashAssign
+                } else {
+                    Token::Slash
+                }
+            }
+            b'%' => {
+                if self.peek() == Some(b'=') {
+                    self.advance();
+                    Token::PercentAssign
+                } else {
+                    Token::Percent
+                }
+            }
             b'"' => {
                 // Check for text block: """
                 if self.peek() == Some(b'"') && self.peek2() == Some(b'"') {
@@ -603,14 +775,16 @@ impl<'a> Lexer<'a> {
                 } else {
                     self.read_string()?
                 }
-            },
+            }
             b'\'' => self.read_char_literal()?,
             c if c.is_ascii_digit() => self.read_number(c),
             c if c.is_ascii_alphabetic() || c == b'_' || c == b'$' => self.read_ident(c),
-            c => return Err(RavaError::Parse {
-                location: format!("{}:{}", self.line, self.col),
-                message: format!("unexpected character: {:?}", c as char),
-            }),
+            c => {
+                return Err(RavaError::Parse {
+                    location: format!("{}:{}", self.line, self.col),
+                    message: format!("unexpected character: {:?}", c as char),
+                })
+            }
         };
         Ok(tok)
     }
@@ -689,11 +863,20 @@ mod tests {
 
     #[test]
     fn tokenize_new_keywords() {
-        let tokens = Lexer::new("do abstract synchronized enum instanceof").tokenize().unwrap();
+        let tokens = Lexer::new("do abstract synchronized enum instanceof")
+            .tokenize()
+            .unwrap();
         assert_eq!(tokens[0], Token::Do);
         assert_eq!(tokens[1], Token::Abstract);
         assert_eq!(tokens[2], Token::Synchronized);
         assert_eq!(tokens[3], Token::Enum);
         assert_eq!(tokens[4], Token::Instanceof);
+    }
+
+    #[test]
+    fn tokenize_non_sealed_keyword() {
+        let tokens = Lexer::new("non-sealed class Child {}").tokenize().unwrap();
+        assert_eq!(tokens[0], Token::NonSealed);
+        assert_eq!(tokens[1], Token::Class);
     }
 }

@@ -1,7 +1,7 @@
-use rava_common::error::{RavaError, Result};
+use super::Parser;
 use crate::ast::*;
 use crate::lexer::Token;
-use super::Parser;
+use rava_common::error::{RavaError, Result};
 
 impl Parser {
     pub fn parse_expr(&mut self) -> Result<Expr> {
@@ -12,26 +12,33 @@ impl Parser {
         let lhs = self.parse_ternary()?;
         if self.eat(&Token::Assign) {
             let rhs = self.parse_assign()?;
-            return Ok(Expr::Assign { lhs: Box::new(lhs), rhs: Box::new(rhs) });
+            return Ok(Expr::Assign {
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            });
         }
         let compound_op = match self.peek() {
-            Token::PlusAssign    => Some(BinOp::Add),
-            Token::MinusAssign   => Some(BinOp::Sub),
-            Token::StarAssign    => Some(BinOp::Mul),
-            Token::SlashAssign   => Some(BinOp::Div),
+            Token::PlusAssign => Some(BinOp::Add),
+            Token::MinusAssign => Some(BinOp::Sub),
+            Token::StarAssign => Some(BinOp::Mul),
+            Token::SlashAssign => Some(BinOp::Div),
             Token::PercentAssign => Some(BinOp::Rem),
-            Token::BitAndAssign  => Some(BinOp::BitAnd),
-            Token::BitOrAssign   => Some(BinOp::BitOr),
-            Token::BitXorAssign  => Some(BinOp::BitXor),
-            Token::ShlAssign     => Some(BinOp::Shl),
-            Token::ShrAssign     => Some(BinOp::Shr),
-            Token::UShrAssign    => Some(BinOp::UShr),
+            Token::BitAndAssign => Some(BinOp::BitAnd),
+            Token::BitOrAssign => Some(BinOp::BitOr),
+            Token::BitXorAssign => Some(BinOp::BitXor),
+            Token::ShlAssign => Some(BinOp::Shl),
+            Token::ShrAssign => Some(BinOp::Shr),
+            Token::UShrAssign => Some(BinOp::UShr),
             _ => None,
         };
         if let Some(op) = compound_op {
             self.advance();
             let rhs = self.parse_assign()?;
-            return Ok(Expr::CompoundAssign { op, lhs: Box::new(lhs), rhs: Box::new(rhs) });
+            return Ok(Expr::CompoundAssign {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            });
         }
         Ok(lhs)
     }
@@ -43,7 +50,9 @@ impl Parser {
             self.expect(&Token::Colon)?;
             let else_ = self.parse_ternary()?;
             return Ok(Expr::Ternary {
-                cond: Box::new(cond), then: Box::new(then), else_: Box::new(else_),
+                cond: Box::new(cond),
+                then: Box::new(then),
+                else_: Box::new(else_),
             });
         }
         Ok(cond)
@@ -54,7 +63,11 @@ impl Parser {
         while self.peek() == &Token::Or {
             self.advance();
             let rhs = self.parse_and()?;
-            lhs = Expr::BinOp { op: BinOp::Or, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Expr::BinOp {
+                op: BinOp::Or,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Ok(lhs)
     }
@@ -64,7 +77,11 @@ impl Parser {
         while self.peek() == &Token::And {
             self.advance();
             let rhs = self.parse_bitor()?;
-            lhs = Expr::BinOp { op: BinOp::And, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Expr::BinOp {
+                op: BinOp::And,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Ok(lhs)
     }
@@ -74,7 +91,11 @@ impl Parser {
         while self.peek() == &Token::BitOr {
             self.advance();
             let rhs = self.parse_bitxor()?;
-            lhs = Expr::BinOp { op: BinOp::BitOr, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Expr::BinOp {
+                op: BinOp::BitOr,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Ok(lhs)
     }
@@ -84,7 +105,11 @@ impl Parser {
         while self.peek() == &Token::BitXor {
             self.advance();
             let rhs = self.parse_bitand()?;
-            lhs = Expr::BinOp { op: BinOp::BitXor, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Expr::BinOp {
+                op: BinOp::BitXor,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Ok(lhs)
     }
@@ -94,7 +119,11 @@ impl Parser {
         while self.peek() == &Token::BitAnd {
             self.advance();
             let rhs = self.parse_eq()?;
-            lhs = Expr::BinOp { op: BinOp::BitAnd, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Expr::BinOp {
+                op: BinOp::BitAnd,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Ok(lhs)
     }
@@ -109,7 +138,11 @@ impl Parser {
             };
             self.advance();
             let rhs = self.parse_rel()?;
-            lhs = Expr::BinOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Expr::BinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Ok(lhs)
     }
@@ -121,22 +154,38 @@ impl Parser {
                 Token::Lt => {
                     self.advance();
                     let rhs = self.parse_shift()?;
-                    lhs = Expr::BinOp { op: BinOp::Lt, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+                    lhs = Expr::BinOp {
+                        op: BinOp::Lt,
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                    };
                 }
                 Token::Le => {
                     self.advance();
                     let rhs = self.parse_shift()?;
-                    lhs = Expr::BinOp { op: BinOp::Le, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+                    lhs = Expr::BinOp {
+                        op: BinOp::Le,
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                    };
                 }
                 Token::Gt => {
                     self.advance();
                     let rhs = self.parse_shift()?;
-                    lhs = Expr::BinOp { op: BinOp::Gt, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+                    lhs = Expr::BinOp {
+                        op: BinOp::Gt,
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                    };
                 }
                 Token::Ge => {
                     self.advance();
                     let rhs = self.parse_shift()?;
-                    lhs = Expr::BinOp { op: BinOp::Ge, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+                    lhs = Expr::BinOp {
+                        op: BinOp::Ge,
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                    };
                 }
                 Token::Instanceof => {
                     self.advance();
@@ -144,9 +193,16 @@ impl Parser {
                     // Pattern matching: `instanceof Type name`
                     if matches!(self.peek(), Token::Ident(_)) {
                         let name = self.expect_ident()?;
-                        lhs = Expr::InstanceofPattern { expr: Box::new(lhs), ty, name };
+                        lhs = Expr::InstanceofPattern {
+                            expr: Box::new(lhs),
+                            ty,
+                            name,
+                        };
                     } else {
-                        lhs = Expr::Instanceof { expr: Box::new(lhs), ty };
+                        lhs = Expr::Instanceof {
+                            expr: Box::new(lhs),
+                            ty,
+                        };
                     }
                 }
                 _ => break,
@@ -159,14 +215,18 @@ impl Parser {
         let mut lhs = self.parse_add()?;
         loop {
             let op = match self.peek() {
-                Token::Shl  => BinOp::Shl,
-                Token::Shr  => BinOp::Shr,
+                Token::Shl => BinOp::Shl,
+                Token::Shr => BinOp::Shr,
                 Token::UShr => BinOp::UShr,
                 _ => break,
             };
             self.advance();
             let rhs = self.parse_add()?;
-            lhs = Expr::BinOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Expr::BinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Ok(lhs)
     }
@@ -175,13 +235,17 @@ impl Parser {
         let mut lhs = self.parse_mul()?;
         loop {
             let op = match self.peek() {
-                Token::Plus  => BinOp::Add,
+                Token::Plus => BinOp::Add,
                 Token::Minus => BinOp::Sub,
                 _ => break,
             };
             self.advance();
             let rhs = self.parse_mul()?;
-            lhs = Expr::BinOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Expr::BinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Ok(lhs)
     }
@@ -190,14 +254,18 @@ impl Parser {
         let mut lhs = self.parse_unary()?;
         loop {
             let op = match self.peek() {
-                Token::Star    => BinOp::Mul,
-                Token::Slash   => BinOp::Div,
+                Token::Star => BinOp::Mul,
+                Token::Slash => BinOp::Div,
                 Token::Percent => BinOp::Rem,
                 _ => break,
             };
             self.advance();
             let rhs = self.parse_unary()?;
-            lhs = Expr::BinOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Expr::BinOp {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
         Ok(lhs)
     }
@@ -207,27 +275,42 @@ impl Parser {
             Token::Minus => {
                 self.advance();
                 let e = self.parse_unary()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::Neg, expr: Box::new(e) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::Neg,
+                    expr: Box::new(e),
+                })
             }
             Token::Not => {
                 self.advance();
                 let e = self.parse_unary()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::Not, expr: Box::new(e) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::Not,
+                    expr: Box::new(e),
+                })
             }
             Token::Tilde => {
                 self.advance();
                 let e = self.parse_unary()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::BitNot, expr: Box::new(e) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::BitNot,
+                    expr: Box::new(e),
+                })
             }
             Token::PlusPlus => {
                 self.advance();
                 let e = self.parse_postfix()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::PreInc, expr: Box::new(e) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::PreInc,
+                    expr: Box::new(e),
+                })
             }
             Token::MinusMinus => {
                 self.advance();
                 let e = self.parse_postfix()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::PreDec, expr: Box::new(e) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::PreDec,
+                    expr: Box::new(e),
+                })
             }
             _ => self.parse_postfix(),
         }
@@ -239,15 +322,27 @@ impl Parser {
             match self.peek().clone() {
                 Token::Dot => {
                     self.advance();
+                    let type_args_raw = if self.peek() == &Token::Lt {
+                        self.parse_angle_raw()
+                    } else {
+                        None
+                    };
                     let name = self.expect_ident()?;
                     if self.peek() == &Token::LParen {
                         let args = self.parse_args()?;
                         expr = Expr::Call {
-                            callee: Box::new(Expr::Field { obj: Box::new(expr), name }),
+                            callee: Box::new(Expr::Field {
+                                obj: Box::new(expr),
+                                name,
+                            }),
                             args,
+                            type_args_raw,
                         };
                     } else {
-                        expr = Expr::Field { obj: Box::new(expr), name };
+                        expr = Expr::Field {
+                            obj: Box::new(expr),
+                            name,
+                        };
                     }
                 }
                 Token::ColonColon => {
@@ -257,21 +352,33 @@ impl Parser {
                     } else {
                         self.expect_ident()?
                     };
-                    expr = Expr::MethodRef { obj: Box::new(expr), name };
+                    expr = Expr::MethodRef {
+                        obj: Box::new(expr),
+                        name,
+                    };
                 }
                 Token::LBracket => {
                     self.advance();
                     let idx = self.parse_expr()?;
                     self.expect(&Token::RBracket)?;
-                    expr = Expr::Index { arr: Box::new(expr), idx: Box::new(idx) };
+                    expr = Expr::Index {
+                        arr: Box::new(expr),
+                        idx: Box::new(idx),
+                    };
                 }
                 Token::PlusPlus => {
                     self.advance();
-                    expr = Expr::UnaryOp { op: UnaryOp::PostInc, expr: Box::new(expr) };
+                    expr = Expr::UnaryOp {
+                        op: UnaryOp::PostInc,
+                        expr: Box::new(expr),
+                    };
                 }
                 Token::MinusMinus => {
                     self.advance();
-                    expr = Expr::UnaryOp { op: UnaryOp::PostDec, expr: Box::new(expr) };
+                    expr = Expr::UnaryOp {
+                        op: UnaryOp::PostDec,
+                        expr: Box::new(expr),
+                    };
                 }
                 _ => break,
             }
@@ -281,13 +388,31 @@ impl Parser {
 
     fn parse_primary(&mut self) -> Result<Expr> {
         match self.peek().clone() {
-            Token::IntLit(n)   => { self.advance(); Ok(Expr::IntLit(n)) }
-            Token::FloatLit(f) => { self.advance(); Ok(Expr::FloatLit(f)) }
-            Token::StrLit(s)   => { self.advance(); Ok(Expr::StrLit(s)) }
-            Token::CharLit(c)  => { self.advance(); Ok(Expr::CharLit(c)) }
-            Token::BoolLit(b)  => { self.advance(); Ok(Expr::BoolLit(b)) }
-            Token::Null        => { self.advance(); Ok(Expr::Null) }
-            Token::Switch      => {
+            Token::IntLit(n) => {
+                self.advance();
+                Ok(Expr::IntLit(n))
+            }
+            Token::FloatLit(f) => {
+                self.advance();
+                Ok(Expr::FloatLit(f))
+            }
+            Token::StrLit(s) => {
+                self.advance();
+                Ok(Expr::StrLit(s))
+            }
+            Token::CharLit(c) => {
+                self.advance();
+                Ok(Expr::CharLit(c))
+            }
+            Token::BoolLit(b) => {
+                self.advance();
+                Ok(Expr::BoolLit(b))
+            }
+            Token::Null => {
+                self.advance();
+                Ok(Expr::Null)
+            }
+            Token::Switch => {
                 // Switch expression: switch (expr) { case X -> val; ... }
                 self.advance();
                 self.expect(&Token::LParen)?;
@@ -317,15 +442,24 @@ impl Parser {
                         }
                     } else {
                         self.expect(&Token::Colon)?;
-                        while self.peek() != &Token::Case && self.peek() != &Token::Default
-                            && self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
+                        while self.peek() != &Token::Case
+                            && self.peek() != &Token::Default
+                            && self.peek() != &Token::RBrace
+                            && self.peek() != &Token::Eof
+                        {
                             body.push(self.parse_stmt()?);
                         }
                     }
-                    cases.push(SwitchCase { labels: label, body });
+                    cases.push(SwitchCase {
+                        labels: label,
+                        body,
+                    });
                 }
                 self.expect(&Token::RBrace)?;
-                Ok(Expr::SwitchExpr { expr: Box::new(expr), cases })
+                Ok(Expr::SwitchExpr {
+                    expr: Box::new(expr),
+                    cases,
+                })
             }
             Token::This => {
                 self.advance();
@@ -333,7 +467,10 @@ impl Parser {
                 if self.peek() == &Token::ColonColon {
                     self.advance();
                     let name = self.expect_ident()?;
-                    return Ok(Expr::MethodRef { obj: Box::new(Expr::This), name });
+                    return Ok(Expr::MethodRef {
+                        obj: Box::new(Expr::This),
+                        name,
+                    });
                 }
                 Ok(Expr::This)
             }
@@ -345,15 +482,26 @@ impl Parser {
                     if self.peek() == &Token::LParen {
                         let args = self.parse_args()?;
                         Ok(Expr::Call {
-                            callee: Box::new(Expr::Field { obj: Box::new(Expr::Super), name }),
+                            callee: Box::new(Expr::Field {
+                                obj: Box::new(Expr::Super),
+                                name,
+                            }),
                             args,
+                            type_args_raw: None,
                         })
                     } else {
-                        Ok(Expr::Field { obj: Box::new(Expr::Super), name })
+                        Ok(Expr::Field {
+                            obj: Box::new(Expr::Super),
+                            name,
+                        })
                     }
                 } else if self.peek() == &Token::LParen {
                     let args = self.parse_args()?;
-                    Ok(Expr::Call { callee: Box::new(Expr::Super), args })
+                    Ok(Expr::Call {
+                        callee: Box::new(Expr::Super),
+                        args,
+                        type_args_raw: None,
+                    })
                 } else {
                     Ok(Expr::Super)
                 }
@@ -368,10 +516,14 @@ impl Parser {
                         self.advance();
                         if self.peek() == &Token::LBrace {
                             let elements = self.parse_array_init()?;
-                            return Ok(Expr::ArrayInit { ty: Some(ty), elements });
+                            return Ok(Expr::ArrayInit {
+                                ty: Some(ty),
+                                elements,
+                            });
                         }
                         return Ok(Expr::NewArray {
-                            ty, len: Box::new(Expr::IntLit(0)),
+                            ty,
+                            len: Box::new(Expr::IntLit(0)),
                         });
                     }
                     let len = self.parse_expr()?;
@@ -388,7 +540,10 @@ impl Parser {
                         }
                     }
                     if extra_dims.is_empty() {
-                        Ok(Expr::NewArray { ty, len: Box::new(len) })
+                        Ok(Expr::NewArray {
+                            ty,
+                            len: Box::new(len),
+                        })
                     } else {
                         let mut dims = vec![len];
                         dims.extend(extra_dims);
@@ -404,7 +559,7 @@ impl Parser {
                             if let Some(m) = self.parse_member("__anon__")? {
                                 members.push(m);
                                 // Collect extra fields from multi-variable declarations (e.g. double w=4.0, h=3.0)
-                                members.extend(self.pending_fields.drain(..));
+                                members.append(&mut self.pending_fields);
                             }
                         }
                         self.expect(&Token::RBrace)?;
@@ -424,7 +579,10 @@ impl Parser {
                     let ty = self.parse_type_expr()?;
                     self.expect(&Token::RParen)?;
                     let expr = self.parse_unary()?;
-                    return Ok(Expr::Cast { ty, expr: Box::new(expr) });
+                    return Ok(Expr::Cast {
+                        ty,
+                        expr: Box::new(expr),
+                    });
                 }
                 let expr = self.parse_expr()?;
                 self.expect(&Token::RParen)?;
@@ -454,11 +612,18 @@ impl Parser {
                     } else {
                         self.expect_ident()?
                     };
-                    return Ok(Expr::MethodRef { obj: Box::new(Expr::Ident(name)), name: method });
+                    return Ok(Expr::MethodRef {
+                        obj: Box::new(Expr::Ident(name)),
+                        name: method,
+                    });
                 }
                 if self.peek() == &Token::LParen {
                     let args = self.parse_args()?;
-                    Ok(Expr::Call { callee: Box::new(Expr::Ident(name)), args })
+                    Ok(Expr::Call {
+                        callee: Box::new(Expr::Ident(name)),
+                        args,
+                        type_args_raw: None,
+                    })
                 } else {
                     Ok(Expr::Ident(name))
                 }
@@ -475,7 +640,9 @@ impl Parser {
         let mut args = Vec::new();
         while self.peek() != &Token::RParen && self.peek() != &Token::Eof {
             args.push(self.parse_expr()?);
-            if !self.eat(&Token::Comma) { break; }
+            if !self.eat(&Token::Comma) {
+                break;
+            }
         }
         self.expect(&Token::RParen)?;
         Ok(args)
@@ -487,11 +654,16 @@ impl Parser {
         while self.peek() != &Token::RBrace && self.peek() != &Token::Eof {
             if self.peek() == &Token::LBrace {
                 let inner = self.parse_array_init()?;
-                elements.push(Expr::ArrayInit { ty: None, elements: inner });
+                elements.push(Expr::ArrayInit {
+                    ty: None,
+                    elements: inner,
+                });
             } else {
                 elements.push(self.parse_expr()?);
             }
-            if !self.eat(&Token::Comma) { break; }
+            if !self.eat(&Token::Comma) {
+                break;
+            }
         }
         self.expect(&Token::RBrace)?;
         Ok(elements)
@@ -499,19 +671,28 @@ impl Parser {
 
     /// Detect lambda: `(params) -> ...`
     fn is_lambda(&self) -> bool {
-        if self.peek() != &Token::LParen { return false; }
+        if self.peek() != &Token::LParen {
+            return false;
+        }
         let mut i = self.pos + 1;
         let mut depth = 1i32;
         loop {
             match self.tokens.get(i) {
-                Some(Token::LParen) => { depth += 1; i += 1; }
+                Some(Token::LParen) => {
+                    depth += 1;
+                    i += 1;
+                }
                 Some(Token::RParen) => {
                     depth -= 1;
                     i += 1;
-                    if depth == 0 { break; }
+                    if depth == 0 {
+                        break;
+                    }
                 }
                 None | Some(Token::Eof) => return false,
-                _ => { i += 1; }
+                _ => {
+                    i += 1;
+                }
             }
         }
         matches!(self.tokens.get(i), Some(Token::Arrow))
@@ -524,7 +705,10 @@ impl Parser {
             if self.peek() == &Token::Var {
                 self.advance();
                 let name = self.expect_ident()?;
-                params.push(LambdaParam { name, ty: Some(TypeExpr::simple("var")) });
+                params.push(LambdaParam {
+                    name,
+                    ty: Some(TypeExpr::simple("var")),
+                });
             } else if matches!(self.peek(), Token::Ident(_))
                 && matches!(self.peek2(), Token::Comma | Token::RParen)
             {
@@ -535,7 +719,9 @@ impl Parser {
                 let name = self.expect_ident()?;
                 params.push(LambdaParam { name, ty: Some(ty) });
             }
-            if !self.eat(&Token::Comma) { break; }
+            if !self.eat(&Token::Comma) {
+                break;
+            }
         }
         self.expect(&Token::RParen)?;
         self.expect(&Token::Arrow)?;
@@ -544,7 +730,10 @@ impl Parser {
         } else {
             LambdaBody::Expr(self.parse_expr()?)
         };
-        Ok(Expr::Lambda { params, body: Box::new(body) })
+        Ok(Expr::Lambda {
+            params,
+            body: Box::new(body),
+        })
     }
 
     /// Heuristic: `(Type)` cast vs `(expr)` grouping.
@@ -552,16 +741,31 @@ impl Parser {
         let mut i = self.pos;
         loop {
             match self.tokens.get(i) {
-                Some(Token::Ident(_) | Token::Int | Token::Long | Token::Double |
-                     Token::Float | Token::Boolean | Token::Byte | Token::Short | Token::Char) => { i += 1; }
-                Some(Token::Dot) => { i += 1; }
+                Some(
+                    Token::Ident(_)
+                    | Token::Int
+                    | Token::Long
+                    | Token::Double
+                    | Token::Float
+                    | Token::Boolean
+                    | Token::Byte
+                    | Token::Short
+                    | Token::Char,
+                ) => {
+                    i += 1;
+                }
+                Some(Token::Dot) => {
+                    i += 1;
+                }
                 _ => break,
             }
         }
         // skip array dims
         while matches!(self.tokens.get(i), Some(Token::LBracket)) {
             i += 1;
-            if matches!(self.tokens.get(i), Some(Token::RBracket)) { i += 1; }
+            if matches!(self.tokens.get(i), Some(Token::RBracket)) {
+                i += 1;
+            }
         }
         matches!(self.tokens.get(i), Some(Token::RParen))
     }

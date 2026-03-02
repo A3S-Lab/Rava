@@ -9,21 +9,19 @@
 
 mod helpers;
 
-use std::collections::HashMap;
-use cranelift_codegen::ir::{
-    self, types, AbiParam, InstBuilder, MemFlags, Signature,
-};
-use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::condcodes::FloatCC;
-use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::entity::EntityRef;
+use cranelift_codegen::ir::condcodes::FloatCC;
+use cranelift_codegen::ir::condcodes::IntCC;
+use cranelift_codegen::ir::{self, types, AbiParam, InstBuilder, MemFlags, Signature};
+use cranelift_codegen::isa::CallConv;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{FuncId as ClifFuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 use rava_common::error::{RavaError, Result};
 use rava_rir::{BinOp, RirFunction, RirInstr, RirModule, RirType, UnaryOp};
+use std::collections::HashMap;
 
-use helpers::{build_signature, block_ends_with_terminator, collect_def_names, mangle_name};
+use helpers::{block_ends_with_terminator, build_signature, collect_def_names, mangle_name};
 
 /// Tracked value type for AOT dispatch (println, concat, etc.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +31,13 @@ enum ValType {
     Bool,
     Str,
     Obj,
+}
+
+struct CallCtx<'a> {
+    var_map: &'a mut HashMap<String, Variable>,
+    var_counter: &'a mut u32,
+    first_arg_type: Option<ValType>,
+    val_types: &'a mut HashMap<String, ValType>,
 }
 
 /// Translate an entire RirModule into Cranelift IR and define functions in the ObjectModule.
@@ -69,6 +74,21 @@ struct TranslationCtx<'a> {
     // Class tag runtime (instanceof)
     rt_obj_set_tag: ClifFuncId,
     rt_obj_get_tag: ClifFuncId,
+    // Extra conversions
+    rt_bool_to_str: ClifFuncId,
+    // Array iterator
+    rt_iter_new: ClifFuncId,
+    rt_iter_has_next: ClifFuncId,
+    rt_iter_next: ClifFuncId,
+    // Math
+    rt_math_sqrt: ClifFuncId,
+    rt_math_pow: ClifFuncId,
+    rt_math_abs: ClifFuncId,
+    rt_math_min: ClifFuncId,
+    rt_math_max: ClifFuncId,
+    // String comparison
+    rt_str_equals: ClifFuncId,
+    rt_str_compare_to: ClifFuncId,
     /// String constant data IDs
     str_constants: HashMap<String, cranelift_module::DataId>,
     /// Maps FieldId hash → sequential slot index (per class, flattened)
@@ -82,30 +102,103 @@ struct TranslationCtx<'a> {
 impl<'a> TranslationCtx<'a> {
     fn new(rir: &'a RirModule, obj: &'a mut ObjectModule) -> Result<Self> {
         let rt_println_int = Self::declare_rt_func(obj, "rava_println_int", &[types::I64], None)?;
-        let rt_println_float = Self::declare_rt_func(obj, "rava_println_float", &[types::F64], None)?;
+        let rt_println_float =
+            Self::declare_rt_func(obj, "rava_println_float", &[types::F64], None)?;
         let rt_println_str = Self::declare_rt_func(obj, "rava_println_str", &[types::I64], None)?;
         let rt_println_bool = Self::declare_rt_func(obj, "rava_println_bool", &[types::I64], None)?;
         let rt_println_void = Self::declare_rt_func(obj, "rava_println_void", &[], None)?;
         let rt_print_int = Self::declare_rt_func(obj, "rava_print_int", &[types::I64], None)?;
         let rt_print_str = Self::declare_rt_func(obj, "rava_print_str", &[types::I64], None)?;
-        let rt_str_concat = Self::declare_rt_func(obj, "rava_str_concat", &[types::I64, types::I64], Some(types::I64))?;
-        let rt_int_to_str = Self::declare_rt_func(obj, "rava_int_to_str", &[types::I64], Some(types::I64))?;
-        let rt_float_to_str = Self::declare_rt_func(obj, "rava_float_to_str", &[types::F64], Some(types::I64))?;
-        let rt_obj_alloc = Self::declare_rt_func(obj, "rava_obj_alloc", &[types::I64], Some(types::I64))?;
-        let rt_obj_get_field = Self::declare_rt_func(obj, "rava_obj_get_field", &[types::I64, types::I64], Some(types::I64))?;
-        let rt_obj_set_field = Self::declare_rt_func(obj, "rava_obj_set_field", &[types::I64, types::I64, types::I64], None)?;
-        let rt_arr_alloc = Self::declare_rt_func(obj, "rava_arr_alloc", &[types::I64], Some(types::I64))?;
-        let rt_arr_load = Self::declare_rt_func(obj, "rava_arr_load", &[types::I64, types::I64], Some(types::I64))?;
-        let rt_arr_store = Self::declare_rt_func(obj, "rava_arr_store", &[types::I64, types::I64, types::I64], None)?;
-        let rt_arr_len = Self::declare_rt_func(obj, "rava_arr_len", &[types::I64], Some(types::I64))?;
-        let rt_obj_set_tag = Self::declare_rt_func(obj, "rava_obj_set_tag", &[types::I64, types::I64], None)?;
-        let rt_obj_get_tag = Self::declare_rt_func(obj, "rava_obj_get_tag", &[types::I64], Some(types::I64))?;
+        let rt_str_concat = Self::declare_rt_func(
+            obj,
+            "rava_str_concat",
+            &[types::I64, types::I64],
+            Some(types::I64),
+        )?;
+        let rt_int_to_str =
+            Self::declare_rt_func(obj, "rava_int_to_str", &[types::I64], Some(types::I64))?;
+        let rt_float_to_str =
+            Self::declare_rt_func(obj, "rava_float_to_str", &[types::F64], Some(types::I64))?;
+        let rt_obj_alloc =
+            Self::declare_rt_func(obj, "rava_obj_alloc", &[types::I64], Some(types::I64))?;
+        let rt_obj_get_field = Self::declare_rt_func(
+            obj,
+            "rava_obj_get_field",
+            &[types::I64, types::I64],
+            Some(types::I64),
+        )?;
+        let rt_obj_set_field = Self::declare_rt_func(
+            obj,
+            "rava_obj_set_field",
+            &[types::I64, types::I64, types::I64],
+            None,
+        )?;
+        let rt_arr_alloc =
+            Self::declare_rt_func(obj, "rava_arr_alloc", &[types::I64], Some(types::I64))?;
+        let rt_arr_load = Self::declare_rt_func(
+            obj,
+            "rava_arr_load",
+            &[types::I64, types::I64],
+            Some(types::I64),
+        )?;
+        let rt_arr_store = Self::declare_rt_func(
+            obj,
+            "rava_arr_store",
+            &[types::I64, types::I64, types::I64],
+            None,
+        )?;
+        let rt_arr_len =
+            Self::declare_rt_func(obj, "rava_arr_len", &[types::I64], Some(types::I64))?;
+        let rt_obj_set_tag =
+            Self::declare_rt_func(obj, "rava_obj_set_tag", &[types::I64, types::I64], None)?;
+        let rt_obj_get_tag =
+            Self::declare_rt_func(obj, "rava_obj_get_tag", &[types::I64], Some(types::I64))?;
+        let rt_bool_to_str =
+            Self::declare_rt_func(obj, "rava_bool_to_str", &[types::I64], Some(types::I64))?;
+        let rt_iter_new =
+            Self::declare_rt_func(obj, "rava_iter_new", &[types::I64], Some(types::I64))?;
+        let rt_iter_has_next =
+            Self::declare_rt_func(obj, "rava_iter_has_next", &[types::I64], Some(types::I64))?;
+        let rt_iter_next =
+            Self::declare_rt_func(obj, "rava_iter_next", &[types::I64], Some(types::I64))?;
+        let rt_math_sqrt =
+            Self::declare_rt_func(obj, "rava_math_sqrt", &[types::I64], Some(types::I64))?;
+        let rt_math_pow = Self::declare_rt_func(
+            obj,
+            "rava_math_pow",
+            &[types::I64, types::I64],
+            Some(types::I64),
+        )?;
+        let rt_math_abs =
+            Self::declare_rt_func(obj, "rava_math_abs_int", &[types::I64], Some(types::I64))?;
+        let rt_math_min = Self::declare_rt_func(
+            obj,
+            "rava_math_min_int",
+            &[types::I64, types::I64],
+            Some(types::I64),
+        )?;
+        let rt_math_max = Self::declare_rt_func(
+            obj,
+            "rava_math_max_int",
+            &[types::I64, types::I64],
+            Some(types::I64),
+        )?;
+        let rt_str_equals = Self::declare_rt_func(
+            obj,
+            "rava_str_equals",
+            &[types::I64, types::I64],
+            Some(types::I64),
+        )?;
+        let rt_str_compare_to = Self::declare_rt_func(
+            obj,
+            "rava_str_compare_to",
+            &[types::I64, types::I64],
+            Some(types::I64),
+        )?;
 
         let mut field_slots = HashMap::new();
-        let mut slot = 0u32;
-        for &hash in rir.field_names.keys() {
-            field_slots.insert(hash, slot);
-            slot += 1;
+        for (slot, &hash) in rir.field_names.keys().enumerate() {
+            field_slots.insert(hash, slot as u32);
         }
 
         let mut class_tags = HashMap::new();
@@ -113,8 +206,8 @@ impl<'a> TranslationCtx<'a> {
         for func in &rir.functions {
             if let Some(class_name) = func.name.split('.').next() {
                 let hash = rava_frontend::lowerer::encode_builtin(class_name);
-                if !class_tags.contains_key(&hash) {
-                    class_tags.insert(hash, tag);
+                if let std::collections::hash_map::Entry::Vacant(entry) = class_tags.entry(hash) {
+                    entry.insert(tag);
                     tag += 1;
                 }
             }
@@ -124,7 +217,8 @@ impl<'a> TranslationCtx<'a> {
         for func in &rir.functions {
             let sig = build_signature(func);
             let mangled = mangle_name(&func.name);
-            let id = obj.declare_function(&mangled, Linkage::Export, &sig)
+            let id = obj
+                .declare_function(&mangled, Linkage::Export, &sig)
                 .map_err(|e| RavaError::Codegen(format!("declare {} failed: {e}", func.name)))?;
             func_ids.insert(func.name.clone(), id);
         }
@@ -142,16 +236,22 @@ impl<'a> TranslationCtx<'a> {
                         _ => None,
                     };
                     if let Some(h) = hash {
-                        if !static_globals.contains_key(&h) {
+                        if let std::collections::hash_map::Entry::Vacant(entry) =
+                            static_globals.entry(h)
+                        {
                             let name = format!(".static.{}", static_counter);
                             static_counter += 1;
-                            let data_id = obj.declare_data(&name, Linkage::Local, true, false)
-                                .map_err(|e| RavaError::Codegen(format!("declare static {name}: {e}")))?;
+                            let data_id = obj
+                                .declare_data(&name, Linkage::Local, true, false)
+                                .map_err(|e| {
+                                    RavaError::Codegen(format!("declare static {name}: {e}"))
+                                })?;
                             let mut desc = cranelift_module::DataDescription::new();
                             desc.define_zeroinit(8);
-                            obj.define_data(data_id, &desc)
-                                .map_err(|e| RavaError::Codegen(format!("define static {name}: {e}")))?;
-                            static_globals.insert(h, data_id);
+                            obj.define_data(data_id, &desc).map_err(|e| {
+                                RavaError::Codegen(format!("define static {name}: {e}"))
+                            })?;
+                            entry.insert(data_id);
                         }
                     }
                 }
@@ -159,14 +259,39 @@ impl<'a> TranslationCtx<'a> {
         }
 
         Ok(Self {
-            rir, obj, func_ids,
-            rt_println_int, rt_println_float, rt_println_str,
-            rt_println_bool, rt_println_void,
-            rt_print_int, rt_print_str,
-            rt_str_concat, rt_int_to_str, rt_float_to_str,
-            rt_obj_alloc, rt_obj_get_field, rt_obj_set_field,
-            rt_arr_alloc, rt_arr_load, rt_arr_store, rt_arr_len,
-            rt_obj_set_tag, rt_obj_get_tag,
+            rir,
+            obj,
+            func_ids,
+            rt_println_int,
+            rt_println_float,
+            rt_println_str,
+            rt_println_bool,
+            rt_println_void,
+            rt_print_int,
+            rt_print_str,
+            rt_str_concat,
+            rt_int_to_str,
+            rt_float_to_str,
+            rt_obj_alloc,
+            rt_obj_get_field,
+            rt_obj_set_field,
+            rt_arr_alloc,
+            rt_arr_load,
+            rt_arr_store,
+            rt_arr_len,
+            rt_obj_set_tag,
+            rt_obj_get_tag,
+            rt_bool_to_str,
+            rt_iter_new,
+            rt_iter_has_next,
+            rt_iter_next,
+            rt_math_sqrt,
+            rt_math_pow,
+            rt_math_abs,
+            rt_math_min,
+            rt_math_max,
+            rt_str_equals,
+            rt_str_compare_to,
             str_constants: HashMap::new(),
             field_slots,
             class_tags,
@@ -175,12 +300,18 @@ impl<'a> TranslationCtx<'a> {
     }
 
     fn declare_rt_func(
-        obj: &mut ObjectModule, name: &str,
-        params: &[ir::Type], ret: Option<ir::Type>,
+        obj: &mut ObjectModule,
+        name: &str,
+        params: &[ir::Type],
+        ret: Option<ir::Type>,
     ) -> Result<ClifFuncId> {
         let mut sig = Signature::new(CallConv::SystemV);
-        for &p in params { sig.params.push(AbiParam::new(p)); }
-        if let Some(r) = ret { sig.returns.push(AbiParam::new(r)); }
+        for &p in params {
+            sig.params.push(AbiParam::new(p));
+        }
+        if let Some(r) = ret {
+            sig.returns.push(AbiParam::new(r));
+        }
         obj.declare_function(name, Linkage::Import, &sig)
             .map_err(|e| RavaError::Codegen(format!("declare {name} failed: {e}")))
     }
@@ -194,9 +325,10 @@ impl<'a> TranslationCtx<'a> {
     }
 
     fn emit_entry_trampoline(&mut self) -> Result<()> {
-        let main_func = self.rir.functions.iter().find(|f| {
-            f.name.ends_with(".main") && !f.flags.is_constructor && !f.flags.is_clinit
-        });
+        let main_func =
+            self.rir.functions.iter().find(|f| {
+                f.name.ends_with(".main") && !f.flags.is_constructor && !f.flags.is_clinit
+            });
         let main_name = match main_func {
             Some(f) => f.name.clone(),
             None => return Ok(()),
@@ -211,7 +343,9 @@ impl<'a> TranslationCtx<'a> {
         entry_sig.params.push(AbiParam::new(types::I32)); // argc
         entry_sig.params.push(AbiParam::new(types::I64)); // argv
         entry_sig.returns.push(AbiParam::new(types::I32)); // return int
-        let entry_id = self.obj.declare_function("main", Linkage::Export, &entry_sig)
+        let entry_id = self
+            .obj
+            .declare_function("main", Linkage::Export, &entry_sig)
             .map_err(|e| RavaError::Codegen(format!("declare main failed: {e}")))?;
 
         let mut clif_func = ir::Function::with_name_signature(
@@ -225,6 +359,19 @@ impl<'a> TranslationCtx<'a> {
         builder.append_block_params_for_function_params(block);
         builder.switch_to_block(block);
         builder.seal_block(block);
+
+        // Call all static initializers (<clinit>) before main.
+        let clinit_ids: Vec<ClifFuncId> = self
+            .rir
+            .functions
+            .iter()
+            .filter(|f| f.flags.is_clinit)
+            .filter_map(|f| self.func_ids.get(&f.name).copied())
+            .collect();
+        for clinit_id in clinit_ids {
+            let clinit_ref = self.obj.declare_func_in_func(clinit_id, builder.func);
+            builder.ins().call(clinit_ref, &[]);
+        }
 
         // argv is block param index 1 (i64 pointer)
         let argv_val = builder.block_params(block)[1];
@@ -241,7 +388,8 @@ impl<'a> TranslationCtx<'a> {
         builder.finalize();
 
         let mut ctx = cranelift_codegen::Context::for_function(clif_func);
-        self.obj.define_function(entry_id, &mut ctx)
+        self.obj
+            .define_function(entry_id, &mut ctx)
             .map_err(|e| RavaError::Codegen(format!("define main failed: {e}")))?;
 
         Ok(())
@@ -269,7 +417,10 @@ impl<'a> TranslationCtx<'a> {
         let mut var_counter = 0u32;
         let mut val_types: HashMap<String, ValType> = HashMap::new();
 
-        let get_var = |name: &str, var_map: &mut HashMap<String, Variable>, var_counter: &mut u32| -> Variable {
+        let get_var = |name: &str,
+                       var_map: &mut HashMap<String, Variable>,
+                       var_counter: &mut u32|
+         -> Variable {
             if let Some(&v) = var_map.get(name) {
                 return v;
             }
@@ -312,6 +463,12 @@ impl<'a> TranslationCtx<'a> {
             builder.def_var(var, param_val);
         }
 
+        // Pre-pass: infer value types from constants and copies before translating.
+        // This is needed because block creation order may not match execution order
+        // (e.g. loop update/exit blocks are created before switch-case body blocks),
+        // so a value's type might be set in a later block but consumed in an earlier one.
+        self.infer_val_types(func, &mut val_types);
+
         for (bb_idx, bb) in func.basic_blocks.iter().enumerate() {
             let clif_block = block_map[&bb.id.0];
             if bb_idx > 0 {
@@ -319,7 +476,11 @@ impl<'a> TranslationCtx<'a> {
             }
             for instr in &bb.instrs {
                 self.translate_instr(
-                    instr, &mut builder, &block_map, &mut var_map, &mut var_counter,
+                    instr,
+                    &mut builder,
+                    &block_map,
+                    &mut var_map,
+                    &mut var_counter,
                     &mut val_types,
                 )?;
             }
@@ -332,7 +493,8 @@ impl<'a> TranslationCtx<'a> {
         builder.finalize();
 
         let mut ctx = cranelift_codegen::Context::for_function(clif_func);
-        self.obj.define_function(clif_func_id, &mut ctx)
+        self.obj
+            .define_function(clif_func_id, &mut ctx)
             .map_err(|e| RavaError::Codegen(format!("define {} failed: {e}", func.name)))?;
 
         Ok(())
@@ -384,29 +546,68 @@ impl<'a> TranslationCtx<'a> {
             RirInstr::BinOp { op, lhs, rhs, ret } => {
                 let l_is_str = val_types.get(&lhs.0) == Some(&ValType::Str);
                 let r_is_str = val_types.get(&rhs.0) == Some(&ValType::Str);
+                let l_is_bool = val_types.get(&lhs.0) == Some(&ValType::Bool);
+                let r_is_bool = val_types.get(&rhs.0) == Some(&ValType::Bool);
+                let l_is_float = val_types.get(&lhs.0) == Some(&ValType::Float);
+                let r_is_float = val_types.get(&rhs.0) == Some(&ValType::Float);
                 if *op == BinOp::Add && (l_is_str || r_is_str) {
                     let l = self.use_val(builder, var_map, var_counter, &lhs.0);
                     let r = self.use_val(builder, var_map, var_counter, &rhs.0);
                     let l_str = if l_is_str {
                         l
+                    } else if l_is_bool {
+                        let func_ref = self
+                            .obj
+                            .declare_func_in_func(self.rt_bool_to_str, builder.func);
+                        let inst = builder.ins().call(func_ref, &[l]);
+                        builder.inst_results(inst)[0]
+                    } else if l_is_float {
+                        let f = builder.ins().bitcast(types::F64, MemFlags::new(), l);
+                        let func_ref = self
+                            .obj
+                            .declare_func_in_func(self.rt_float_to_str, builder.func);
+                        let inst = builder.ins().call(func_ref, &[f]);
+                        builder.inst_results(inst)[0]
                     } else {
-                        let func_ref = self.obj.declare_func_in_func(self.rt_int_to_str, builder.func);
+                        let func_ref = self
+                            .obj
+                            .declare_func_in_func(self.rt_int_to_str, builder.func);
                         let inst = builder.ins().call(func_ref, &[l]);
                         builder.inst_results(inst)[0]
                     };
                     let r_str = if r_is_str {
                         r
+                    } else if r_is_bool {
+                        let func_ref = self
+                            .obj
+                            .declare_func_in_func(self.rt_bool_to_str, builder.func);
+                        let inst = builder.ins().call(func_ref, &[r]);
+                        builder.inst_results(inst)[0]
+                    } else if r_is_float {
+                        let f = builder.ins().bitcast(types::F64, MemFlags::new(), r);
+                        let func_ref = self
+                            .obj
+                            .declare_func_in_func(self.rt_float_to_str, builder.func);
+                        let inst = builder.ins().call(func_ref, &[f]);
+                        builder.inst_results(inst)[0]
                     } else {
-                        let func_ref = self.obj.declare_func_in_func(self.rt_int_to_str, builder.func);
+                        let func_ref = self
+                            .obj
+                            .declare_func_in_func(self.rt_int_to_str, builder.func);
                         let inst = builder.ins().call(func_ref, &[r]);
                         builder.inst_results(inst)[0]
                     };
-                    let concat_ref = self.obj.declare_func_in_func(self.rt_str_concat, builder.func);
+                    let concat_ref = self
+                        .obj
+                        .declare_func_in_func(self.rt_str_concat, builder.func);
                     let inst = builder.ins().call(concat_ref, &[l_str, r_str]);
                     let result = builder.inst_results(inst)[0];
                     self.def_val(builder, var_map, var_counter, &ret.0, result);
                     val_types.insert(ret.0.clone(), ValType::Str);
-                } else if matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+                } else if matches!(
+                    op,
+                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+                ) {
                     let l = self.use_val(builder, var_map, var_counter, &lhs.0);
                     let r = self.use_val(builder, var_map, var_counter, &rhs.0);
                     let is_float = matches!(val_types.get(&lhs.0), Some(ValType::Float))
@@ -450,33 +651,46 @@ impl<'a> TranslationCtx<'a> {
                     val_types.insert(ret.0.clone(), ValType::Float);
                 }
             }
-            RirInstr::Return(val) => {
-                match val {
-                    Some(v) => {
-                        let rv = self.use_val(builder, var_map, var_counter, &v.0);
-                        builder.ins().return_(&[rv]);
-                    }
-                    None => { builder.ins().return_(&[]); }
+            RirInstr::Return(val) => match val {
+                Some(v) => {
+                    let rv = self.use_val(builder, var_map, var_counter, &v.0);
+                    builder.ins().return_(&[rv]);
                 }
-            }
+                None => {
+                    builder.ins().return_(&[]);
+                }
+            },
             RirInstr::Jump(target) => {
                 let blk = block_map[&target.0];
                 builder.ins().jump(blk, &[]);
             }
-            RirInstr::Branch { cond, then_bb, else_bb } => {
+            RirInstr::Branch {
+                cond,
+                then_bb,
+                else_bb,
+            } => {
                 let cv = self.use_val(builder, var_map, var_counter, &cond.0);
                 let then_blk = block_map[&then_bb.0];
                 let else_blk = block_map[&else_bb.0];
                 builder.ins().brif(cv, then_blk, &[], else_blk, &[]);
             }
-            RirInstr::Call { func: func_id, args, ret } => {
-                let arg_vals: Vec<ir::Value> = args.iter()
+            RirInstr::Call {
+                func: func_id,
+                args,
+                ret,
+            } => {
+                let arg_vals: Vec<ir::Value> = args
+                    .iter()
                     .map(|a| self.use_val(builder, var_map, var_counter, &a.0))
                     .collect();
-                let first_arg_type = args.first()
-                    .and_then(|a| val_types.get(&a.0).copied());
-                self.translate_call(builder, func_id.0, &arg_vals, ret.as_ref(),
-                    var_map, var_counter, first_arg_type, val_types)?;
+                let first_arg_type = args.first().and_then(|a| val_types.get(&a.0).copied());
+                let mut call_ctx = CallCtx {
+                    var_map,
+                    var_counter,
+                    first_arg_type,
+                    val_types,
+                };
+                self.translate_call(builder, func_id.0, &arg_vals, ret.as_ref(), &mut call_ctx)?;
             }
             RirInstr::Convert { val, to, ret, .. } => {
                 let v = self.use_val(builder, var_map, var_counter, &val.0);
@@ -489,16 +703,24 @@ impl<'a> TranslationCtx<'a> {
             RirInstr::New { class, ret } => {
                 let num_fields = self.field_slots.len() as i64;
                 let nf = builder.ins().iconst(types::I64, num_fields);
-                let func_ref = self.obj.declare_func_in_func(self.rt_obj_alloc, builder.func);
+                let func_ref = self
+                    .obj
+                    .declare_func_in_func(self.rt_obj_alloc, builder.func);
                 let inst = builder.ins().call(func_ref, &[nf]);
                 let result = builder.inst_results(inst)[0];
                 let tag_val = self.class_tags.get(&class.0).copied().unwrap_or(0);
                 let tag = builder.ins().iconst(types::I64, tag_val);
-                let set_tag_ref = self.obj.declare_func_in_func(self.rt_obj_set_tag, builder.func);
+                let set_tag_ref = self
+                    .obj
+                    .declare_func_in_func(self.rt_obj_set_tag, builder.func);
                 builder.ins().call(set_tag_ref, &[result, tag]);
                 self.def_val(builder, var_map, var_counter, &ret.0, result);
             }
-            RirInstr::GetField { obj: obj_val, field, ret } => {
+            RirInstr::GetField {
+                obj: obj_val,
+                field,
+                ret,
+            } => {
                 use rava_frontend::lowerer::encode_builtin;
                 let ptr = self.use_val(builder, var_map, var_counter, &obj_val.0);
                 let length_hash = encode_builtin("length");
@@ -510,16 +732,24 @@ impl<'a> TranslationCtx<'a> {
                 } else {
                     let slot = self.field_slots.get(&field.0).copied().unwrap_or(0) as i64;
                     let slot_val = builder.ins().iconst(types::I64, slot);
-                    let func_ref = self.obj.declare_func_in_func(self.rt_obj_get_field, builder.func);
+                    let func_ref = self
+                        .obj
+                        .declare_func_in_func(self.rt_obj_get_field, builder.func);
                     let inst = builder.ins().call(func_ref, &[ptr, slot_val]);
                     let result = builder.inst_results(inst)[0];
                     self.def_val(builder, var_map, var_counter, &ret.0, result);
                     // Propagate field type for correct println dispatch
                     if let Some(ft) = self.rir.field_types.get(&field.0) {
                         match ft {
-                            rava_rir::RirType::Ref(_) => { val_types.insert(ret.0.clone(), ValType::Str); }
-                            rava_rir::RirType::F32 | rava_rir::RirType::F64 => { val_types.insert(ret.0.clone(), ValType::Float); }
-                            rava_rir::RirType::Bool => { val_types.insert(ret.0.clone(), ValType::Bool); }
+                            rava_rir::RirType::Ref(_) => {
+                                val_types.insert(ret.0.clone(), ValType::Str);
+                            }
+                            rava_rir::RirType::F32 | rava_rir::RirType::F64 => {
+                                val_types.insert(ret.0.clone(), ValType::Float);
+                            }
+                            rava_rir::RirType::Bool => {
+                                val_types.insert(ret.0.clone(), ValType::Bool);
+                            }
                             _ => {}
                         }
                     }
@@ -536,12 +766,18 @@ impl<'a> TranslationCtx<'a> {
                     self.def_val(builder, var_map, var_counter, &ret.0, v);
                 }
             }
-            RirInstr::SetField { obj: obj_val, field, val } => {
+            RirInstr::SetField {
+                obj: obj_val,
+                field,
+                val,
+            } => {
                 let ptr = self.use_val(builder, var_map, var_counter, &obj_val.0);
                 let slot = self.field_slots.get(&field.0).copied().unwrap_or(0) as i64;
                 let slot_val = builder.ins().iconst(types::I64, slot);
                 let value = self.use_val(builder, var_map, var_counter, &val.0);
-                let func_ref = self.obj.declare_func_in_func(self.rt_obj_set_field, builder.func);
+                let func_ref = self
+                    .obj
+                    .declare_func_in_func(self.rt_obj_set_field, builder.func);
                 builder.ins().call(func_ref, &[ptr, slot_val, value]);
             }
             RirInstr::SetStatic { field, val } => {
@@ -554,7 +790,9 @@ impl<'a> TranslationCtx<'a> {
             }
             RirInstr::NewArray { len, ret, .. } => {
                 let length = self.use_val(builder, var_map, var_counter, &len.0);
-                let func_ref = self.obj.declare_func_in_func(self.rt_arr_alloc, builder.func);
+                let func_ref = self
+                    .obj
+                    .declare_func_in_func(self.rt_arr_alloc, builder.func);
                 let inst = builder.ins().call(func_ref, &[length]);
                 let result = builder.inst_results(inst)[0];
                 self.def_val(builder, var_map, var_counter, &ret.0, result);
@@ -562,7 +800,9 @@ impl<'a> TranslationCtx<'a> {
             RirInstr::NewMultiArray { dims, ret, .. } => {
                 if let Some(first) = dims.first() {
                     let length = self.use_val(builder, var_map, var_counter, &first.0);
-                    let func_ref = self.obj.declare_func_in_func(self.rt_arr_alloc, builder.func);
+                    let func_ref = self
+                        .obj
+                        .declare_func_in_func(self.rt_arr_alloc, builder.func);
                     let inst = builder.ins().call(func_ref, &[length]);
                     let result = builder.inst_results(inst)[0];
                     self.def_val(builder, var_map, var_counter, &ret.0, result);
@@ -571,7 +811,9 @@ impl<'a> TranslationCtx<'a> {
             RirInstr::ArrayLoad { arr, idx, ret } => {
                 let arr_ptr = self.use_val(builder, var_map, var_counter, &arr.0);
                 let index = self.use_val(builder, var_map, var_counter, &idx.0);
-                let func_ref = self.obj.declare_func_in_func(self.rt_arr_load, builder.func);
+                let func_ref = self
+                    .obj
+                    .declare_func_in_func(self.rt_arr_load, builder.func);
                 let inst = builder.ins().call(func_ref, &[arr_ptr, index]);
                 let result = builder.inst_results(inst)[0];
                 self.def_val(builder, var_map, var_counter, &ret.0, result);
@@ -580,7 +822,9 @@ impl<'a> TranslationCtx<'a> {
                 let arr_ptr = self.use_val(builder, var_map, var_counter, &arr.0);
                 let index = self.use_val(builder, var_map, var_counter, &idx.0);
                 let value = self.use_val(builder, var_map, var_counter, &val.0);
-                let func_ref = self.obj.declare_func_in_func(self.rt_arr_store, builder.func);
+                let func_ref = self
+                    .obj
+                    .declare_func_in_func(self.rt_arr_store, builder.func);
                 builder.ins().call(func_ref, &[arr_ptr, index, value]);
             }
             RirInstr::ArrayLen { arr, ret } => {
@@ -592,7 +836,9 @@ impl<'a> TranslationCtx<'a> {
             }
             RirInstr::Instanceof { obj, class, ret } => {
                 let obj_val = self.use_val(builder, var_map, var_counter, &obj.0);
-                let get_tag_ref = self.obj.declare_func_in_func(self.rt_obj_get_tag, builder.func);
+                let get_tag_ref = self
+                    .obj
+                    .declare_func_in_func(self.rt_obj_get_tag, builder.func);
                 let inst = builder.ins().call(get_tag_ref, &[obj_val]);
                 let actual_tag = builder.inst_results(inst)[0];
                 let expected_tag = self.class_tags.get(&class.0).copied().unwrap_or(0);
@@ -600,6 +846,7 @@ impl<'a> TranslationCtx<'a> {
                 let cmp = builder.ins().icmp(IntCC::Equal, actual_tag, expected);
                 let result = builder.ins().uextend(types::I64, cmp);
                 self.def_val(builder, var_map, var_counter, &ret.0, result);
+                val_types.insert(ret.0.clone(), ValType::Bool);
             }
             RirInstr::Checkcast { .. } => {}
             RirInstr::Throw(_) => {
@@ -609,8 +856,18 @@ impl<'a> TranslationCtx<'a> {
                 builder.ins().trap(ir::TrapCode::unwrap_user(1));
             }
             RirInstr::MonitorEnter(_) | RirInstr::MonitorExit(_) => {}
-            RirInstr::CallVirtual { receiver, method, args, ret } |
-            RirInstr::CallInterface { receiver, method, args, ret } => {
+            RirInstr::CallVirtual {
+                receiver,
+                method,
+                args,
+                ret,
+            }
+            | RirInstr::CallInterface {
+                receiver,
+                method,
+                args,
+                ret,
+            } => {
                 let recv = self.use_val(builder, var_map, var_counter, &receiver.0);
                 let mut arg_vals = vec![recv];
                 for a in args {
@@ -619,19 +876,26 @@ impl<'a> TranslationCtx<'a> {
 
                 // Collect all methods matching the short name (virtual dispatch candidates)
                 use rava_frontend::lowerer::encode_builtin;
-                let candidates: Vec<(ClifFuncId, String, RirType)> = self.func_ids.iter()
+                let candidates: Vec<(ClifFuncId, String, RirType)> = self
+                    .func_ids
+                    .iter()
                     .filter_map(|(name, &clif_id)| {
-                        let short_hash = name.rsplit('.').next()
-                            .map(|s| encode_builtin(s))
-                            .unwrap_or(0);
+                        let short_hash = name.rsplit('.').next().map(encode_builtin).unwrap_or(0);
                         let name_hash = encode_builtin(name);
                         if name_hash == method.0 || short_hash == method.0 {
-                            let ret_type = self.rir.functions.iter()
+                            let ret_type = self
+                                .rir
+                                .functions
+                                .iter()
                                 .find(|f| &f.name == name)
                                 .map(|f| f.return_type.clone())
                                 .unwrap_or(RirType::Void);
                             // Extract class name from "ClassName.methodName"
-                            let class_name = name.rsplitn(2, '.').nth(1).unwrap_or("").to_string();
+                            let class_name = name
+                                .rsplit_once('.')
+                                .map(|(class, _)| class)
+                                .unwrap_or("")
+                                .to_string();
                             Some((clif_id, class_name, ret_type))
                         } else {
                             None
@@ -650,7 +914,11 @@ impl<'a> TranslationCtx<'a> {
                     let func_ref = self.obj.declare_func_in_func(*clif_id, builder.func);
                     let sig = builder.func.dfg.ext_funcs[func_ref].signature;
                     let expected = builder.func.dfg.signatures[sig].params.len();
-                    let call_args = if arg_vals.len() > expected { &arg_vals[..expected] } else { &arg_vals };
+                    let call_args = if arg_vals.len() > expected {
+                        &arg_vals[..expected]
+                    } else {
+                        &arg_vals
+                    };
                     let inst = builder.ins().call(func_ref, call_args);
                     if let Some(r) = ret {
                         let results = builder.inst_results(inst);
@@ -661,16 +929,24 @@ impl<'a> TranslationCtx<'a> {
                             self.def_val(builder, var_map, var_counter, &r.0, v);
                         }
                         match ret_type {
-                            RirType::Ref(_) => { val_types.insert(r.0.clone(), ValType::Str); }
-                            RirType::F32 | RirType::F64 => { val_types.insert(r.0.clone(), ValType::Float); }
-                            RirType::Bool => { val_types.insert(r.0.clone(), ValType::Bool); }
+                            RirType::Ref(_) => {
+                                val_types.insert(r.0.clone(), ValType::Str);
+                            }
+                            RirType::F32 | RirType::F64 => {
+                                val_types.insert(r.0.clone(), ValType::Float);
+                            }
+                            RirType::Bool => {
+                                val_types.insert(r.0.clone(), ValType::Bool);
+                            }
                             _ => {}
                         }
                     }
                 } else {
                     // Multiple implementations — dispatch on class tag at runtime.
                     // Use block parameters (phi nodes) to pass the result to merge_block.
-                    let get_tag_ref = self.obj.declare_func_in_func(self.rt_obj_get_tag, builder.func);
+                    let get_tag_ref = self
+                        .obj
+                        .declare_func_in_func(self.rt_obj_get_tag, builder.func);
                     let tag_inst = builder.ins().call(get_tag_ref, &[recv]);
                     let actual_tag = builder.inst_results(tag_inst)[0];
 
@@ -703,7 +979,11 @@ impl<'a> TranslationCtx<'a> {
                         let func_ref = self.obj.declare_func_in_func(*clif_id, builder.func);
                         let sig = builder.func.dfg.ext_funcs[func_ref].signature;
                         let expected_params = builder.func.dfg.signatures[sig].params.len();
-                        let call_args = if arg_vals.len() > expected_params { &arg_vals[..expected_params] } else { &arg_vals };
+                        let call_args = if arg_vals.len() > expected_params {
+                            &arg_vals[..expected_params]
+                        } else {
+                            &arg_vals
+                        };
                         let call_inst = builder.ins().call(func_ref, call_args);
                         let call_results = builder.inst_results(call_inst);
                         let result_val = if !call_results.is_empty() {
@@ -724,17 +1004,23 @@ impl<'a> TranslationCtx<'a> {
                     if let Some(r) = ret {
                         self.def_val(builder, var_map, var_counter, &r.0, result);
                         match ret_type {
-                            RirType::Ref(_) => { val_types.insert(r.0.clone(), ValType::Str); }
-                            RirType::F32 | RirType::F64 => { val_types.insert(r.0.clone(), ValType::Float); }
-                            RirType::Bool => { val_types.insert(r.0.clone(), ValType::Bool); }
+                            RirType::Ref(_) => {
+                                val_types.insert(r.0.clone(), ValType::Str);
+                            }
+                            RirType::F32 | RirType::F64 => {
+                                val_types.insert(r.0.clone(), ValType::Float);
+                            }
+                            RirType::Bool => {
+                                val_types.insert(r.0.clone(), ValType::Bool);
+                            }
                             _ => {}
                         }
                     }
                 }
             }
-            RirInstr::MicroRtReflect { ret, .. } |
-            RirInstr::MicroRtProxy { ret, .. } |
-            RirInstr::MicroRtClassLoad { ret, .. } => {
+            RirInstr::MicroRtReflect { ret, .. }
+            | RirInstr::MicroRtProxy { ret, .. }
+            | RirInstr::MicroRtClassLoad { ret, .. } => {
                 let v = builder.ins().iconst(types::I64, 0);
                 self.def_val(builder, var_map, var_counter, &ret.0, v);
             }
@@ -742,7 +1028,14 @@ impl<'a> TranslationCtx<'a> {
         Ok(())
     }
 
-    fn translate_binop(&self, builder: &mut FunctionBuilder, op: &BinOp, l: ir::Value, r: ir::Value, is_float: bool) -> ir::Value {
+    fn translate_binop(
+        &self,
+        builder: &mut FunctionBuilder,
+        op: &BinOp,
+        l: ir::Value,
+        r: ir::Value,
+        is_float: bool,
+    ) -> ir::Value {
         if is_float {
             let lf = builder.ins().bitcast(types::F64, MemFlags::new(), l);
             let rf = builder.ins().bitcast(types::F64, MemFlags::new(), r);
@@ -837,34 +1130,117 @@ impl<'a> TranslationCtx<'a> {
         }
     }
 
+    /// Pre-pass: scan all instructions in a function and infer value types to a fixed point.
+    ///
+    /// This resolves the ordering problem where a value's defining instruction appears
+    /// in a block that is emitted *later* (e.g. a switch case body) than the block
+    /// that uses it (e.g. the loop continuation block).
+    fn infer_val_types(&self, func: &RirFunction, val_types: &mut HashMap<String, ValType>) {
+        use rava_frontend::lowerer::encode_builtin;
+
+        // Seed from return types of RIR functions (for call results).
+        let ret_types: HashMap<u32, RirType> = self
+            .rir
+            .functions
+            .iter()
+            .map(|f| (encode_builtin(&f.name), f.return_type.clone()))
+            .collect();
+
+        // Run multiple passes until stable (handles chains like __copy__a where a is __copy__b).
+        let max_passes = 8;
+        for _ in 0..max_passes {
+            let mut changed = false;
+            for bb in &func.basic_blocks {
+                for instr in &bb.instrs {
+                    let update = match instr {
+                        RirInstr::ConstStr { ret, value } => {
+                            if let Some(src) = value.strip_prefix("__copy__") {
+                                val_types.get(src).copied().map(|ty| (ret.0.clone(), ty))
+                            } else if !value.starts_with("__") {
+                                Some((ret.0.clone(), ValType::Str))
+                            } else {
+                                None
+                            }
+                        }
+                        RirInstr::ConstBool { ret, .. } => Some((ret.0.clone(), ValType::Bool)),
+                        RirInstr::ConstFloat { ret, .. } => Some((ret.0.clone(), ValType::Float)),
+                        RirInstr::ConstInt { ret, .. } => Some((ret.0.clone(), ValType::Int)),
+                        RirInstr::Instanceof { ret, .. } => Some((ret.0.clone(), ValType::Bool)),
+                        RirInstr::GetField { field, ret, .. } => {
+                            self.rir.field_types.get(&field.0).and_then(|ft| match ft {
+                                RirType::Ref(_) => Some((ret.0.clone(), ValType::Str)),
+                                RirType::F32 | RirType::F64 => {
+                                    Some((ret.0.clone(), ValType::Float))
+                                }
+                                RirType::Bool => Some((ret.0.clone(), ValType::Bool)),
+                                _ => None,
+                            })
+                        }
+                        RirInstr::GetStatic { field, ret } => {
+                            self.rir.field_types.get(&field.0).and_then(|ft| match ft {
+                                RirType::Ref(_) => Some((ret.0.clone(), ValType::Str)),
+                                RirType::F32 | RirType::F64 => {
+                                    Some((ret.0.clone(), ValType::Float))
+                                }
+                                RirType::Bool => Some((ret.0.clone(), ValType::Bool)),
+                                _ => None,
+                            })
+                        }
+                        RirInstr::Call { func: fid, ret: Some(ret), .. } => {
+                            ret_types.get(&fid.0).and_then(|rt| match rt {
+                                RirType::Ref(_) => Some((ret.0.clone(), ValType::Str)),
+                                RirType::F32 | RirType::F64 => {
+                                    Some((ret.0.clone(), ValType::Float))
+                                }
+                                RirType::Bool => Some((ret.0.clone(), ValType::Bool)),
+                                _ => None,
+                            })
+                        }
+                        _ => None,
+                    };
+                    if let Some((name, ty)) = update {
+                        if val_types.get(&name) != Some(&ty) {
+                            val_types.insert(name, ty);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+
     fn translate_call(
         &mut self,
         builder: &mut FunctionBuilder,
         func_id: u32,
         args: &[ir::Value],
         ret: Option<&rava_rir::Value>,
-        var_map: &mut HashMap<String, Variable>,
-        var_counter: &mut u32,
-        first_arg_type: Option<ValType>,
-        val_types: &mut HashMap<String, ValType>,
+        call_ctx: &mut CallCtx,
     ) -> Result<()> {
         use rava_frontend::lowerer::encode_builtin;
 
         if func_id == encode_builtin("System.out.println") {
             if args.is_empty() {
-                let void_ref = self.obj.declare_func_in_func(self.rt_println_void, builder.func);
+                let void_ref = self
+                    .obj
+                    .declare_func_in_func(self.rt_println_void, builder.func);
                 builder.ins().call(void_ref, &[]);
             } else {
-                let rt_func = match first_arg_type {
+                let rt_func = match call_ctx.first_arg_type {
                     Some(ValType::Str) => self.rt_println_str,
                     Some(ValType::Bool) => self.rt_println_bool,
                     Some(ValType::Float) => {
                         let f = builder.ins().bitcast(types::F64, MemFlags::new(), args[0]);
-                        let func_ref = self.obj.declare_func_in_func(self.rt_println_float, builder.func);
+                        let func_ref = self
+                            .obj
+                            .declare_func_in_func(self.rt_println_float, builder.func);
                         builder.ins().call(func_ref, &[f]);
                         if let Some(r) = ret {
                             let v = builder.ins().iconst(types::I64, 0);
-                            self.def_val(builder, var_map, var_counter, &r.0, v);
+                            self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
                         }
                         return Ok(());
                     }
@@ -875,14 +1251,14 @@ impl<'a> TranslationCtx<'a> {
             }
             if let Some(r) = ret {
                 let v = builder.ins().iconst(types::I64, 0);
-                self.def_val(builder, var_map, var_counter, &r.0, v);
+                self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
             }
             return Ok(());
         }
 
         if func_id == encode_builtin("System.out.print") {
             if !args.is_empty() {
-                let rt_func = match first_arg_type {
+                let rt_func = match call_ctx.first_arg_type {
                     Some(ValType::Str) => self.rt_print_str,
                     _ => self.rt_print_int,
                 };
@@ -891,49 +1267,304 @@ impl<'a> TranslationCtx<'a> {
             }
             if let Some(r) = ret {
                 let v = builder.ins().iconst(types::I64, 0);
-                self.def_val(builder, var_map, var_counter, &r.0, v);
+                self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
             }
             return Ok(());
         }
 
         if func_id == encode_builtin("__str_concat__") {
-            let func_ref = self.obj.declare_func_in_func(self.rt_str_concat, builder.func);
+            let func_ref = self
+                .obj
+                .declare_func_in_func(self.rt_str_concat, builder.func);
             let inst = builder.ins().call(func_ref, &[args[0], args[1]]);
             if let Some(r) = ret {
                 let results = builder.inst_results(inst);
-                self.def_val(builder, var_map, var_counter, &r.0, results[0]);
-                val_types.insert(r.0.clone(), ValType::Str);
+                self.def_val(
+                    builder,
+                    call_ctx.var_map,
+                    call_ctx.var_counter,
+                    &r.0,
+                    results[0],
+                );
+                call_ctx.val_types.insert(r.0.clone(), ValType::Str);
             }
             return Ok(());
         }
 
         if func_id == encode_builtin("__int_to_str__") {
-            let func_ref = self.obj.declare_func_in_func(self.rt_int_to_str, builder.func);
+            let func_ref = self
+                .obj
+                .declare_func_in_func(self.rt_int_to_str, builder.func);
             let inst = builder.ins().call(func_ref, &[args[0]]);
             if let Some(r) = ret {
                 let results = builder.inst_results(inst);
-                self.def_val(builder, var_map, var_counter, &r.0, results[0]);
-                val_types.insert(r.0.clone(), ValType::Str);
+                self.def_val(
+                    builder,
+                    call_ctx.var_map,
+                    call_ctx.var_counter,
+                    &r.0,
+                    results[0],
+                );
+                call_ctx.val_types.insert(r.0.clone(), ValType::Str);
             }
             return Ok(());
         }
 
+        if func_id == encode_builtin("__bool_to_str__") {
+            if !args.is_empty() {
+                let func_ref = self
+                    .obj
+                    .declare_func_in_func(self.rt_bool_to_str, builder.func);
+                let inst = builder.ins().call(func_ref, &[args[0]]);
+                if let Some(r) = ret {
+                    let results = builder.inst_results(inst);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, results[0]);
+                    call_ctx.val_types.insert(r.0.clone(), ValType::Str);
+                }
+            } else if let Some(r) = ret {
+                let v = builder.ins().iconst(types::I64, 0);
+                self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
+            }
+            return Ok(());
+        }
+
+        // Array iterator builtins for for-each loops
+        if func_id == encode_builtin("__method__iterator") {
+            if !args.is_empty() {
+                let func_ref = self.obj.declare_func_in_func(self.rt_iter_new, builder.func);
+                let inst = builder.ins().call(func_ref, &[args[0]]);
+                if let Some(r) = ret {
+                    let results = builder.inst_results(inst);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, results[0]);
+                }
+            } else if let Some(r) = ret {
+                let v = builder.ins().iconst(types::I64, 0);
+                self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
+            }
+            return Ok(());
+        }
+        if func_id == encode_builtin("__method__hasNext") {
+            if !args.is_empty() {
+                let func_ref = self.obj.declare_func_in_func(self.rt_iter_has_next, builder.func);
+                let inst = builder.ins().call(func_ref, &[args[0]]);
+                if let Some(r) = ret {
+                    let results = builder.inst_results(inst);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, results[0]);
+                    call_ctx.val_types.insert(r.0.clone(), ValType::Bool);
+                }
+            } else if let Some(r) = ret {
+                let v = builder.ins().iconst(types::I64, 0);
+                self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
+            }
+            return Ok(());
+        }
+        if func_id == encode_builtin("__method__next") {
+            if !args.is_empty() {
+                let func_ref = self.obj.declare_func_in_func(self.rt_iter_next, builder.func);
+                let inst = builder.ins().call(func_ref, &[args[0]]);
+                if let Some(r) = ret {
+                    let results = builder.inst_results(inst);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, results[0]);
+                }
+            } else if let Some(r) = ret {
+                let v = builder.ins().iconst(types::I64, 0);
+                self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
+            }
+            return Ok(());
+        }
+
+        // Math builtins
+        if func_id == encode_builtin("Math.sqrt") {
+            if !args.is_empty() {
+                let func_ref = self.obj.declare_func_in_func(self.rt_math_sqrt, builder.func);
+                let inst = builder.ins().call(func_ref, &[args[0]]);
+                if let Some(r) = ret {
+                    let results = builder.inst_results(inst);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, results[0]);
+                    call_ctx.val_types.insert(r.0.clone(), ValType::Float);
+                }
+            }
+            return Ok(());
+        }
+        if func_id == encode_builtin("Math.pow") {
+            if args.len() >= 2 {
+                let func_ref = self.obj.declare_func_in_func(self.rt_math_pow, builder.func);
+                let inst = builder.ins().call(func_ref, &[args[0], args[1]]);
+                if let Some(r) = ret {
+                    let results = builder.inst_results(inst);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, results[0]);
+                    call_ctx.val_types.insert(r.0.clone(), ValType::Float);
+                }
+            }
+            return Ok(());
+        }
+        if func_id == encode_builtin("Math.abs") {
+            if !args.is_empty() {
+                let func_ref = self.obj.declare_func_in_func(self.rt_math_abs, builder.func);
+                let inst = builder.ins().call(func_ref, &[args[0]]);
+                if let Some(r) = ret {
+                    let results = builder.inst_results(inst);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, results[0]);
+                }
+            }
+            return Ok(());
+        }
+        if func_id == encode_builtin("Math.min") {
+            if args.len() >= 2 {
+                let func_ref = self.obj.declare_func_in_func(self.rt_math_min, builder.func);
+                let inst = builder.ins().call(func_ref, &[args[0], args[1]]);
+                if let Some(r) = ret {
+                    let results = builder.inst_results(inst);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, results[0]);
+                }
+            }
+            return Ok(());
+        }
+        if func_id == encode_builtin("Math.max") {
+            if args.len() >= 2 {
+                let func_ref = self.obj.declare_func_in_func(self.rt_math_max, builder.func);
+                let inst = builder.ins().call(func_ref, &[args[0], args[1]]);
+                if let Some(r) = ret {
+                    let results = builder.inst_results(inst);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, results[0]);
+                }
+            }
+            return Ok(());
+        }
+
+        // String comparison builtins
+        if func_id == encode_builtin("__method__equals") || func_id == encode_builtin("String.equals") {
+            if args.len() >= 2 {
+                let func_ref = self.obj.declare_func_in_func(self.rt_str_equals, builder.func);
+                let inst = builder.ins().call(func_ref, &[args[0], args[1]]);
+                if let Some(r) = ret {
+                    let results = builder.inst_results(inst);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, results[0]);
+                    call_ctx.val_types.insert(r.0.clone(), ValType::Bool);
+                }
+            } else if let Some(r) = ret {
+                let v = builder.ins().iconst(types::I64, 0);
+                self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
+            }
+            return Ok(());
+        }
+        if func_id == encode_builtin("__method__compareTo") || func_id == encode_builtin("String.compareTo") {
+            if args.len() >= 2 {
+                let func_ref = self.obj.declare_func_in_func(self.rt_str_compare_to, builder.func);
+                let inst = builder.ins().call(func_ref, &[args[0], args[1]]);
+                if let Some(r) = ret {
+                    let results = builder.inst_results(inst);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, results[0]);
+                }
+            } else if let Some(r) = ret {
+                let v = builder.ins().iconst(types::I64, 0);
+                self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
+            }
+            return Ok(());
+        }
+
+        // Handle super.<init>@ClassName — find parent class constructor and call it.
+        {
+            let super_prefix = "super.<init>@";
+            let super_init_enc = encode_builtin("super.<init>");
+            if func_id == super_init_enc
+                || self
+                    .rir
+                    .class_hierarchy
+                    .keys()
+                    .any(|k| encode_builtin(&format!("{}{}", super_prefix, k)) == func_id)
+            {
+                // Find calling class from the func_id
+                let calling_class = self
+                    .rir
+                    .class_hierarchy
+                    .keys()
+                    .find(|k| encode_builtin(&format!("{}{}", super_prefix, k)) == func_id)
+                    .cloned();
+                let parent_class = calling_class
+                    .as_deref()
+                    .and_then(|c| self.rir.class_hierarchy.get(c))
+                    .cloned();
+                if let Some(parent) = parent_class {
+                    // Try to find the parent constructor that matches the arg count
+                    let arity = if args.is_empty() { 0 } else { args.len() - 1 };
+                    let ctor_candidates: Vec<String> = self
+                        .func_ids
+                        .keys()
+                        .filter(|name| {
+                            name.starts_with(&format!("{}.<init>", parent))
+                                && self
+                                    .rir
+                                    .functions
+                                    .iter()
+                                    .find(|f| &f.name == *name)
+                                    .map(|f| f.flags.is_constructor)
+                                    .unwrap_or(false)
+                        })
+                        .cloned()
+                        .collect();
+                    // Pick best match: prefer exact arity (params - 1 for `this`)
+                    let best = ctor_candidates.iter().min_by_key(|name| {
+                        let n_params = self
+                            .rir
+                            .functions
+                            .iter()
+                            .find(|f| &f.name == *name)
+                            .map(|f| f.params.len().saturating_sub(1))
+                            .unwrap_or(99);
+                        (n_params as isize - arity as isize).abs()
+                    });
+                    if let Some(ctor_name) = best {
+                        if let Some(&clif_id) = self.func_ids.get(ctor_name) {
+                            let func_ref = self.obj.declare_func_in_func(clif_id, builder.func);
+                            let sig = builder.func.dfg.ext_funcs[func_ref].signature;
+                            let expected_params = builder.func.dfg.signatures[sig].params.len();
+                            let call_args = if args.len() > expected_params {
+                                &args[..expected_params]
+                            } else {
+                                args
+                            };
+                            builder.ins().call(func_ref, call_args);
+                        }
+                    }
+                }
+                if let Some(r) = ret {
+                    let v = builder.ins().iconst(types::I64, 0);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
+                }
+                return Ok(());
+            }
+        }
+
         // Collect all matching candidates for virtual dispatch
-        let candidates: Vec<(ClifFuncId, String, RirType)> = self.func_ids.iter()
+        let candidates: Vec<(ClifFuncId, String, RirType)> = self
+            .func_ids
+            .iter()
             .filter_map(|(name, &clif_id)| {
                 let name_match = encode_builtin(name) == func_id
-                    || name.rsplit('.').next()
+                    || name
+                        .rsplit('.')
+                        .next()
                         .map(|s| encode_builtin(s) == func_id)
                         .unwrap_or(false)
-                    || name.rsplit('.').next()
+                    || name
+                        .rsplit('.')
+                        .next()
                         .map(|s| encode_builtin(&format!("__method__{s}")) == func_id)
                         .unwrap_or(false);
                 if name_match {
-                    let ret_type = self.rir.functions.iter()
+                    let ret_type = self
+                        .rir
+                        .functions
+                        .iter()
                         .find(|f| &f.name == name)
                         .map(|f| f.return_type.clone())
                         .unwrap_or(RirType::Void);
-                    let class_name = name.rsplitn(2, '.').nth(1).unwrap_or("").to_string();
+                    let class_name = name
+                        .rsplit_once('.')
+                        .map(|(class, _)| class)
+                        .unwrap_or("")
+                        .to_string();
                     Some((clif_id, class_name, ret_type))
                 } else {
                     None
@@ -944,7 +1575,7 @@ impl<'a> TranslationCtx<'a> {
         if candidates.is_empty() {
             if let Some(r) = ret {
                 let v = builder.ins().iconst(types::I64, 0);
-                self.def_val(builder, var_map, var_counter, &r.0, v);
+                self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
             }
             return Ok(());
         }
@@ -954,20 +1585,36 @@ impl<'a> TranslationCtx<'a> {
             let func_ref = self.obj.declare_func_in_func(*clif_id, builder.func);
             let sig = builder.func.dfg.ext_funcs[func_ref].signature;
             let expected_params = builder.func.dfg.signatures[sig].params.len();
-            let call_args = if args.len() > expected_params { &args[..expected_params] } else { args };
+            let call_args = if args.len() > expected_params {
+                &args[..expected_params]
+            } else {
+                args
+            };
             let inst = builder.ins().call(func_ref, call_args);
             if let Some(r) = ret {
                 let results = builder.inst_results(inst);
                 if !results.is_empty() {
-                    self.def_val(builder, var_map, var_counter, &r.0, results[0]);
+                    self.def_val(
+                        builder,
+                        call_ctx.var_map,
+                        call_ctx.var_counter,
+                        &r.0,
+                        results[0],
+                    );
                 } else {
                     let v = builder.ins().iconst(types::I64, 0);
-                    self.def_val(builder, var_map, var_counter, &r.0, v);
+                    self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
                 }
                 match ret_type {
-                    RirType::Ref(_) => { val_types.insert(r.0.clone(), ValType::Str); }
-                    RirType::F32 | RirType::F64 => { val_types.insert(r.0.clone(), ValType::Float); }
-                    RirType::Bool => { val_types.insert(r.0.clone(), ValType::Bool); }
+                    RirType::Ref(_) => {
+                        call_ctx.val_types.insert(r.0.clone(), ValType::Str);
+                    }
+                    RirType::F32 | RirType::F64 => {
+                        call_ctx.val_types.insert(r.0.clone(), ValType::Float);
+                    }
+                    RirType::Bool => {
+                        call_ctx.val_types.insert(r.0.clone(), ValType::Bool);
+                    }
                     _ => {}
                 }
             }
@@ -976,14 +1623,18 @@ impl<'a> TranslationCtx<'a> {
 
         // Multiple candidates — virtual dispatch on class tag.
         // The receiver is args[0] (first arg is always `this`).
-        let recv = if !args.is_empty() { args[0] } else {
+        let recv = if !args.is_empty() {
+            args[0]
+        } else {
             if let Some(r) = ret {
                 let v = builder.ins().iconst(types::I64, 0);
-                self.def_val(builder, var_map, var_counter, &r.0, v);
+                self.def_val(builder, call_ctx.var_map, call_ctx.var_counter, &r.0, v);
             }
             return Ok(());
         };
-        let get_tag_ref = self.obj.declare_func_in_func(self.rt_obj_get_tag, builder.func);
+        let get_tag_ref = self
+            .obj
+            .declare_func_in_func(self.rt_obj_get_tag, builder.func);
         let tag_inst = builder.ins().call(get_tag_ref, &[recv]);
         let actual_tag = builder.inst_results(tag_inst)[0];
 
@@ -1014,10 +1665,18 @@ impl<'a> TranslationCtx<'a> {
             let func_ref = self.obj.declare_func_in_func(*clif_id, builder.func);
             let sig = builder.func.dfg.ext_funcs[func_ref].signature;
             let expected_params = builder.func.dfg.signatures[sig].params.len();
-            let call_args = if args.len() > expected_params { &args[..expected_params] } else { args };
+            let call_args = if args.len() > expected_params {
+                &args[..expected_params]
+            } else {
+                args
+            };
             let call_inst = builder.ins().call(func_ref, call_args);
             let call_results = builder.inst_results(call_inst);
-            let result_val = if !call_results.is_empty() { call_results[0] } else { builder.ins().iconst(types::I64, 0) };
+            let result_val = if !call_results.is_empty() {
+                call_results[0]
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            };
             builder.ins().jump(merge_block, &[result_val]);
 
             if i + 1 < candidates.len() {
@@ -1029,11 +1688,23 @@ impl<'a> TranslationCtx<'a> {
         let result = builder.block_params(merge_block)[0];
 
         if let Some(r) = ret {
-            self.def_val(builder, var_map, var_counter, &r.0, result);
+            self.def_val(
+                builder,
+                call_ctx.var_map,
+                call_ctx.var_counter,
+                &r.0,
+                result,
+            );
             match ret_type {
-                RirType::Ref(_) => { val_types.insert(r.0.clone(), ValType::Str); }
-                RirType::F32 | RirType::F64 => { val_types.insert(r.0.clone(), ValType::Float); }
-                RirType::Bool => { val_types.insert(r.0.clone(), ValType::Bool); }
+                RirType::Ref(_) => {
+                    call_ctx.val_types.insert(r.0.clone(), ValType::Str);
+                }
+                RirType::F32 | RirType::F64 => {
+                    call_ctx.val_types.insert(r.0.clone(), ValType::Float);
+                }
+                RirType::Bool => {
+                    call_ctx.val_types.insert(r.0.clone(), ValType::Bool);
+                }
                 _ => {}
             }
         }
@@ -1088,16 +1759,20 @@ impl<'a> TranslationCtx<'a> {
             let mut data_bytes = s.as_bytes().to_vec();
             data_bytes.push(0);
 
-            let data_id = self.obj.declare_data(
-                &format!(".str.{}", self.str_constants.len()),
-                Linkage::Local,
-                false,
-                false,
-            ).map_err(|e| RavaError::Codegen(format!("declare string data failed: {e}")))?;
+            let data_id = self
+                .obj
+                .declare_data(
+                    &format!(".str.{}", self.str_constants.len()),
+                    Linkage::Local,
+                    false,
+                    false,
+                )
+                .map_err(|e| RavaError::Codegen(format!("declare string data failed: {e}")))?;
 
             let mut data_desc = cranelift_module::DataDescription::new();
             data_desc.define(data_bytes.into_boxed_slice());
-            self.obj.define_data(data_id, &data_desc)
+            self.obj
+                .define_data(data_id, &data_desc)
                 .map_err(|e| RavaError::Codegen(format!("define string data failed: {e}")))?;
 
             self.str_constants.insert(s.to_string(), data_id);

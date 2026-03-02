@@ -14,16 +14,22 @@ impl ShortNameRegistry {
     /// Build the registry with the built-in aliases from §2.5.
     pub fn builtin() -> Self {
         let mut aliases = HashMap::new();
-        aliases.insert("spring-boot-web",      "org.springframework.boot:spring-boot-starter-web");
-        aliases.insert("spring-boot-data-jpa", "org.springframework.boot:spring-boot-starter-data-jpa");
-        aliases.insert("lombok",               "org.projectlombok:lombok");
-        aliases.insert("guava",                "com.google.guava:guava");
-        aliases.insert("jackson",              "com.fasterxml.jackson.core:jackson-databind");
-        aliases.insert("slf4j",                "org.slf4j:slf4j-api");
-        aliases.insert("logback",              "ch.qos.logback:logback-classic");
-        aliases.insert("junit",                "org.junit.jupiter:junit-jupiter");
-        aliases.insert("mockito",              "org.mockito:mockito-core");
-        aliases.insert("assertj",              "org.assertj:assertj-core");
+        aliases.insert(
+            "spring-boot-web",
+            "org.springframework.boot:spring-boot-starter-web",
+        );
+        aliases.insert(
+            "spring-boot-data-jpa",
+            "org.springframework.boot:spring-boot-starter-data-jpa",
+        );
+        aliases.insert("lombok", "org.projectlombok:lombok");
+        aliases.insert("guava", "com.google.guava:guava");
+        aliases.insert("jackson", "com.fasterxml.jackson.core:jackson-databind");
+        aliases.insert("slf4j", "org.slf4j:slf4j-api");
+        aliases.insert("logback", "ch.qos.logback:logback-classic");
+        aliases.insert("junit", "org.junit.jupiter:junit-jupiter");
+        aliases.insert("mockito", "org.mockito:mockito-core");
+        aliases.insert("assertj", "org.assertj:assertj-core");
         Self { aliases }
     }
 
@@ -49,9 +55,6 @@ mod tests {
     #[test]
     fn passthrough_for_full_coordinate() {
         let reg = ShortNameRegistry::builtin();
-        assert_eq!(
-            reg.resolve("com.example:my-lib"),
-            "com.example:my-lib"
-        );
+        assert_eq!(reg.resolve("com.example:my-lib"), "com.example:my-lib");
     }
 }

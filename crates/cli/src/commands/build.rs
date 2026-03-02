@@ -27,12 +27,31 @@ pub struct BuildArgs {
 }
 
 pub fn build(args: BuildArgs) -> Result<()> {
+    match args.target.as_str() {
+        "native" => {}
+        other => anyhow::bail!(
+            "target '{}' is not implemented yet (currently supported: native)",
+            other
+        ),
+    }
+
+    let opt_level = match args.optimize.as_str() {
+        "speed" => "speed",
+        "size" => "speed_and_size",
+        "debug" => "none",
+        other => anyhow::bail!(
+            "invalid optimization level '{}' (expected: speed | size | debug)",
+            other
+        ),
+    };
+
     let compiler = rava_frontend::Compiler::new();
 
     let (mut module, main_file) = if let Some(ref file) = args.file {
         let source = std::fs::read_to_string(file)
             .with_context(|| format!("cannot read {}", file.display()))?;
-        let m = compiler.compile(&source, file)
+        let m = compiler
+            .compile(&source, file)
             .map_err(|e| anyhow::anyhow!("compile error: {}", e))?;
         (m, file.clone())
     } else {
@@ -41,7 +60,8 @@ pub fn build(args: BuildArgs) -> Result<()> {
         if files.is_empty() {
             anyhow::bail!("no .java files found in src/");
         }
-        let m = compiler.compile_project(&files)
+        let m = compiler
+            .compile_project(&files)
             .map_err(|e| anyhow::anyhow!("compile error: {}", e))?;
         (m, main_file)
     };
@@ -58,9 +78,11 @@ pub fn build(args: BuildArgs) -> Result<()> {
 
     let backend = if let Some(ref platform) = args.platform {
         let triple = parse_platform(platform)?;
-        Box::new(rava_codegen_cranelift::CraneliftBackend::for_target(triple))
+        Box::new(
+            rava_codegen_cranelift::CraneliftBackend::for_target(triple).with_opt_level(opt_level),
+        )
     } else {
-        Box::new(rava_codegen_cranelift::CraneliftBackend::new())
+        Box::new(rava_codegen_cranelift::CraneliftBackend::new().with_opt_level(opt_level))
     };
     let aot = rava_aot::AotCompiler::with_default_passes(backend);
     aot.compile(&mut module, &output)
@@ -77,7 +99,9 @@ fn resolve_main_from_hcl() -> Result<PathBuf> {
 pub fn resolve_main_from_hcl_pub() -> Result<PathBuf> {
     let hcl_path = PathBuf::from("rava.hcl");
     if !hcl_path.exists() {
-        anyhow::bail!("no file specified and no rava.hcl found — pass a .java file or run `rava init`");
+        anyhow::bail!(
+            "no file specified and no rava.hcl found — pass a .java file or run `rava init`"
+        );
     }
     let config = rava_pkg::ProjectConfig::from_file(&hcl_path)
         .map_err(|e| anyhow::anyhow!("cannot read rava.hcl: {e}"))?;
@@ -87,25 +111,30 @@ pub fn resolve_main_from_hcl_pub() -> Result<PathBuf> {
         PathBuf::from(format!("{main_class}.java")),
     ];
     for c in &candidates {
-        if c.exists() { return Ok(c.clone()); }
+        if c.exists() {
+            return Ok(c.clone());
+        }
     }
     anyhow::bail!(
         "main class '{}' not found — expected src/{}.java or {}.java",
-        main_class, main_class, main_class
+        main_class,
+        main_class,
+        main_class
     )
 }
 
 fn parse_platform(platform: &str) -> Result<rava_codegen_cranelift::Triple> {
     let triple_str = match platform {
-        "linux-amd64" | "linux-x86_64"   => "x86_64-unknown-linux-gnu",
-        "linux-arm64" | "linux-aarch64"  => "aarch64-unknown-linux-gnu",
-        "linux-musl"  | "linux-amd64-musl" => "x86_64-unknown-linux-musl",
-        "macos-amd64" | "macos-x86_64"  => "x86_64-apple-darwin",
+        "linux-amd64" | "linux-x86_64" => "x86_64-unknown-linux-gnu",
+        "linux-arm64" | "linux-aarch64" => "aarch64-unknown-linux-gnu",
+        "linux-musl" | "linux-amd64-musl" => "x86_64-unknown-linux-musl",
+        "macos-amd64" | "macos-x86_64" => "x86_64-apple-darwin",
         "macos-arm64" | "macos-aarch64" => "aarch64-apple-darwin",
         "windows-amd64" | "windows-x86_64" => "x86_64-pc-windows-msvc",
         other => other,
     };
-    triple_str.parse::<rava_codegen_cranelift::Triple>()
+    triple_str
+        .parse::<rava_codegen_cranelift::Triple>()
         .map_err(|e| anyhow::anyhow!("invalid platform '{}': {}", platform, e))
 }
 

@@ -1,10 +1,10 @@
 //! Import resolver — resolves `import` statements to source files and compiles on-demand.
 
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use crate::compiler::Compiler;
 use rava_common::error::{RavaError, Result};
 use rava_rir::Module;
-use crate::compiler::Compiler;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 /// Resolves imports and compiles referenced files on-demand.
 pub struct ImportResolver {
@@ -30,6 +30,7 @@ impl ImportResolver {
     }
 
     /// Compile a file and all its transitive imports.
+    #[allow(clippy::only_used_in_recursion)]
     pub fn compile_file(&mut self, file: &Path, compiler: &Compiler) -> Result<()> {
         let canonical = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
         if self.compiled.contains_key(&canonical) || self.in_progress.contains(&canonical) {
@@ -39,11 +40,11 @@ impl ImportResolver {
         self.in_progress.insert(canonical.clone());
 
         // Lex + parse to get imports
-        let source = std::fs::read_to_string(file).map_err(|e| {
-            RavaError::Other(format!("cannot read {}: {e}", file.display()))
-        })?;
+        let source = std::fs::read_to_string(file)
+            .map_err(|e| RavaError::Other(format!("cannot read {}: {e}", file.display())))?;
         let tokens = crate::lexer::Lexer::new(&source).tokenize()?;
         let ast = crate::parser::Parser::new(tokens).parse_file()?;
+        crate::checker::GenericChecker::check_file(&ast)?;
 
         // Recursively compile imports first
         for import in &ast.imports {
@@ -54,7 +55,8 @@ impl ImportResolver {
         }
 
         // Compile this file
-        let module_name = file.file_stem()
+        let module_name = file
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("module");
         let module = crate::lowerer::Lowerer::new(module_name).lower_file(&ast)?;
@@ -161,7 +163,9 @@ fn find_stdlib() -> Option<PathBuf> {
         PathBuf::from("stdlib"),
         // Relative to binary
         exe.parent().unwrap_or(Path::new(".")).join("../../stdlib"),
-        exe.parent().unwrap_or(Path::new(".")).join("../share/rava/stdlib"),
+        exe.parent()
+            .unwrap_or(Path::new("."))
+            .join("../share/rava/stdlib"),
     ];
     for c in &candidates {
         if c.is_dir() {
@@ -181,7 +185,10 @@ mod tests {
         let resolver = ImportResolver::new(vec![PathBuf::from("src")]);
         if resolver.stdlib_root.is_some() {
             let files = resolver.resolve_import("java.util.Arrays");
-            assert!(!files.is_empty(), "java.util.Arrays should resolve to stdlib");
+            assert!(
+                !files.is_empty(),
+                "java.util.Arrays should resolve to stdlib"
+            );
         }
     }
 

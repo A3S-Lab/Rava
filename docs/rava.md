@@ -1,6 +1,6 @@
 # Rava — Product Requirements & Technical Architecture
 
-> Version: 1.1 | Date: 2026-02-19 | Author: A3S Team
+> Version: 0.1.0-alpha | Date: 2026-03-01 | Author: A3S Team
 
 ---
 

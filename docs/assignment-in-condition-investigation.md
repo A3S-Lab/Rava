@@ -1,7 +1,7 @@
 # Assignment-in-Condition Loop Limitation - Investigation Summary
 
 **Date:** 2026-02-27
-**Status:** Documented as known limitation
+**Status:** Fixed (2026-02-28)
 
 ## Problem Statement
 
@@ -60,24 +60,23 @@ Per systematic debugging Phase 4.5 guidance: after 4+ failed attempts, the issue
 
 ## Resolution
 
-Documented as known limitation with:
-1. Technical documentation in `docs/known-limitations.md`
-2. README section with workaround
-3. Code comments in `lowerer/stmt.rs`
-4. Tests marked with `#[ignore]` and explanation
+Implemented a loop-carried value propagation fix in lowering:
+1. Snapshot variable map before condition lowering (`pre_cond_vars`)
+2. Keep existing post-condition snapshot (`pre_body_vars`)
+3. On loop back-edge, propagate updated values to both snapshots
 
-## Impact
+This ensures variables read in condition-before-assignment and variables used in body both
+observe the latest loop-carried value on the next iteration.
 
-- **Affected tests:** 2/393 (0.5%)
-- **Real-world impact:** Low - this pattern is rare in typical Java code
-- **Workaround:** Separate assignment from condition (simple refactoring)
+## Validation
+
+- Re-enabled and passed the two previously ignored e2e tests:
+  - `string_manipulation_advanced`
+  - `index_of_with_from_index`
+- Current status: full e2e pass for this suite section (393/393)
 
 ## Future Work
 
-To properly fix this, implement PHI nodes:
-1. Add `Phi { ret: Value, incoming: Vec<(BlockId, Value)> }` to `RirInstr`
-2. Emit PHI nodes at loop headers in lowerer
-3. Implement PHI evaluation in interpreter (select value based on predecessor block)
-4. Apply to all loop constructs (while, do-while, for)
-
-Estimated effort: 1-2 days of focused work + extensive testing.
+The current fix resolves the reported limitation without introducing new IR instructions.
+If the loop lowering model is redesigned in the future, explicit block-parameter/PHI-style
+representation is still a viable architectural cleanup direction.

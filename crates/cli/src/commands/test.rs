@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Args)]
 pub struct TestArgs {
@@ -18,7 +18,19 @@ pub struct TestArgs {
 }
 
 pub fn test(args: TestArgs) -> Result<()> {
-    let test_files = find_test_files(args.pattern.as_deref())?;
+    if args.watch {
+        return super::watch::run_watch_loop(
+            "test sources",
+            || run_tests(args.pattern.as_deref()),
+            || watch_paths(args.pattern.as_deref()),
+        );
+    }
+
+    run_tests(args.pattern.as_deref())
+}
+
+fn run_tests(pattern: Option<&str>) -> Result<()> {
+    let test_files = find_test_files(pattern)?;
 
     if test_files.is_empty() {
         eprintln!("no test files found (looking for *Test.java in src/ and test/)");
@@ -65,13 +77,54 @@ pub fn test(args: TestArgs) -> Result<()> {
     Ok(())
 }
 
+fn watch_paths(pattern: Option<&str>) -> Result<Vec<PathBuf>> {
+    let mut files = find_test_files(pattern)?;
+    files.extend(find_java_files_in_dirs(&["src", "test", "tests"])?);
+
+    let hcl_path = PathBuf::from("rava.hcl");
+    if hcl_path.exists() {
+        files.push(hcl_path);
+    }
+
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
+fn find_java_files_in_dirs(dirs: &[&str]) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for dir in dirs {
+        let dir_path = PathBuf::from(dir);
+        if !dir_path.exists() {
+            continue;
+        }
+        collect_java_files(&dir_path, &mut files)?;
+    }
+    Ok(files)
+}
+
+fn collect_java_files(dir: &PathBuf, files: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_java_files(&path, files)?;
+        } else if path.extension().map(|e| e == "java").unwrap_or(false) {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
 fn find_test_files(pattern: Option<&str>) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     let dirs = ["src", "test", "tests"];
 
     for dir in &dirs {
         let dir_path = PathBuf::from(dir);
-        if !dir_path.exists() { continue; }
+        if !dir_path.exists() {
+            continue;
+        }
         collect_test_files(&dir_path, pattern, &mut files)?;
     }
 
@@ -89,7 +142,11 @@ fn find_test_files(pattern: Option<&str>) -> Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn collect_test_files(dir: &PathBuf, pattern: Option<&str>, files: &mut Vec<PathBuf>) -> Result<()> {
+fn collect_test_files(
+    dir: &PathBuf,
+    pattern: Option<&str>,
+    files: &mut Vec<PathBuf>,
+) -> Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -102,12 +159,14 @@ fn collect_test_files(dir: &PathBuf, pattern: Option<&str>, files: &mut Vec<Path
     Ok(())
 }
 
-fn is_test_file(path: &PathBuf, pattern: Option<&str>) -> bool {
+fn is_test_file(path: &Path, pattern: Option<&str>) -> bool {
     let name = match path.file_name().and_then(|n| n.to_str()) {
         Some(n) => n,
         None => return false,
     };
-    if !name.ends_with("Test.java") { return false; }
+    if !name.ends_with("Test.java") {
+        return false;
+    }
     if let Some(pat) = pattern {
         return name.contains(pat);
     }

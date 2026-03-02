@@ -1,17 +1,21 @@
 //! Java Collections, Arrays, List, Set, Map factory methods.
 
-use rava_common::error::Result;
+use super::format::fnv;
 use crate::rir_interp::RVal;
+use rava_common::error::Result;
 use std::cell::RefCell;
 use std::rc::Rc;
-use super::format::fnv;
 
 pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
     match func_id {
         // ── ArrayList ─────────────────────────────────────────────────────────
         id if id == fnv("ArrayList") || id == fnv("ArrayList.<init>") => {
             // args[0] is `this` (empty array), args[1] is optional collection arg
-            let collection_arg = if args.len() >= 2 { args.get(1) } else { args.first() };
+            let collection_arg = if args.len() >= 2 {
+                args.get(1)
+            } else {
+                args.first()
+            };
             if let Some(RVal::Array(src)) = collection_arg {
                 return Some(Ok(RVal::Array(Rc::new(RefCell::new(src.borrow().clone())))));
             }
@@ -38,7 +42,11 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         id if id == fnv("Set.of") || id == fnv("Set.copyOf") => {
             // Deduplicate
             let mut seen = std::collections::HashSet::new();
-            let items: Vec<RVal> = args.iter().filter(|v| seen.insert(v.to_display())).cloned().collect();
+            let items: Vec<RVal> = args
+                .iter()
+                .filter(|v| seen.insert(v.to_display()))
+                .cloned()
+                .collect();
             Some(Ok(RVal::Array(Rc::new(RefCell::new(items)))))
         }
 
@@ -51,20 +59,30 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         // ── Arrays ────────────────────────────────────────────────────────────
         id if id == fnv("Arrays.sort") => {
             if let Some(RVal::Array(arr)) = args.first() {
-                arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+                arr.borrow_mut().sort_by(rval_cmp);
             }
             Some(Ok(RVal::Void))
         }
         id if id == fnv("Arrays.toString") => {
             if let Some(RVal::Array(arr)) = args.first() {
-                let s = arr.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>().join(", ");
+                let s = arr
+                    .borrow()
+                    .iter()
+                    .map(|v| v.to_display())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 return Some(Ok(RVal::Str(format!("[{}]", s))));
             }
             Some(Ok(RVal::Str("[]".into())))
         }
         id if id == fnv("Arrays.deepToString") => {
             if let Some(RVal::Array(arr)) = args.first() {
-                let s = arr.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>().join(", ");
+                let s = arr
+                    .borrow()
+                    .iter()
+                    .map(|v| v.to_display())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 return Some(Ok(RVal::Str(format!("[{}]", s))));
             }
             Some(Ok(RVal::Str("[]".into())))
@@ -73,7 +91,9 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
             if let Some(RVal::Array(arr)) = args.first() {
                 let target = args.get(1).map(|v| v.to_display()).unwrap_or_default();
                 let v = arr.borrow();
-                let idx = v.iter().position(|x| x.to_display() == target)
+                let idx = v
+                    .iter()
+                    .position(|x| x.to_display() == target)
                     .map(|i| i as i64)
                     .unwrap_or(-1);
                 return Some(Ok(RVal::Int(idx)));
@@ -85,7 +105,9 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
                 let len = args.get(1).map(|v| v.as_int()).unwrap_or(0) as usize;
                 let v = arr.borrow();
                 let mut copy: Vec<RVal> = v.iter().take(len).cloned().collect();
-                while copy.len() < len { copy.push(RVal::Int(0)); }
+                while copy.len() < len {
+                    copy.push(RVal::Int(0));
+                }
                 return Some(Ok(RVal::Array(Rc::new(RefCell::new(copy)))));
             }
             Some(Ok(RVal::Null))
@@ -93,7 +115,7 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         id if id == fnv("Arrays.copyOfRange") => {
             if let Some(RVal::Array(arr)) = args.first() {
                 let from = args.get(1).map(|v| v.as_int()).unwrap_or(0).max(0) as usize;
-                let to   = args.get(2).map(|v| v.as_int()).unwrap_or(0).max(0) as usize;
+                let to = args.get(2).map(|v| v.as_int()).unwrap_or(0).max(0) as usize;
                 let v = arr.borrow();
                 let copy = v.get(from..to.min(v.len())).unwrap_or(&[]).to_vec();
                 return Some(Ok(RVal::Array(Rc::new(RefCell::new(copy)))));
@@ -109,8 +131,15 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         }
         id if id == fnv("Arrays.equals") => {
             if let (Some(RVal::Array(a)), Some(RVal::Array(b))) = (args.first(), args.get(1)) {
-                let eq = a.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>()
-                    == b.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>();
+                let eq = a
+                    .borrow()
+                    .iter()
+                    .map(|v| v.to_display())
+                    .collect::<Vec<_>>()
+                    == b.borrow()
+                        .iter()
+                        .map(|v| v.to_display())
+                        .collect::<Vec<_>>();
                 return Some(Ok(RVal::Bool(eq)));
             }
             Some(Ok(RVal::Bool(false)))
@@ -142,21 +171,23 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
                         arr.borrow_mut().sort_by(|a, b| rval_cmp(b, a));
                     }
                     Some(RVal::Str(s)) if s == "__comparator__natural__" => {
-                        arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+                        arr.borrow_mut().sort_by(rval_cmp);
                     }
                     None => {
-                        arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+                        arr.borrow_mut().sort_by(rval_cmp);
                     }
                     _ => {
                         // lambda comparator — handled in helpers.rs with interpreter access
-                        arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+                        arr.borrow_mut().sort_by(rval_cmp);
                     }
                 }
             }
             Some(Ok(RVal::Void))
         }
         id if id == fnv("Collections.reverse") => {
-            if let Some(RVal::Array(arr)) = args.first() { arr.borrow_mut().reverse(); }
+            if let Some(RVal::Array(arr)) = args.first() {
+                arr.borrow_mut().reverse();
+            }
             Some(Ok(RVal::Void))
         }
         id if id == fnv("Collections.shuffle") => {
@@ -173,21 +204,31 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         id if id == fnv("Collections.min") => {
             if let Some(RVal::Array(arr)) = args.first() {
                 let v = arr.borrow();
-                return Some(Ok(v.iter().min_by(|a, b| rval_cmp(a, b)).cloned().unwrap_or(RVal::Null)));
+                return Some(Ok(v
+                    .iter()
+                    .min_by(|a, b| rval_cmp(a, b))
+                    .cloned()
+                    .unwrap_or(RVal::Null)));
             }
             Some(Ok(RVal::Null))
         }
         id if id == fnv("Collections.max") => {
             if let Some(RVal::Array(arr)) = args.first() {
                 let v = arr.borrow();
-                return Some(Ok(v.iter().max_by(|a, b| rval_cmp(a, b)).cloned().unwrap_or(RVal::Null)));
+                return Some(Ok(v
+                    .iter()
+                    .max_by(|a, b| rval_cmp(a, b))
+                    .cloned()
+                    .unwrap_or(RVal::Null)));
             }
             Some(Ok(RVal::Null))
         }
         id if id == fnv("Collections.frequency") => {
             if let (Some(RVal::Array(arr)), Some(target)) = (args.first(), args.get(1)) {
                 let t = target.to_display();
-                return Some(Ok(RVal::Int(arr.borrow().iter().filter(|v| v.to_display() == t).count() as i64)));
+                return Some(Ok(RVal::Int(
+                    arr.borrow().iter().filter(|v| v.to_display() == t).count() as i64,
+                )));
             }
             Some(Ok(RVal::Int(0)))
         }
@@ -195,7 +236,12 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
             if let Some(RVal::Array(arr)) = args.first() {
                 let target = args.get(1).map(|v| v.to_display()).unwrap_or_default();
                 let v = arr.borrow();
-                return Some(Ok(RVal::Int(v.iter().position(|x| x.to_display() == target).map(|i| i as i64).unwrap_or(-1))));
+                return Some(Ok(RVal::Int(
+                    v.iter()
+                        .position(|x| x.to_display() == target)
+                        .map(|i| i as i64)
+                        .unwrap_or(-1),
+                )));
             }
             Some(Ok(RVal::Int(-1)))
         }
@@ -216,7 +262,9 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
                 let i = args.get(1).map(|v| v.as_int()).unwrap_or(0) as usize;
                 let j = args.get(2).map(|v| v.as_int()).unwrap_or(0) as usize;
                 let mut v = arr.borrow_mut();
-                if i < v.len() && j < v.len() { v.swap(i, j); }
+                if i < v.len() && j < v.len() {
+                    v.swap(i, j);
+                }
             }
             Some(Ok(RVal::Void))
         }
@@ -228,7 +276,7 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
             Some(Ok(RVal::Void))
         }
         id if id == fnv("Collections.nCopies") => {
-            let n   = args.first().map(|v| v.as_int()).unwrap_or(0).max(0) as usize;
+            let n = args.first().map(|v| v.as_int()).unwrap_or(0).max(0) as usize;
             let val = args.get(1).cloned().unwrap_or(RVal::Null);
             Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![val; n])))))
         }
@@ -259,17 +307,23 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         }
         id if id == fnv("Collections.disjoint") => {
             if let (Some(RVal::Array(a)), Some(RVal::Array(b))) = (args.first(), args.get(1)) {
-                let set: std::collections::HashSet<String> = a.borrow().iter().map(|v| v.to_display()).collect();
+                let set: std::collections::HashSet<String> =
+                    a.borrow().iter().map(|v| v.to_display()).collect();
                 let disjoint = b.borrow().iter().all(|v| !set.contains(&v.to_display()));
                 return Some(Ok(RVal::Bool(disjoint)));
             }
             Some(Ok(RVal::Bool(true)))
         }
         id if id == fnv("Collections.indexOfSubList") => {
-            if let (Some(RVal::Array(src)), Some(RVal::Array(target))) = (args.first(), args.get(1)) {
+            if let (Some(RVal::Array(src)), Some(RVal::Array(target))) = (args.first(), args.get(1))
+            {
                 let s: Vec<_> = src.borrow().iter().map(|v| v.to_display()).collect();
                 let t: Vec<_> = target.borrow().iter().map(|v| v.to_display()).collect();
-                let result = s.windows(t.len()).position(|w| w == t.as_slice()).map(|i| i as i64).unwrap_or(-1);
+                let result = s
+                    .windows(t.len())
+                    .position(|w| w == t.as_slice())
+                    .map(|i| i as i64)
+                    .unwrap_or(-1);
                 return Some(Ok(RVal::Int(result)));
             }
             Some(Ok(RVal::Int(-1)))
@@ -278,14 +332,20 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
             if let Some(RVal::Array(arr)) = args.first() {
                 let old = args.get(1).map(|v| v.to_display()).unwrap_or_default();
                 let new = args.get(2).cloned().unwrap_or(RVal::Null);
-                arr.borrow_mut().iter_mut().for_each(|e| { if e.to_display() == old { *e = new.clone(); } });
+                arr.borrow_mut().iter_mut().for_each(|e| {
+                    if e.to_display() == old {
+                        *e = new.clone();
+                    }
+                });
             }
             Some(Ok(RVal::Bool(true)))
         }
 
         // ── ArrayDeque / LinkedList (as Deque) ────────────────────────────────
-        id if id == fnv("ArrayDeque") || id == fnv("ArrayDeque.<init>")
-           || id == fnv("LinkedList") || id == fnv("LinkedList.<init>") =>
+        id if id == fnv("ArrayDeque")
+            || id == fnv("ArrayDeque.<init>")
+            || id == fnv("LinkedList")
+            || id == fnv("LinkedList.<init>") =>
         {
             if let Some(RVal::Array(src)) = args.first() {
                 return Some(Ok(RVal::Array(Rc::new(RefCell::new(src.borrow().clone())))));
@@ -304,16 +364,16 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         }
 
         // ── Stream factory ────────────────────────────────────────────────────
-        id if id == fnv("Stream.of") => {
-            Some(Ok(RVal::Array(Rc::new(RefCell::new(args.to_vec())))))
-        }
-        id if id == fnv("Stream.empty") => {
-            Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![])))))
-        }
+        id if id == fnv("Stream.of") => Some(Ok(RVal::Array(Rc::new(RefCell::new(args.to_vec()))))),
+        id if id == fnv("Stream.empty") => Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![]))))),
         id if id == fnv("Stream.concat") => {
             let mut result = Vec::new();
-            if let Some(RVal::Array(a)) = args.first() { result.extend(a.borrow().clone()); }
-            if let Some(RVal::Array(b)) = args.get(1) { result.extend(b.borrow().clone()); }
+            if let Some(RVal::Array(a)) = args.first() {
+                result.extend(a.borrow().clone());
+            }
+            if let Some(RVal::Array(b)) = args.get(1) {
+                result.extend(b.borrow().clone());
+            }
             Some(Ok(RVal::Array(Rc::new(RefCell::new(result)))))
         }
 
@@ -324,35 +384,51 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
 /// Natural ordering for RVal.
 pub fn rval_cmp(a: &RVal, b: &RVal) -> std::cmp::Ordering {
     match (a, b) {
-        (RVal::Int(x), RVal::Int(y))     => x.cmp(y),
+        (RVal::Int(x), RVal::Int(y)) => x.cmp(y),
         (RVal::Float(x), RVal::Float(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
-        (RVal::Int(x), RVal::Float(y))   => (*x as f64).partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
-        (RVal::Float(x), RVal::Int(y))   => x.partial_cmp(&(*y as f64)).unwrap_or(std::cmp::Ordering::Equal),
+        (RVal::Int(x), RVal::Float(y)) => (*x as f64)
+            .partial_cmp(y)
+            .unwrap_or(std::cmp::Ordering::Equal),
+        (RVal::Float(x), RVal::Int(y)) => x
+            .partial_cmp(&(*y as f64))
+            .unwrap_or(std::cmp::Ordering::Equal),
         _ => a.to_display().cmp(&b.to_display()),
     }
 }
 
 /// ArrayList instance methods.
-pub fn dispatch_array_named(arr: &Rc<RefCell<Vec<RVal>>>, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
+pub fn dispatch_array_named(
+    arr: &Rc<RefCell<Vec<RVal>>>,
+    method: &str,
+    args: &[RVal],
+) -> Option<Result<RVal>> {
     use std::cell::Cell;
     // Check unmodifiable before any mutation
-    let is_unmod = crate::rir_interp::UNMODIFIABLE.with(|u| u.borrow().contains(&(Rc::as_ptr(arr) as usize)));
-    if is_unmod && matches!(method, "add" | "remove" | "set" | "addAll" | "removeAll" | "clear" | "sort") {
+    let is_unmod =
+        crate::rir_interp::UNMODIFIABLE.with(|u| u.borrow().contains(&(Rc::as_ptr(arr) as usize)));
+    if is_unmod
+        && matches!(
+            method,
+            "add" | "remove" | "set" | "addAll" | "removeAll" | "clear" | "sort"
+        )
+    {
         return Some(Err(rava_common::error::RavaError::JavaException {
             exception_type: "UnsupportedOperationException".into(),
-            message: format!("Collection is unmodifiable"),
+            message: "Collection is unmodifiable".to_string(),
         }));
     }
     match method {
         "size" | "length" => Some(Ok(RVal::Int(arr.borrow().len() as i64))),
-        "isEmpty"         => Some(Ok(RVal::Bool(arr.borrow().is_empty()))),
+        "isEmpty" => Some(Ok(RVal::Bool(arr.borrow().is_empty()))),
         "add" => {
             if args.len() == 2 {
                 // add(index, element)
-                let i   = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
+                let i = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
                 let val = args.get(1).cloned().unwrap_or(RVal::Null);
                 let mut b = arr.borrow_mut();
-                if i <= b.len() { b.insert(i, val); }
+                if i <= b.len() {
+                    b.insert(i, val);
+                }
                 Some(Ok(RVal::Void))
             } else {
                 let val = args.first().cloned().unwrap_or(RVal::Null);
@@ -372,10 +448,12 @@ pub fn dispatch_array_named(arr: &Rc<RefCell<Vec<RVal>>>, method: &str, args: &[
             if args.is_empty() && arr.borrow().len() == 1 {
                 let v = arr.borrow();
                 return match v.first() {
-                    Some(RVal::Null) | None => Some(Err(rava_common::error::RavaError::JavaException {
-                        exception_type: "NoSuchElementException".into(),
-                        message: "No value present".into(),
-                    })),
+                    Some(RVal::Null) | None => {
+                        Some(Err(rava_common::error::RavaError::JavaException {
+                            exception_type: "NoSuchElementException".into(),
+                            message: "No value present".into(),
+                        }))
+                    }
                     Some(val) => Some(Ok(val.clone())),
                 };
             }
@@ -384,17 +462,25 @@ pub fn dispatch_array_named(arr: &Rc<RefCell<Vec<RVal>>>, method: &str, args: &[
             Some(Ok(arr.borrow().get(i).cloned().unwrap_or(RVal::Null)))
         }
         "set" => {
-            let i   = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
+            let i = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
             let val = args.get(1).cloned().unwrap_or(RVal::Null);
             let mut b = arr.borrow_mut();
-            let old = if i < b.len() { let o = b[i].clone(); b[i] = val; o } else { RVal::Null };
+            let old = if i < b.len() {
+                let o = b[i].clone();
+                b[i] = val;
+                o
+            } else {
+                RVal::Null
+            };
             Some(Ok(old))
         }
         "remove" => {
             let mut b = arr.borrow_mut();
             if let Some(RVal::Int(_)) = args.first() {
                 let i = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;
-                if i < b.len() { return Some(Ok(b.remove(i))); }
+                if i < b.len() {
+                    return Some(Ok(b.remove(i)));
+                }
             } else {
                 let target = args.first().map(|v| v.to_display()).unwrap_or_default();
                 if let Some(pos) = b.iter().position(|v| v.to_display() == target) {
@@ -408,38 +494,62 @@ pub fn dispatch_array_named(arr: &Rc<RefCell<Vec<RVal>>>, method: &str, args: &[
         "removeIf" => Some(Ok(RVal::Bool(false))), // lambda-based, handled by interpreter
         "contains" => {
             let target = args.first().map(|v| v.to_display()).unwrap_or_default();
-            Some(Ok(RVal::Bool(arr.borrow().iter().any(|v| v.to_display() == target))))
+            Some(Ok(RVal::Bool(
+                arr.borrow().iter().any(|v| v.to_display() == target),
+            )))
         }
         "indexOf" => {
             let target = args.first().map(|v| v.to_display()).unwrap_or_default();
-            Some(Ok(RVal::Int(arr.borrow().iter().position(|v| v.to_display() == target).map(|i| i as i64).unwrap_or(-1))))
+            Some(Ok(RVal::Int(
+                arr.borrow()
+                    .iter()
+                    .position(|v| v.to_display() == target)
+                    .map(|i| i as i64)
+                    .unwrap_or(-1),
+            )))
         }
         "lastIndexOf" => {
             let target = args.first().map(|v| v.to_display()).unwrap_or_default();
             let v = arr.borrow();
-            Some(Ok(RVal::Int(v.iter().rposition(|v| v.to_display() == target).map(|i| i as i64).unwrap_or(-1))))
+            Some(Ok(RVal::Int(
+                v.iter()
+                    .rposition(|v| v.to_display() == target)
+                    .map(|i| i as i64)
+                    .unwrap_or(-1),
+            )))
         }
-        "clear"    => { arr.borrow_mut().clear(); Some(Ok(RVal::Void)) }
+        "clear" => {
+            arr.borrow_mut().clear();
+            Some(Ok(RVal::Void))
+        }
         "sort" => {
             if args.is_empty() {
-                arr.borrow_mut().sort_by(|a, b| rval_cmp(a, b));
+                arr.borrow_mut().sort_by(rval_cmp);
                 Some(Ok(RVal::Void))
             } else {
                 // Has comparator — signal to interpreter to handle it
                 None
             }
         }
-        "reverse"  => { arr.borrow_mut().reverse(); Some(Ok(RVal::Void)) }
+        "reverse" => {
+            arr.borrow_mut().reverse();
+            Some(Ok(RVal::Void))
+        }
         "toString" => {
-            let s = arr.borrow().iter().map(|v| v.to_display()).collect::<Vec<_>>().join(", ");
+            let s = arr
+                .borrow()
+                .iter()
+                .map(|v| v.to_display())
+                .collect::<Vec<_>>()
+                .join(", ");
             Some(Ok(RVal::Str(format!("[{s}]"))))
         }
-        "toArray"  => Some(Ok(RVal::Array(arr.clone()))),
+        "toArray" => Some(Ok(RVal::Array(arr.clone()))),
         "iterator" => Some(Ok(RVal::ArrayIter(arr.clone(), Rc::new(Cell::new(0))))),
-        "stream"   => Some(Ok(RVal::Array(arr.clone()))),
-        "subList"  => {
+        "stream" => Some(Ok(RVal::Array(arr.clone()))),
+        "subList" => {
             let from = args.first().map(|v| v.as_int()).unwrap_or(0).max(0) as usize;
-            let to   = args.get(1).map(|v| v.as_int()).unwrap_or(0).max(0) as usize;
+            let to = args.get(1).map(|v| v.as_int()).unwrap_or(0).max(0) as usize;
             let v = arr.borrow();
             let sub = v.get(from..to.min(v.len())).unwrap_or(&[]).to_vec();
             Some(Ok(RVal::Array(Rc::new(RefCell::new(sub)))))
@@ -447,15 +557,20 @@ pub fn dispatch_array_named(arr: &Rc<RefCell<Vec<RVal>>>, method: &str, args: &[
         // ── Optional methods (stored as 1-element array: [value] or [Null]) ──
         "isPresent" => {
             let v = arr.borrow();
-            Some(Ok(RVal::Bool(!matches!(v.first(), Some(RVal::Null) | None))))
+            Some(Ok(RVal::Bool(!matches!(
+                v.first(),
+                Some(RVal::Null) | None
+            ))))
         }
-        "get" | "orElseThrow" | "getAsInt" | "getAsLong" | "getAsDouble" if arr.borrow().len() == 1 => {
+        "orElseThrow" | "getAsInt" | "getAsLong" | "getAsDouble" if arr.borrow().len() == 1 => {
             let v = arr.borrow();
             match v.first() {
-                Some(RVal::Null) | None => Some(Err(rava_common::error::RavaError::JavaException {
-                    exception_type: "NoSuchElementException".into(),
-                    message: "No value present".into(),
-                })),
+                Some(RVal::Null) | None => {
+                    Some(Err(rava_common::error::RavaError::JavaException {
+                        exception_type: "NoSuchElementException".into(),
+                        message: "No value present".into(),
+                    }))
+                }
                 Some(val) => Some(Ok(val.clone())),
             }
         }
@@ -480,12 +595,14 @@ pub fn dispatch_array_named(arr: &Rc<RefCell<Vec<RVal>>>, method: &str, args: &[
         "peekFirst" | "peek" | "element" => {
             Some(Ok(arr.borrow().first().cloned().unwrap_or(RVal::Null)))
         }
-        "peekLast" => {
-            Some(Ok(arr.borrow().last().cloned().unwrap_or(RVal::Null)))
-        }
+        "peekLast" => Some(Ok(arr.borrow().last().cloned().unwrap_or(RVal::Null))),
         "pollFirst" | "poll" | "pop" | "removeFirst" => {
             let mut b = arr.borrow_mut();
-            if b.is_empty() { Some(Ok(RVal::Null)) } else { Some(Ok(b.remove(0))) }
+            if b.is_empty() {
+                Some(Ok(RVal::Null))
+            } else {
+                Some(Ok(b.remove(0)))
+            }
         }
         "pollLast" | "removeLast" => {
             let mut b = arr.borrow_mut();

@@ -2,14 +2,14 @@
 //!
 //! Scanners are encoded as `__scanner__<pos>@@<input>` strings.
 
-use rava_common::error::Result;
-use crate::rir_interp::RVal;
-use std::cell::RefCell;
 use super::format::fnv;
+use crate::rir_interp::RVal;
+use rava_common::error::Result;
+use std::cell::RefCell;
 
 thread_local! {
     /// After a Scanner method call, the updated scanner encoding is stored here.
-    pub static LAST_SCANNER: RefCell<Option<String>> = RefCell::new(None);
+    pub static LAST_SCANNER: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
@@ -58,7 +58,9 @@ pub fn dispatch_scanner(enc: &str, method: &str, _args: &[RVal]) -> Option<Resul
             let slice = &input[pos..];
             let trimmed_offset = slice.len() - slice.trim_start().len();
             let trimmed = &slice[trimmed_offset..];
-            let end = trimmed.find(|c: char| c.is_whitespace()).unwrap_or(trimmed.len());
+            let end = trimmed
+                .find(|c: char| c.is_whitespace())
+                .unwrap_or(trimmed.len());
             let token = &trimmed[..end];
             let new_pos = pos + trimmed_offset + end;
             let new_enc = encode_scanner(new_pos, &input);
@@ -120,7 +122,9 @@ fn decode_scanner(enc: &str) -> (usize, String) {
 fn next_token(input: &str, pos: usize) -> String {
     let slice = &input[pos..];
     let trimmed = slice.trim_start();
-    let end = trimmed.find(|c: char| c.is_whitespace()).unwrap_or(trimmed.len());
+    let end = trimmed
+        .find(|c: char| c.is_whitespace())
+        .unwrap_or(trimmed.len());
     trimmed[..end].to_string()
 }
 
@@ -128,6 +132,8 @@ fn advance_past_token(input: &str, pos: usize) -> usize {
     let slice = &input[pos..];
     let trimmed_offset = slice.len() - slice.trim_start().len();
     let trimmed = &slice[trimmed_offset..];
-    let end = trimmed.find(|c: char| c.is_whitespace()).unwrap_or(trimmed.len());
+    let end = trimmed
+        .find(|c: char| c.is_whitespace())
+        .unwrap_or(trimmed.len());
     pos + trimmed_offset + end
 }

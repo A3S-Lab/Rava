@@ -3,21 +3,40 @@
 use super::*;
 
 pub(crate) fn is_static_path(path: &str) -> bool {
-    if matches!(path,
-        "System.out" | "System.err" | "System.in" |
-        "Math" | "String" | "Integer" | "Long" | "Double" |
-        "Float" | "Boolean" | "Character" | "Byte" | "Short" |
-        "Arrays" | "Collections" | "Objects" |
-        "System" | "Runtime" | "Thread" | "List"
+    if matches!(
+        path,
+        "System.out"
+            | "System.err"
+            | "System.in"
+            | "Math"
+            | "String"
+            | "Integer"
+            | "Long"
+            | "Double"
+            | "Float"
+            | "Boolean"
+            | "Character"
+            | "Byte"
+            | "Short"
+            | "Arrays"
+            | "Collections"
+            | "Objects"
+            | "System"
+            | "Runtime"
+            | "Thread"
+            | "List"
     ) || path.starts_with("System.")
-      || path.starts_with("Math.")
+        || path.starts_with("Math.")
     {
         return true;
     }
     if path.contains('.') {
         return false;
     }
-    path.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+    path.chars()
+        .next()
+        .map(|c| c.is_ascii_uppercase())
+        .unwrap_or(false)
 }
 
 pub(crate) fn lower_type(ty: &TypeExpr) -> RirType {
@@ -30,37 +49,37 @@ pub(crate) fn lower_type(ty: &TypeExpr) -> RirType {
 pub(crate) fn lower_type_name(name: &str) -> RirType {
     match name {
         "int" | "short" | "byte" => RirType::I32,
-        "char"    => RirType::I16,
-        "long"    => RirType::I64,
-        "float"   => RirType::F32,
-        "double"  => RirType::F64,
+        "char" => RirType::I16,
+        "long" => RirType::I64,
+        "float" => RirType::F32,
+        "double" => RirType::F64,
         "boolean" => RirType::Bool,
-        "void"    => RirType::Void,
-        _         => RirType::Ref(ClassId(encode_builtin(name))),
+        "void" => RirType::Void,
+        _ => RirType::Ref(ClassId(encode_builtin(name))),
     }
 }
 
 pub(crate) fn lower_binop(op: &BinOp) -> RirBinOp {
     match op {
-        BinOp::Add    => RirBinOp::Add,
-        BinOp::Sub    => RirBinOp::Sub,
-        BinOp::Mul    => RirBinOp::Mul,
-        BinOp::Div    => RirBinOp::Div,
-        BinOp::Rem    => RirBinOp::Rem,
-        BinOp::Eq     => RirBinOp::Eq,
-        BinOp::Ne     => RirBinOp::Ne,
-        BinOp::Lt     => RirBinOp::Lt,
-        BinOp::Le     => RirBinOp::Le,
-        BinOp::Gt     => RirBinOp::Gt,
-        BinOp::Ge     => RirBinOp::Ge,
-        BinOp::And    => RirBinOp::And,
-        BinOp::Or     => RirBinOp::Or,
+        BinOp::Add => RirBinOp::Add,
+        BinOp::Sub => RirBinOp::Sub,
+        BinOp::Mul => RirBinOp::Mul,
+        BinOp::Div => RirBinOp::Div,
+        BinOp::Rem => RirBinOp::Rem,
+        BinOp::Eq => RirBinOp::Eq,
+        BinOp::Ne => RirBinOp::Ne,
+        BinOp::Lt => RirBinOp::Lt,
+        BinOp::Le => RirBinOp::Le,
+        BinOp::Gt => RirBinOp::Gt,
+        BinOp::Ge => RirBinOp::Ge,
+        BinOp::And => RirBinOp::And,
+        BinOp::Or => RirBinOp::Or,
         BinOp::BitAnd => RirBinOp::BitAnd,
-        BinOp::BitOr  => RirBinOp::BitOr,
+        BinOp::BitOr => RirBinOp::BitOr,
         BinOp::BitXor => RirBinOp::Xor,
-        BinOp::Shl    => RirBinOp::Shl,
-        BinOp::Shr    => RirBinOp::Shr,
-        BinOp::UShr   => RirBinOp::UShr,
+        BinOp::Shl => RirBinOp::Shl,
+        BinOp::Shr => RirBinOp::Shr,
+        BinOp::UShr => RirBinOp::UShr,
     }
 }
 
@@ -76,10 +95,10 @@ pub fn encode_builtin(name: &str) -> u32 {
 
 pub(crate) fn expr_to_str(expr: &Expr) -> String {
     match expr {
-        Expr::Ident(s)            => s.clone(),
-        Expr::This                => "this".into(),
-        Expr::Super               => "super".into(),
+        Expr::Ident(s) => s.clone(),
+        Expr::This => "this".into(),
+        Expr::Super => "super".into(),
         Expr::Field { obj, name } => format!("{}.{}", expr_to_str(obj), name),
-        _                         => "<expr>".into(),
+        _ => "<expr>".into(),
     }
 }

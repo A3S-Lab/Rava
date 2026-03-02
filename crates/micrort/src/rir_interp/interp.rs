@@ -1,23 +1,36 @@
 //! Core interpreter methods: new, run_main, exec_function, exec_function_idx, exec_instr.
 
-use std::collections::HashMap;
-use std::cell::RefCell;
-use std::rc::Rc;
-use rava_common::error::{RavaError, Result};
-use rava_rir::RirInstr;
 use super::rval::RVal;
 use super::RirInterpreter;
+use rava_common::error::{RavaError, Result};
+use rava_rir::RirInstr;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+
+pub(super) struct ExecState<'a> {
+    next_block: &'a mut Option<usize>,
+    returned: &'a mut Option<RVal>,
+    exception_handlers: &'a mut Vec<(u32, Vec<String>)>,
+    finally_handlers: &'a mut Vec<(u32, u32)>,
+}
 
 impl RirInterpreter {
     pub fn run_main(&self) -> Result<()> {
-        let clinit_names: Vec<String> = self.module.functions.iter()
+        let clinit_names: Vec<String> = self
+            .module
+            .functions
+            .iter()
             .filter(|f| f.flags.is_clinit)
             .map(|f| f.name.clone())
             .collect();
         for name in clinit_names {
             self.exec_function(&name, HashMap::new())?;
         }
-        let main_name = self.module.functions.iter()
+        let main_name = self
+            .module
+            .functions
+            .iter()
             .find(|f| f.name.ends_with(".main"))
             .map(|f| f.name.clone())
             .ok_or_else(|| RavaError::Other("no main method found".into()))?;
@@ -28,13 +41,20 @@ impl RirInterpreter {
     }
 
     pub(super) fn exec_function(&self, name: &str, args: HashMap<String, RVal>) -> Result<RVal> {
-        let idx = self.module.functions.iter()
+        let idx = self
+            .module
+            .functions
+            .iter()
             .position(|f| f.name == name)
             .ok_or_else(|| RavaError::Other(format!("function not found: {name}")))?;
         self.exec_function_idx(idx, args)
     }
 
-    pub(super) fn exec_function_idx(&self, func_idx: usize, args: HashMap<String, RVal>) -> Result<RVal> {
+    pub(super) fn exec_function_idx(
+        &self,
+        func_idx: usize,
+        args: HashMap<String, RVal>,
+    ) -> Result<RVal> {
         let func = &self.module.functions[func_idx];
         let mut env = args;
         let mut block_idx = 0usize;
@@ -44,37 +64,53 @@ impl RirInterpreter {
         let mut finally_handlers: Vec<(u32, u32)> = Vec::new();
 
         loop {
-            let block = func.basic_blocks.get(block_idx)
+            let block = func
+                .basic_blocks
+                .get(block_idx)
                 .ok_or_else(|| RavaError::Other("invalid block index".into()))?;
 
             let mut next_block: Option<usize> = None;
-            let mut returned:   Option<RVal>  = None;
+            let mut returned: Option<RVal> = None;
             let mut thrown: Option<(String, String, Option<RVal>)> = None;
 
             for instr in &block.instrs {
-                let result = self.exec_instr(instr, &mut env, func, &mut next_block, &mut returned, &mut exception_handlers, &mut finally_handlers);
+                let mut state = ExecState {
+                    next_block: &mut next_block,
+                    returned: &mut returned,
+                    exception_handlers: &mut exception_handlers,
+                    finally_handlers: &mut finally_handlers,
+                };
+                let result = self.exec_instr(instr, &mut env, func, &mut state);
                 match result {
                     Ok(()) => {}
-                    Err(RavaError::JavaException { exception_type, message }) => {
+                    Err(RavaError::JavaException {
+                        exception_type,
+                        message,
+                    }) => {
                         let obj = env.get("__last_thrown__").cloned();
                         thrown = Some((exception_type, message, obj));
                         break;
                     }
                     Err(e) => return Err(e),
                 }
-                if next_block.is_some() || returned.is_some() { break; }
+                if next_block.is_some() || returned.is_some() {
+                    break;
+                }
             }
 
-            if let Some((exc_type, exc_msg, orig_obj)) = thrown {
+            if let Some((exc_type, exc_msg, _orig_obj)) = thrown {
                 let mut matched = None;
                 while let Some((block_id, types)) = exception_handlers.pop() {
-                    if types.is_empty() || types.iter().any(|t| self.exception_matches(&exc_type, t)) {
+                    if types.is_empty()
+                        || types.iter().any(|t| self.exception_matches(&exc_type, t))
+                    {
                         matched = Some(block_id);
                         break;
                     }
                 }
                 if let Some(catch_block_id) = matched {
-                    let orig_obj = super::THROWN_OBJ.with(|t: &RefCell<Option<RVal>>| t.borrow_mut().take());
+                    let orig_obj =
+                        super::THROWN_OBJ.with(|t: &RefCell<Option<RVal>>| t.borrow_mut().take());
                     let exc_rval = if let Some(RVal::Object(_)) = orig_obj {
                         orig_obj.unwrap()
                     } else {
@@ -82,7 +118,8 @@ impl RirInterpreter {
                         {
                             let mut heap = self.heap.borrow_mut();
                             if let Some(obj) = heap.get_mut(&exc_obj_id) {
-                                obj.fields.insert("message".into(), RVal::Str(exc_msg.clone()));
+                                obj.fields
+                                    .insert("message".into(), RVal::Str(exc_msg.clone()));
                             }
                         }
                         RVal::Object(exc_obj_id)
@@ -101,7 +138,13 @@ impl RirInterpreter {
                             let mut dummy_exc: Vec<(u32, Vec<String>)> = Vec::new();
                             let mut dummy_fin: Vec<(u32, u32)> = Vec::new();
                             for instr in &fblock.instrs {
-                                let _ = self.exec_instr(instr, &mut env, func, &mut dummy_next, &mut dummy_ret, &mut dummy_exc, &mut dummy_fin);
+                                let mut state = ExecState {
+                                    next_block: &mut dummy_next,
+                                    returned: &mut dummy_ret,
+                                    exception_handlers: &mut dummy_exc,
+                                    finally_handlers: &mut dummy_fin,
+                                };
+                                let _ = self.exec_instr(instr, &mut env, func, &mut state);
                             }
                         }
                     }
@@ -112,10 +155,12 @@ impl RirInterpreter {
                 }
             }
 
-            if let Some(val) = returned { return Ok(val); }
+            if let Some(val) = returned {
+                return Ok(val);
+            }
             match next_block {
                 Some(idx) => block_idx = idx,
-                None      => block_idx += 1,
+                None => block_idx += 1,
             }
         }
     }
@@ -125,11 +170,15 @@ impl RirInterpreter {
         instr: &RirInstr,
         env: &mut HashMap<String, RVal>,
         func: &rava_rir::RirFunction,
-        next_block: &mut Option<usize>,
-        returned: &mut Option<RVal>,
-        exception_handlers: &mut Vec<(u32, Vec<String>)>,
-        finally_handlers: &mut Vec<(u32, u32)>,
+        state: &mut ExecState,
     ) -> Result<()> {
+        let ExecState {
+            next_block,
+            returned,
+            exception_handlers,
+            finally_handlers,
+        } = state;
+
         match instr {
             RirInstr::ConstInt { ret, value } => {
                 env.insert(ret.0.clone(), RVal::Int(*value));
@@ -156,7 +205,8 @@ impl RirInterpreter {
                     }
                 } else if let Some(rest) = value.strip_prefix("__try_finally__") {
                     if let Some((fbb_str, ebb_str)) = rest.split_once(':') {
-                        if let (Ok(fbb), Ok(ebb)) = (fbb_str.parse::<u32>(), ebb_str.parse::<u32>()) {
+                        if let (Ok(fbb), Ok(ebb)) = (fbb_str.parse::<u32>(), ebb_str.parse::<u32>())
+                        {
                             finally_handlers.push((fbb, ebb));
                         }
                     }
@@ -188,16 +238,23 @@ impl RirInterpreter {
                 } else {
                     // If this is a lambda, store the current env as its captures
                     if value.starts_with("__lambda_") {
-                        if let Some(func) = self.module.functions.iter().find(|f| f.name == *value) {
+                        if let Some(func) = self.module.functions.iter().find(|f| f.name == *value)
+                        {
                             // Captures are params that aren't in the lambda's declared params
                             // They're stored as Value(name) in the function body
                             let param_names: std::collections::HashSet<&str> =
                                 func.params.iter().map(|(v, _)| v.0.as_str()).collect();
                             // Find all vars referenced in the function that aren't params
-                            let captures: HashMap<String, RVal> = env.iter()
-                                .filter(|(k, _)| !param_names.contains(k.as_str())
-                                    && !k.starts_with("__")
-                                    && k.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false))
+                            let captures: HashMap<String, RVal> = env
+                                .iter()
+                                .filter(|(k, _)| {
+                                    !param_names.contains(k.as_str())
+                                        && !k.starts_with("__")
+                                        && k.chars()
+                                            .next()
+                                            .map(|c| c.is_alphabetic() || c == '_')
+                                            .unwrap_or(false)
+                                })
                                 .map(|(k, v)| (k.clone(), v.clone()))
                                 .collect();
                             super::LAMBDA_CAPTURES.with(|lc| {
@@ -220,24 +277,35 @@ impl RirInterpreter {
                 let v = self.resolve(env, operand);
                 let result = match op {
                     rava_rir::UnaryOp::Neg => {
-                        if v.is_float() { RVal::Float(-v.as_float()) }
-                        else { RVal::Int(-v.as_int()) }
+                        if v.is_float() {
+                            RVal::Float(-v.as_float())
+                        } else {
+                            RVal::Int(-v.as_int())
+                        }
                     }
                     rava_rir::UnaryOp::Not => RVal::Bool(!v.is_truthy()),
                 };
                 env.insert(ret.0.clone(), result);
             }
-            RirInstr::Call { func: func_id, args: arg_vals, ret } => {
+            RirInstr::Call {
+                func: func_id,
+                args: arg_vals,
+                ret,
+            } => {
                 let result = self.dispatch_call(func_id.0, arg_vals, env)?;
                 // After a Matcher.find()/matches() or Scanner.next*() call, the builtin
                 // stores the updated state in a thread-local. Apply it back to env here
                 // where env is mutable.
-                if let Some(new_enc) = crate::builtins::regex::LAST_MATCHER.with(|lm| lm.borrow_mut().take()) {
+                if let Some(new_enc) =
+                    crate::builtins::regex::LAST_MATCHER.with(|lm| lm.borrow_mut().take())
+                {
                     if let Some(recv_var) = arg_vals.first() {
                         env.insert(recv_var.0.clone(), RVal::Str(new_enc));
                     }
                 }
-                if let Some(new_enc) = crate::builtins::scanner::LAST_SCANNER.with(|ls| ls.borrow_mut().take()) {
+                if let Some(new_enc) =
+                    crate::builtins::scanner::LAST_SCANNER.with(|ls| ls.borrow_mut().take())
+                {
                     if let Some(recv_var) = arg_vals.first() {
                         env.insert(recv_var.0.clone(), RVal::Str(new_enc));
                     }
@@ -259,24 +327,38 @@ impl RirInterpreter {
                     // that will be replaced when Scanner.<init> is called
                     env.insert(ret.0.clone(), RVal::Str("__scanner__0@@".to_string()));
                 } else if class_name == "ArrayList" || class_name == "LinkedList" {
-                    env.insert(ret.0.clone(), RVal::Array(Rc::new(RefCell::new(Vec::new()))));
+                    env.insert(
+                        ret.0.clone(),
+                        RVal::Array(Rc::new(RefCell::new(Vec::new()))),
+                    );
                 } else if class_name == "Stack" {
                     let id = self.alloc_object("Stack");
                     {
                         let mut heap = self.heap.borrow_mut();
                         if let Some(obj) = heap.get_mut(&id) {
-                            obj.fields.insert("__items__".into(), RVal::Array(Rc::new(RefCell::new(vec![]))));
-                            obj.fields.insert("__type__".into(), RVal::Str("stack".into()));
+                            obj.fields.insert(
+                                "__items__".into(),
+                                RVal::Array(Rc::new(RefCell::new(vec![]))),
+                            );
+                            obj.fields
+                                .insert("__type__".into(), RVal::Str("stack".into()));
                         }
                     }
                     env.insert(ret.0.clone(), RVal::Object(id));
-                } else if class_name == "HashSet" || class_name == "TreeSet" || class_name == "LinkedHashSet" {
+                } else if class_name == "HashSet"
+                    || class_name == "TreeSet"
+                    || class_name == "LinkedHashSet"
+                {
                     let id = self.alloc_object(&class_name);
                     {
                         let mut heap = self.heap.borrow_mut();
                         if let Some(obj) = heap.get_mut(&id) {
-                            obj.fields.insert("__items__".into(), RVal::Array(Rc::new(RefCell::new(vec![]))));
-                            obj.fields.insert("__type__".into(), RVal::Str("set".into()));
+                            obj.fields.insert(
+                                "__items__".into(),
+                                RVal::Array(Rc::new(RefCell::new(vec![]))),
+                            );
+                            obj.fields
+                                .insert("__type__".into(), RVal::Str("set".into()));
                         }
                     }
                     env.insert(ret.0.clone(), RVal::Object(id));
@@ -285,7 +367,10 @@ impl RirInterpreter {
                     {
                         let mut heap = self.heap.borrow_mut();
                         if let Some(obj) = heap.get_mut(&id) {
-                            obj.fields.insert("__items__".into(), RVal::Array(Rc::new(RefCell::new(vec![]))));
+                            obj.fields.insert(
+                                "__items__".into(),
+                                RVal::Array(Rc::new(RefCell::new(vec![]))),
+                            );
                         }
                     }
                     env.insert(ret.0.clone(), RVal::Object(id));
@@ -326,7 +411,12 @@ impl RirInterpreter {
                     env.insert(ret.0.clone(), v);
                 } else {
                     let key = format!("static#{}", field.0);
-                    let val = self.static_fields.borrow().get(&key).cloned().unwrap_or(RVal::Null);
+                    let val = self
+                        .static_fields
+                        .borrow()
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or(RVal::Null);
                     env.insert(ret.0.clone(), val);
                 }
             }
@@ -341,7 +431,8 @@ impl RirInterpreter {
                 env.insert(ret.0.clone(), RVal::Array(arr));
             }
             RirInstr::NewMultiArray { dims, ret, .. } => {
-                let dim_sizes: Vec<usize> = dims.iter()
+                let dim_sizes: Vec<usize> = dims
+                    .iter()
                     .map(|d| self.resolve(env, d).as_int().max(0) as usize)
                     .collect();
                 let arr = self.create_multi_array(&dim_sizes, 0);
@@ -356,15 +447,21 @@ impl RirInterpreter {
                         if i < 0 || i as usize >= borrow.len() {
                             return Err(RavaError::JavaException {
                                 exception_type: "ArrayIndexOutOfBoundsException".into(),
-                                message: format!("Index {} out of bounds for length {}", i, borrow.len()),
+                                message: format!(
+                                    "Index {} out of bounds for length {}",
+                                    i,
+                                    borrow.len()
+                                ),
                             });
                         }
                         borrow[i as usize].clone()
                     }
-                    RVal::Null => return Err(RavaError::JavaException {
-                        exception_type: "NullPointerException".into(),
-                        message: "null array access".into(),
-                    }),
+                    RVal::Null => {
+                        return Err(RavaError::JavaException {
+                            exception_type: "NullPointerException".into(),
+                            message: "null array access".into(),
+                        })
+                    }
                     _ => RVal::Null,
                 };
                 env.insert(ret.0.clone(), val);
@@ -375,7 +472,9 @@ impl RirInterpreter {
                 let v = self.resolve(env, val);
                 if let RVal::Array(a) = &arr_val {
                     let mut borrow = a.borrow_mut();
-                    while i >= borrow.len() { borrow.push(RVal::Null); }
+                    while i >= borrow.len() {
+                        borrow.push(RVal::Null);
+                    }
                     borrow[i] = v;
                 }
             }
@@ -383,7 +482,7 @@ impl RirInterpreter {
                 let arr_val = self.resolve(env, arr);
                 let len = match &arr_val {
                     RVal::Array(a) => a.borrow().len() as i64,
-                    RVal::Str(s)   => s.len() as i64,
+                    RVal::Str(s) => s.len() as i64,
                     _ => 0,
                 };
                 env.insert(ret.0.clone(), RVal::Int(len));
@@ -393,12 +492,14 @@ impl RirInterpreter {
                 let converted = match to {
                     rava_rir::RirType::I32 | rava_rir::RirType::I64 => RVal::Int(v.as_int()),
                     // I8 = byte (mask to 8-bit signed)
-                    rava_rir::RirType::I8  => RVal::Int((v.as_int() as i8) as i64),
+                    rava_rir::RirType::I8 => RVal::Int((v.as_int() as i8) as i64),
                     // I16 = char — convert to single-char string for display
                     rava_rir::RirType::I16 => {
                         // If input is a single-char string (from charAt), get its code first
                         let code = match &v {
-                            RVal::Str(s) if s.chars().count() == 1 => s.chars().next().unwrap() as i64,
+                            RVal::Str(s) if s.chars().count() == 1 => {
+                                s.chars().next().unwrap() as i64
+                            }
                             _ => v.as_int(),
                         };
                         let ch = char::from_u32((code as u16) as u32).unwrap_or('\0');
@@ -414,7 +515,10 @@ impl RirInterpreter {
                 let obj_val = self.resolve(env, obj);
                 let class_name = self.class_name_for(class.0);
                 if let RVal::Object(id) = &obj_val {
-                    let actual = self.heap.borrow().get(id)
+                    let actual = self
+                        .heap
+                        .borrow()
+                        .get(id)
                         .map(|o| o.class_name.clone())
                         .unwrap_or_default();
                     // Allow cast if same class, or if target is a known supertype
@@ -429,7 +533,11 @@ impl RirInterpreter {
                     }
                 } else if let RVal::Str(_) = &obj_val {
                     // String cast to non-String type
-                    if class_name != "String" && class_name != "Object" && class_name != "CharSequence" && class_name != "Comparable" {
+                    if class_name != "String"
+                        && class_name != "Object"
+                        && class_name != "CharSequence"
+                        && class_name != "Comparable"
+                    {
                         return Err(RavaError::JavaException {
                             exception_type: "ClassCastException".into(),
                             message: format!("String cannot be cast to {}", class_name),
@@ -438,33 +546,50 @@ impl RirInterpreter {
                 }
             }
             RirInstr::Return(val) => {
-                *returned = Some(match val {
+                **returned = Some(match val {
                     Some(v) => self.resolve(env, v),
-                    None    => RVal::Void,
+                    None => RVal::Void,
                 });
                 return Ok(());
             }
             RirInstr::Jump(target) => {
-                *next_block = self.find_block_idx(func, target.0);
+                **next_block = self.find_block_idx(func, target.0);
                 return Ok(());
             }
-            RirInstr::Branch { cond, then_bb, else_bb } => {
+            RirInstr::Branch {
+                cond,
+                then_bb,
+                else_bb,
+            } => {
                 let cv = self.resolve(env, cond);
                 let target = if cv.is_truthy() { then_bb.0 } else { else_bb.0 };
-                *next_block = self.find_block_idx(func, target);
+                **next_block = self.find_block_idx(func, target);
                 return Ok(());
             }
             RirInstr::Throw(val) => {
                 let thrown_val = self.resolve(env, val);
                 // Store the original thrown object in thread-local so catch handlers can use it
-                super::THROWN_OBJ.with(|t: &RefCell<Option<RVal>>| { *t.borrow_mut() = Some(thrown_val.clone()); });
+                super::THROWN_OBJ.with(|t: &RefCell<Option<RVal>>| {
+                    *t.borrow_mut() = Some(thrown_val.clone());
+                });
                 let (exc_type, msg) = match &thrown_val {
                     RVal::Object(id) => {
-                        let class_name = self.heap.borrow().get(id)
+                        let class_name = self
+                            .heap
+                            .borrow()
+                            .get(id)
                             .map(|o| o.class_name.clone())
                             .unwrap_or_else(|| "Exception".into());
-                        let message = self.heap.borrow().get(id)
-                            .and_then(|o| o.fields.get("__arg0__").or(o.fields.get("message")).cloned())
+                        let message = self
+                            .heap
+                            .borrow()
+                            .get(id)
+                            .and_then(|o| {
+                                o.fields
+                                    .get("__arg0__")
+                                    .or(o.fields.get("message"))
+                                    .cloned()
+                            })
                             .map(|v| v.to_display())
                             .unwrap_or_default();
                         (class_name, message)
@@ -482,37 +607,67 @@ impl RirInterpreter {
                 let class_name = self.class_name_for(class.0);
                 let result = match &obj_val {
                     RVal::Object(id) => {
-                        let obj_class = self.heap.borrow().get(id)
+                        let obj_class = self
+                            .heap
+                            .borrow()
+                            .get(id)
                             .map(|o| o.class_name.clone())
                             .unwrap_or_default();
                         self.is_instance_of(&obj_class, &class_name)
                     }
-                    RVal::Str(_)   => class_name == "String" || class_name == "Object" || class_name == "CharSequence" || class_name == "Comparable",
+                    RVal::Str(_) => {
+                        class_name == "String"
+                            || class_name == "Object"
+                            || class_name == "CharSequence"
+                            || class_name == "Comparable"
+                    }
                     RVal::Array(_) => class_name.ends_with("[]") || class_name == "Object",
-                    RVal::Int(_)   => matches!(class_name.as_str(), "Integer" | "Long" | "Short" | "Byte" | "Number" | "Object" | "Comparable"),
-                    RVal::Float(_) => matches!(class_name.as_str(), "Double" | "Float" | "Number" | "Object" | "Comparable"),
-                    RVal::Bool(_)  => matches!(class_name.as_str(), "Boolean" | "Object" | "Comparable"),
+                    RVal::Int(_) => matches!(
+                        class_name.as_str(),
+                        "Integer" | "Long" | "Short" | "Byte" | "Number" | "Object" | "Comparable"
+                    ),
+                    RVal::Float(_) => matches!(
+                        class_name.as_str(),
+                        "Double" | "Float" | "Number" | "Object" | "Comparable"
+                    ),
+                    RVal::Bool(_) => {
+                        matches!(class_name.as_str(), "Boolean" | "Object" | "Comparable")
+                    }
                     _ => false,
                 };
                 env.insert(ret.0.clone(), RVal::Bool(result));
             }
-            RirInstr::CallVirtual { receiver, method, args: arg_vals, ret } => {
+            RirInstr::CallVirtual {
+                receiver,
+                method,
+                args: arg_vals,
+                ret,
+            } => {
                 let recv = self.resolve(env, receiver);
                 let result = self.dispatch_virtual(recv, method.0, arg_vals, env)?;
-                if let Some(r) = ret { env.insert(r.0.clone(), result); }
+                if let Some(r) = ret {
+                    env.insert(r.0.clone(), result);
+                }
             }
-            RirInstr::CallInterface { receiver, method, args: arg_vals, ret } => {
+            RirInstr::CallInterface {
+                receiver,
+                method,
+                args: arg_vals,
+                ret,
+            } => {
                 let recv = self.resolve(env, receiver);
                 let result = self.dispatch_virtual(recv, method.0, arg_vals, env)?;
-                if let Some(r) = ret { env.insert(r.0.clone(), result); }
+                if let Some(r) = ret {
+                    env.insert(r.0.clone(), result);
+                }
             }
             RirInstr::Unreachable => {
                 return Err(RavaError::Other("reached unreachable code".into()));
             }
             RirInstr::MonitorEnter(_) | RirInstr::MonitorExit(_) => {}
-            RirInstr::MicroRtReflect { ret, .. } |
-            RirInstr::MicroRtProxy { ret, .. } |
-            RirInstr::MicroRtClassLoad { ret, .. } => {
+            RirInstr::MicroRtReflect { ret, .. }
+            | RirInstr::MicroRtProxy { ret, .. }
+            | RirInstr::MicroRtClassLoad { ret, .. } => {
                 env.insert(ret.0.clone(), RVal::Null);
             }
         }

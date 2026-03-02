@@ -1,7 +1,7 @@
 #[cfg(test)]
-mod tests {
+mod lowerer_tests {
     use super::super::*;
-    use crate::{ast::SourceFile, lexer::Lexer, parser::Parser};
+    use crate::{lexer::Lexer, parser::Parser};
 
     fn lower(src: &str) -> rava_rir::RirModule {
         let tokens = Lexer::new(src).tokenize().unwrap();
@@ -33,8 +33,12 @@ mod tests {
         let module = lower(src);
         assert_eq!(module.functions.len(), 1);
         let instrs = &module.functions[0].basic_blocks[0].instrs;
-        assert!(instrs.iter().any(|i| matches!(i, rava_rir::RirInstr::BinOp { .. })));
-        assert!(instrs.iter().any(|i| matches!(i, rava_rir::RirInstr::Return(_))));
+        assert!(instrs
+            .iter()
+            .any(|i| matches!(i, rava_rir::RirInstr::BinOp { .. })));
+        assert!(instrs
+            .iter()
+            .any(|i| matches!(i, rava_rir::RirInstr::Return(_))));
     }
 
     #[test]
@@ -68,10 +72,19 @@ mod tests {
         "#;
         let module = lower(src);
         assert_eq!(module.functions.len(), 1);
-        let all_instrs: Vec<_> = module.functions[0].basic_blocks.iter()
-            .flat_map(|b| &b.instrs).collect();
-        let jump_count = all_instrs.iter().filter(|i| matches!(i, rava_rir::RirInstr::Jump(_))).count();
-        assert!(jump_count >= 2, "expected at least 2 jumps for break/continue");
+        let all_instrs: Vec<_> = module.functions[0]
+            .basic_blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .collect();
+        let jump_count = all_instrs
+            .iter()
+            .filter(|i| matches!(i, rava_rir::RirInstr::Jump(_)))
+            .count();
+        assert!(
+            jump_count >= 2,
+            "expected at least 2 jumps for break/continue"
+        );
     }
 
     #[test]
@@ -84,9 +97,14 @@ mod tests {
             }
         "#;
         let module = lower(src);
-        let all_instrs: Vec<_> = module.functions[0].basic_blocks.iter()
-            .flat_map(|b| &b.instrs).collect();
-        assert!(all_instrs.iter().any(|i| matches!(i, rava_rir::RirInstr::Branch { .. })));
+        let all_instrs: Vec<_> = module.functions[0]
+            .basic_blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .collect();
+        assert!(all_instrs
+            .iter()
+            .any(|i| matches!(i, rava_rir::RirInstr::Branch { .. })));
     }
 
     #[test]
@@ -102,14 +120,19 @@ mod tests {
         "#;
         let module = lower(src);
         assert_eq!(module.functions.len(), 1);
-        let all_instrs: Vec<_> = module.functions[0].basic_blocks.iter()
-            .flat_map(|b| &b.instrs).collect();
+        let all_instrs: Vec<_> = module.functions[0]
+            .basic_blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .collect();
         let has_iterator_call = all_instrs.iter().any(|i| {
             if let rava_rir::RirInstr::Call { func, .. } = i {
                 func.0 == encode_builtin("__method__iterator")
                     || func.0 == encode_builtin("__method__hasNext")
                     || func.0 == encode_builtin("__method__next")
-            } else { false }
+            } else {
+                false
+            }
         });
         assert!(has_iterator_call, "for-each should use iterator pattern");
     }
@@ -129,11 +152,16 @@ mod tests {
         "#;
         let module = lower(src);
         assert_eq!(module.functions.len(), 1);
-        let all_instrs: Vec<_> = module.functions[0].basic_blocks.iter()
-            .flat_map(|b| &b.instrs).collect();
+        let all_instrs: Vec<_> = module.functions[0]
+            .basic_blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .collect();
         // Type pattern must emit Instanceof checks
         assert!(
-            all_instrs.iter().any(|i| matches!(i, rava_rir::RirInstr::Instanceof { .. })),
+            all_instrs
+                .iter()
+                .any(|i| matches!(i, rava_rir::RirInstr::Instanceof { .. })),
             "type pattern switch should emit Instanceof"
         );
     }
@@ -152,11 +180,16 @@ mod tests {
         "#;
         let module = lower(src);
         assert_eq!(module.functions.len(), 1);
-        let all_instrs: Vec<_> = module.functions[0].basic_blocks.iter()
-            .flat_map(|b| &b.instrs).collect();
+        let all_instrs: Vec<_> = module.functions[0]
+            .basic_blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .collect();
         // case null must emit a ConstNull + Eq check
         assert!(
-            all_instrs.iter().any(|i| matches!(i, rava_rir::RirInstr::ConstNull { .. })),
+            all_instrs
+                .iter()
+                .any(|i| matches!(i, rava_rir::RirInstr::ConstNull { .. })),
             "case null should emit ConstNull"
         );
     }
@@ -175,16 +208,25 @@ mod tests {
         "#;
         let module = lower(src);
         assert_eq!(module.functions.len(), 1);
-        let all_instrs: Vec<_> = module.functions[0].basic_blocks.iter()
-            .flat_map(|b| &b.instrs).collect();
+        let all_instrs: Vec<_> = module.functions[0]
+            .basic_blocks
+            .iter()
+            .flat_map(|b| &b.instrs)
+            .collect();
         // Guarded pattern: Instanceof + Branch for guard short-circuit
         assert!(
-            all_instrs.iter().any(|i| matches!(i, rava_rir::RirInstr::Instanceof { .. })),
+            all_instrs
+                .iter()
+                .any(|i| matches!(i, rava_rir::RirInstr::Instanceof { .. })),
             "guarded pattern should emit Instanceof"
         );
-        let branch_count = all_instrs.iter()
+        let branch_count = all_instrs
+            .iter()
             .filter(|i| matches!(i, rava_rir::RirInstr::Branch { .. }))
             .count();
-        assert!(branch_count >= 2, "guarded pattern needs at least 2 branches (instanceof + guard)");
+        assert!(
+            branch_count >= 2,
+            "guarded pattern needs at least 2 branches (instanceof + guard)"
+        );
     }
 }

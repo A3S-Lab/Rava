@@ -11,7 +11,9 @@ pub(super) fn build_signature(func: &RirFunction) -> Signature {
     }
     match &func.return_type {
         RirType::Void => {}
-        ty => { sig.returns.push(AbiParam::new(rir_type_to_clif(ty))); }
+        ty => {
+            sig.returns.push(AbiParam::new(rir_type_to_clif(ty)));
+        }
     }
     sig
 }
@@ -28,41 +30,66 @@ pub(super) fn rir_type_to_clif(ty: &RirType) -> ir::Type {
 }
 
 pub(super) fn block_ends_with_terminator(instrs: &[RirInstr]) -> bool {
-    matches!(instrs.last(),
-        Some(RirInstr::Return(_) | RirInstr::Jump(_) | RirInstr::Branch { .. } |
-             RirInstr::Unreachable | RirInstr::Throw(_)))
+    matches!(
+        instrs.last(),
+        Some(
+            RirInstr::Return(_)
+                | RirInstr::Jump(_)
+                | RirInstr::Branch { .. }
+                | RirInstr::Unreachable
+                | RirInstr::Throw(_)
+        )
+    )
 }
 
 /// Collect all value names defined by an instruction.
 pub(super) fn collect_def_names(instr: &RirInstr, names: &mut Vec<String>) {
     match instr {
-        RirInstr::ConstInt { ret, .. } |
-        RirInstr::ConstFloat { ret, .. } |
-        RirInstr::ConstStr { ret, .. } |
-        RirInstr::ConstBool { ret, .. } |
-        RirInstr::ConstNull { ret } => { names.push(ret.0.clone()); }
-        RirInstr::BinOp { ret, .. } |
-        RirInstr::UnaryOp { ret, .. } => { names.push(ret.0.clone()); }
-        RirInstr::Call { ret: Some(ret), .. } => { names.push(ret.0.clone()); }
-        RirInstr::New { ret, .. } => { names.push(ret.0.clone()); }
-        RirInstr::GetField { ret, .. } |
-        RirInstr::GetStatic { ret, .. } => { names.push(ret.0.clone()); }
-        RirInstr::NewArray { ret, .. } |
-        RirInstr::NewMultiArray { ret, .. } |
-        RirInstr::ArrayLoad { ret, .. } |
-        RirInstr::ArrayLen { ret, .. } => { names.push(ret.0.clone()); }
-        RirInstr::Instanceof { ret, .. } => { names.push(ret.0.clone()); }
-        RirInstr::Convert { ret, .. } => { names.push(ret.0.clone()); }
-        RirInstr::CallVirtual { ret: Some(ret), .. } |
-        RirInstr::CallInterface { ret: Some(ret), .. } => { names.push(ret.0.clone()); }
-        RirInstr::MicroRtReflect { ret, .. } |
-        RirInstr::MicroRtProxy { ret, .. } |
-        RirInstr::MicroRtClassLoad { ret, .. } => { names.push(ret.0.clone()); }
+        RirInstr::ConstInt { ret, .. }
+        | RirInstr::ConstFloat { ret, .. }
+        | RirInstr::ConstStr { ret, .. }
+        | RirInstr::ConstBool { ret, .. }
+        | RirInstr::ConstNull { ret } => {
+            names.push(ret.0.clone());
+        }
+        RirInstr::BinOp { ret, .. } | RirInstr::UnaryOp { ret, .. } => {
+            names.push(ret.0.clone());
+        }
+        RirInstr::Call { ret: Some(ret), .. } => {
+            names.push(ret.0.clone());
+        }
+        RirInstr::New { ret, .. } => {
+            names.push(ret.0.clone());
+        }
+        RirInstr::GetField { ret, .. } | RirInstr::GetStatic { ret, .. } => {
+            names.push(ret.0.clone());
+        }
+        RirInstr::NewArray { ret, .. }
+        | RirInstr::NewMultiArray { ret, .. }
+        | RirInstr::ArrayLoad { ret, .. }
+        | RirInstr::ArrayLen { ret, .. } => {
+            names.push(ret.0.clone());
+        }
+        RirInstr::Instanceof { ret, .. } => {
+            names.push(ret.0.clone());
+        }
+        RirInstr::Convert { ret, .. } => {
+            names.push(ret.0.clone());
+        }
+        RirInstr::CallVirtual { ret: Some(ret), .. }
+        | RirInstr::CallInterface { ret: Some(ret), .. } => {
+            names.push(ret.0.clone());
+        }
+        RirInstr::MicroRtReflect { ret, .. }
+        | RirInstr::MicroRtProxy { ret, .. }
+        | RirInstr::MicroRtClassLoad { ret, .. } => {
+            names.push(ret.0.clone());
+        }
         _ => {}
     }
 }
 
 /// Mangle a Java-style name (e.g. `Main.main`) to a C-compatible symbol (`Main_main`).
 pub(super) fn mangle_name(name: &str) -> String {
-    name.replace('.', "_").replace('<', "_").replace('>', "_")
+    name.replace(['.', '<', '>'], "_")
 }

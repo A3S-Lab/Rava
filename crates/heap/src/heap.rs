@@ -1,8 +1,8 @@
 //! UnifiedHeap implementation — §27.2.
 
-use rava_common::error::{RavaError, Result};
-use crate::object::HeapRef;
 use crate::gc::GcStrategy;
+use crate::object::HeapRef;
+use rava_common::error::{RavaError, Result};
 
 /// Card table constant: one card covers 512 bytes of heap.
 const CARD_SIZE_BYTES: usize = 512;
@@ -15,22 +15,22 @@ const DIRTY_CARD: u8 = 1;
 /// Slow path: request a new TLAB or trigger Minor GC.
 pub struct UnifiedHeap {
     /// Raw heap storage.
-    storage:    Vec<u8>,
+    storage: Vec<u8>,
     /// Current allocation cursor (bump pointer into `storage`).
-    cursor:     usize,
+    cursor: usize,
     /// Card table: 1 byte per `CARD_SIZE_BYTES` of heap.
     /// Written by the write barrier after every reference field store.
     card_table: Vec<u8>,
     /// Pluggable GC strategy.
-    gc:         Box<dyn GcStrategy>,
+    gc: Box<dyn GcStrategy>,
 }
 
 impl UnifiedHeap {
     pub fn new(capacity: usize, gc: Box<dyn GcStrategy>) -> Self {
         let card_count = capacity.div_ceil(CARD_SIZE_BYTES);
         Self {
-            storage:    vec![0u8; capacity],
-            cursor:     1, // 0 is reserved for HeapRef::NULL
+            storage: vec![0u8; capacity],
+            cursor: 1, // 0 is reserved for HeapRef::NULL
             card_table: vec![0u8; card_count],
             gc,
         }
@@ -72,8 +72,12 @@ impl UnifiedHeap {
         }
     }
 
-    pub fn used_bytes(&self) -> usize     { self.cursor }
-    pub fn capacity_bytes(&self) -> usize { self.storage.len() }
+    pub fn used_bytes(&self) -> usize {
+        self.cursor
+    }
+    pub fn capacity_bytes(&self) -> usize {
+        self.storage.len()
+    }
 }
 
 #[cfg(test)]

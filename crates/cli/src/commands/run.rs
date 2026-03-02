@@ -19,12 +19,25 @@ pub struct RunArgs {
 }
 
 pub fn run(args: RunArgs) -> Result<()> {
+    if args.watch {
+        return super::watch::run_watch_loop(
+            "java sources",
+            || run_once(&args),
+            || watch_paths(&args),
+        );
+    }
+
+    run_once(&args)
+}
+
+fn run_once(args: &RunArgs) -> Result<()> {
     let compiler = rava_frontend::Compiler::new();
 
     let module = if let Some(ref file) = args.file {
         let source = std::fs::read_to_string(file)
             .with_context(|| format!("cannot read {}", file.display()))?;
-        compiler.compile(&source, file)
+        compiler
+            .compile(&source, file)
             .map_err(|e| anyhow::anyhow!("compile error: {}", e))?
     } else {
         // Project mode
@@ -35,7 +48,8 @@ pub fn run(args: RunArgs) -> Result<()> {
             if files.is_empty() {
                 anyhow::bail!("no .java files found in src/");
             }
-            compiler.compile_project(&files)
+            compiler
+                .compile_project(&files)
                 .map_err(|e| anyhow::anyhow!("compile error: {}", e))?
         }
         #[cfg(not(all(feature = "aot", feature = "pkg")))]
@@ -43,8 +57,29 @@ pub fn run(args: RunArgs) -> Result<()> {
     };
 
     let interp = rava_micrort::RirInterpreter::new(module);
-    interp.run_main()
+    interp
+        .run_main()
         .map_err(|e| anyhow::anyhow!("runtime error: {}", e))?;
 
     Ok(())
+}
+
+fn watch_paths(args: &RunArgs) -> Result<Vec<PathBuf>> {
+    if let Some(file) = &args.file {
+        return Ok(vec![file.clone()]);
+    }
+
+    #[cfg(all(feature = "aot", feature = "pkg"))]
+    {
+        let mut files = super::build::collect_source_files()?;
+        files.push(PathBuf::from("rava.hcl"));
+        files.sort();
+        files.dedup();
+        Ok(files)
+    }
+
+    #[cfg(not(all(feature = "aot", feature = "pkg")))]
+    {
+        anyhow::bail!("watch mode requires a file argument");
+    }
 }

@@ -3,24 +3,24 @@
 /// Mark word bit positions within the 8-byte mark word.
 pub mod mark_bits {
     /// Bits [63:62] — lock state.
-    pub const LOCK_MASK:       u64 = 0b11 << 62;
-    pub const LOCK_UNLOCKED:   u64 = 0b00 << 62;
-    pub const LOCK_BIASED:     u64 = 0b01 << 62;
-    pub const LOCK_LIGHTWEIGHT:u64 = 0b10 << 62;
-    pub const LOCK_HEAVYWEIGHT:u64 = 0b11 << 62;
+    pub const LOCK_MASK: u64 = 0b11 << 62;
+    pub const LOCK_UNLOCKED: u64 = 0b00 << 62;
+    pub const LOCK_BIASED: u64 = 0b01 << 62;
+    pub const LOCK_LIGHTWEIGHT: u64 = 0b10 << 62;
+    pub const LOCK_HEAVYWEIGHT: u64 = 0b11 << 62;
 
     /// Bit [61] — GC tri-color mark bit.
-    pub const GC_MARK:         u64 = 1 << 61;
+    pub const GC_MARK: u64 = 1 << 61;
 
     /// Bit [60] — forwarding pointer flag (set when GC moves the object).
-    pub const FORWARDING:      u64 = 1 << 60;
+    pub const FORWARDING: u64 = 1 << 60;
 
     /// Bit [59] — origin tag: 0 = AOT object, 1 = MicroRT object.
-    pub const MICRORT_ORIGIN:  u64 = 1 << 59;
+    pub const MICRORT_ORIGIN: u64 = 1 << 59;
 
     /// Bits [58:32] — identity hashcode (27 bits).
-    pub const HASHCODE_SHIFT:  u64 = 32;
-    pub const HASHCODE_MASK:   u64 = 0x07FF_FFFF << 32;
+    pub const HASHCODE_SHIFT: u64 = 32;
+    pub const HASHCODE_MASK: u64 = 0x07FF_FFFF << 32;
 }
 
 /// The 8-byte mark word embedded in every object header.
@@ -64,7 +64,7 @@ impl MarkWord {
 #[repr(C)]
 pub struct ObjectHeader {
     /// Mark word — GC state, lock state, origin tag, hashcode.
-    pub mark:      MarkWord,
+    pub mark: MarkWord,
     /// Pointer to the KlassDescriptor for this object's type.
     /// AOT objects:    points to an `AotKlass`
     /// MicroRT objects: points to a `MicroRtKlass`

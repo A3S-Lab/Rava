@@ -8,28 +8,67 @@
 /// A complete Java source file.
 #[derive(Debug, Clone)]
 pub struct SourceFile {
-    pub package:  Option<String>,
-    pub imports:  Vec<String>,
-    pub classes:  Vec<ClassDecl>,
+    pub package: Option<String>,
+    pub imports: Vec<String>,
+    pub module: Option<ModuleDecl>,
+    pub classes: Vec<ClassDecl>,
+}
+
+/// Java module declaration from `module-info.java`.
+#[derive(Debug, Clone)]
+pub struct ModuleDecl {
+    pub name: String,
+    pub open: bool,
+    pub directives: Vec<ModuleDirective>,
+}
+
+/// A Java module directive inside `module-info.java`.
+#[derive(Debug, Clone)]
+pub enum ModuleDirective {
+    Requires {
+        module: String,
+        is_static: bool,
+        is_transitive: bool,
+    },
+    Exports {
+        package: String,
+        to: Vec<String>,
+    },
+    Opens {
+        package: String,
+        to: Vec<String>,
+    },
+    Uses {
+        service: String,
+    },
+    Provides {
+        service: String,
+        implementations: Vec<String>,
+    },
 }
 
 /// An annotation instance, e.g. `@Override`, `@SuppressWarnings("unchecked")`.
 #[derive(Debug, Clone)]
 pub struct Annotation {
-    pub name:  String,
-    pub attrs: Vec<(String, Expr)>,   // key=value pairs; unnamed value stored as key ""
+    pub name: String,
+    pub attrs: Vec<(String, Expr)>, // key=value pairs; unnamed value stored as key ""
 }
 
 /// A class, interface, or enum declaration.
 #[derive(Debug, Clone)]
 pub struct ClassDecl {
-    pub name:        String,
-    pub kind:        ClassKind,
-    pub modifiers:   Vec<Modifier>,
+    pub name: String,
+    pub kind: ClassKind,
+    pub type_params_raw: Option<String>,
+    pub modifiers: Vec<Modifier>,
     pub annotations: Vec<Annotation>,
-    pub superclass:  Option<String>,
-    pub interfaces:  Vec<String>,
-    pub members:     Vec<Member>,
+    pub superclass: Option<String>,
+    pub superclass_type_args_raw: Option<String>,
+    pub interfaces: Vec<String>,
+    pub interfaces_type_args_raw: Vec<Option<String>>,
+    pub permitted_subclasses: Vec<String>,
+    pub permitted_type_args_raw: Vec<Option<String>>,
+    pub members: Vec<Member>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -38,6 +77,7 @@ pub enum ClassKind {
     Interface,
     Enum,
     Record,
+    Annotation,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,6 +94,7 @@ pub enum Modifier {
     Transient,
     Strictfp,
     Default,
+    NonSealed,
 }
 
 /// A class member.
@@ -69,30 +110,32 @@ pub enum Member {
 
 #[derive(Debug, Clone)]
 pub struct MethodDecl {
-    pub name:        String,
-    pub modifiers:   Vec<Modifier>,
+    pub name: String,
+    pub type_params_raw: Option<String>,
+    pub modifiers: Vec<Modifier>,
     pub annotations: Vec<Annotation>,
-    pub return_ty:   TypeExpr,
-    pub params:      Vec<Param>,
-    pub body:        Option<Block>,
+    pub return_ty: TypeExpr,
+    pub params: Vec<Param>,
+    pub body: Option<Block>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ConstructorDecl {
-    pub name:        String,
-    pub modifiers:   Vec<Modifier>,
+    pub name: String,
+    pub type_params_raw: Option<String>,
+    pub modifiers: Vec<Modifier>,
     pub annotations: Vec<Annotation>,
-    pub params:      Vec<Param>,
-    pub body:        Block,
+    pub params: Vec<Param>,
+    pub body: Block,
 }
 
 #[derive(Debug, Clone)]
 pub struct FieldDecl {
-    pub name:        String,
-    pub modifiers:   Vec<Modifier>,
+    pub name: String,
+    pub modifiers: Vec<Modifier>,
     pub annotations: Vec<Annotation>,
-    pub ty:          TypeExpr,
-    pub init:        Option<Expr>,
+    pub ty: TypeExpr,
+    pub init: Option<Expr>,
 }
 
 #[derive(Debug, Clone)]
@@ -103,27 +146,50 @@ pub struct EnumConstant {
 
 #[derive(Debug, Clone)]
 pub struct Param {
-    pub name:        String,
-    pub ty:          TypeExpr,
-    pub variadic:    bool,
+    pub name: String,
+    pub ty: TypeExpr,
+    pub variadic: bool,
     pub annotations: Vec<Annotation>,
 }
 
 /// A type expression (e.g. `int`, `String`, `List<String>`, `int[]`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeExpr {
-    pub name:       String,
+    pub name: String,
     pub array_dims: u8,
+    pub generic_args_raw: Option<String>,
+    pub generic_args: Option<Vec<TypeArg>>,
+}
+
+/// Structured generic argument representation for basic semantic checks.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeArg {
+    Type(TypeExpr),
+    Wildcard,
+    WildcardExtends(TypeExpr),
+    WildcardSuper(TypeExpr),
 }
 
 impl TypeExpr {
     pub fn simple(name: impl Into<String>) -> Self {
-        Self { name: name.into(), array_dims: 0 }
+        Self {
+            name: name.into(),
+            array_dims: 0,
+            generic_args_raw: None,
+            generic_args: None,
+        }
     }
     pub fn array(name: impl Into<String>, dims: u8) -> Self {
-        Self { name: name.into(), array_dims: dims }
+        Self {
+            name: name.into(),
+            array_dims: dims,
+            generic_args_raw: None,
+            generic_args: None,
+        }
     }
-    pub fn is_void(&self) -> bool { self.name == "void" }
+    pub fn is_void(&self) -> bool {
+        self.name == "void"
+    }
 }
 
 /// A block of statements.
@@ -138,26 +204,34 @@ pub enum Stmt {
     /// `return expr?;`
     Return(Option<Expr>),
     /// `Type name = init?;` or `var name = init;`
-    LocalVar { ty: TypeExpr, name: String, init: Option<Expr> },
+    LocalVar {
+        ty: TypeExpr,
+        name: String,
+        init: Option<Expr>,
+    },
     /// `if (cond) then else?`
-    If { cond: Expr, then: Box<Stmt>, else_: Option<Box<Stmt>> },
+    If {
+        cond: Expr,
+        then: Box<Stmt>,
+        else_: Option<Box<Stmt>>,
+    },
     /// `while (cond) body`
     While { cond: Expr, body: Box<Stmt> },
     /// `do body while (cond);`
     DoWhile { body: Box<Stmt>, cond: Expr },
     /// `for (init?; cond?; update?) body`
     For {
-        init:   Option<Box<Stmt>>,
-        cond:   Option<Expr>,
+        init: Option<Box<Stmt>>,
+        cond: Option<Expr>,
         update: Vec<Expr>,
-        body:   Box<Stmt>,
+        body: Box<Stmt>,
     },
     /// `for (Type var : iterable) body`
     ForEach {
-        ty:       TypeExpr,
-        name:     String,
+        ty: TypeExpr,
+        name: String,
         iterable: Expr,
-        body:     Box<Stmt>,
+        body: Box<Stmt>,
     },
     /// `{ stmts }`
     Block(Block),
@@ -167,8 +241,8 @@ pub enum Stmt {
     Throw(Expr),
     /// `try { ... } catch (Type e) { ... } finally { ... }`
     TryCatch {
-        try_body:     Block,
-        catches:      Vec<CatchClause>,
+        try_body: Block,
+        catches: Vec<CatchClause>,
         finally_body: Option<Block>,
     },
     /// `break;` or `break label;`
@@ -191,8 +265,8 @@ pub enum Stmt {
 #[derive(Debug, Clone)]
 pub struct CatchClause {
     pub exception_types: Vec<TypeExpr>,
-    pub name:            String,
-    pub body:            Block,
+    pub name: String,
+    pub body: Block,
 }
 
 /// An expression.
@@ -218,42 +292,80 @@ pub enum Expr {
     Super,
     /// `expr.field`
     Field { obj: Box<Expr>, name: String },
-    /// `expr.method(args)` or `method(args)`
-    Call { callee: Box<Expr>, args: Vec<Expr> },
+    /// `expr.method(args)` or `method(args)`.
+    /// `type_args_raw` preserves explicit invocation type args like `obj.<T>m()`.
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        type_args_raw: Option<String>,
+    },
     /// `new Type(args)` or `new Type(args) { ... }` (anonymous class)
-    New { ty: TypeExpr, args: Vec<Expr>, body: Option<Vec<Member>> },
+    New {
+        ty: TypeExpr,
+        args: Vec<Expr>,
+        body: Option<Vec<Member>>,
+    },
     /// `new Type[len]`
     NewArray { ty: TypeExpr, len: Box<Expr> },
     /// `new Type[m][n]` — multi-dimensional array
     NewMultiArray { ty: TypeExpr, dims: Vec<Expr> },
     /// `new Type[] { ... }` or `{ ... }` array initializer
-    ArrayInit { ty: Option<TypeExpr>, elements: Vec<Expr> },
+    ArrayInit {
+        ty: Option<TypeExpr>,
+        elements: Vec<Expr>,
+    },
     /// `arr[idx]`
     Index { arr: Box<Expr>, idx: Box<Expr> },
     /// `lhs op rhs`
-    BinOp { op: BinOp, lhs: Box<Expr>, rhs: Box<Expr> },
+    BinOp {
+        op: BinOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
     /// `op expr`
     UnaryOp { op: UnaryOp, expr: Box<Expr> },
     /// `lhs = rhs`
     Assign { lhs: Box<Expr>, rhs: Box<Expr> },
     /// `lhs op= rhs` (compound assignment)
-    CompoundAssign { op: BinOp, lhs: Box<Expr>, rhs: Box<Expr> },
+    CompoundAssign {
+        op: BinOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
     /// `(Type) expr`
     Cast { ty: TypeExpr, expr: Box<Expr> },
     /// `cond ? then : else`
-    Ternary { cond: Box<Expr>, then: Box<Expr>, else_: Box<Expr> },
+    Ternary {
+        cond: Box<Expr>,
+        then: Box<Expr>,
+        else_: Box<Expr>,
+    },
     /// `expr instanceof Type`
     Instanceof { expr: Box<Expr>, ty: TypeExpr },
     /// `expr instanceof Type name` (pattern matching, Java 16+)
-    InstanceofPattern { expr: Box<Expr>, ty: TypeExpr, name: String },
+    InstanceofPattern {
+        expr: Box<Expr>,
+        ty: TypeExpr,
+        name: String,
+    },
     /// `expr instanceof RecordType(Type1 a, Type2 b)` (record pattern, Java 21+)
-    RecordPattern { expr: Box<Expr>, ty: TypeExpr, components: Vec<(TypeExpr, String)> },
+    RecordPattern {
+        expr: Box<Expr>,
+        ty: TypeExpr,
+        components: Vec<(TypeExpr, String)>,
+    },
     /// `(params) -> body`
-    Lambda { params: Vec<LambdaParam>, body: Box<LambdaBody> },
+    Lambda {
+        params: Vec<LambdaParam>,
+        body: Box<LambdaBody>,
+    },
     /// `expr::method` or `Type::method` or `Type::new`
     MethodRef { obj: Box<Expr>, name: String },
     /// Switch expression: `switch (expr) { case X -> val; ... }`
-    SwitchExpr { expr: Box<Expr>, cases: Vec<SwitchCase> },
+    SwitchExpr {
+        expr: Box<Expr>,
+        cases: Vec<SwitchCase>,
+    },
 }
 
 /// A switch case label — either an expression, null, or a guarded pattern.
@@ -264,7 +376,11 @@ pub enum CaseLabel {
     /// `case null`
     Null,
     /// `case Type name when guard` (guarded pattern, Java 21+)
-    GuardedPattern { ty: TypeExpr, name: String, guard: Expr },
+    GuardedPattern {
+        ty: TypeExpr,
+        name: String,
+        guard: Expr,
+    },
     /// `case Type name` (type pattern without guard)
     TypePattern { ty: TypeExpr, name: String },
 }
@@ -273,7 +389,7 @@ pub enum CaseLabel {
 #[derive(Debug, Clone)]
 pub struct LambdaParam {
     pub name: String,
-    pub ty:   Option<TypeExpr>,
+    pub ty: Option<TypeExpr>,
 }
 
 /// Lambda body — either a single expression or a block.
@@ -288,16 +404,30 @@ pub enum LambdaBody {
 pub struct SwitchCase {
     /// `None` = default case. Multiple labels for `case 1, 2, 3 ->`.
     pub labels: Option<Vec<Expr>>,
-    pub body:   Vec<Stmt>,
+    pub body: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinOp {
-    Add, Sub, Mul, Div, Rem,
-    Eq, Ne, Lt, Le, Gt, Ge,
-    And, Or,
-    BitAnd, BitOr, BitXor,
-    Shl, Shr, UShr,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+    UShr,
 }
 
 #[derive(Debug, Clone, PartialEq)]

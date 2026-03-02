@@ -8,10 +8,14 @@
 //!   [`RirModule`] → [`RirFunction`]* → [`BasicBlock`]* → [`RirInstr`]*
 
 pub mod instr;
+pub mod metadata;
 pub mod module;
 pub mod types;
 
 pub use instr::{BinOp, RirInstr, StackValue, UnaryOp};
+pub use metadata::{
+    ClassMetadata, ConstructorMetadata, FieldMetadata, MetadataTable, MethodMetadata,
+};
 pub use module::{BasicBlock, FuncFlags, RirFunction, RirModule};
 pub use types::RirType;
 

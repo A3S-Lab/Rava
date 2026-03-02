@@ -2,6 +2,8 @@
 
 > A Rust-written Java AOT compiler and all-in-one toolchain. What Bun is to TypeScript, Rava is to Java.
 
+**Release channel:** `0.1.x-alpha` (developer preview, not production-ready yet)
+
 ```
 Bun : TypeScript = Rava : Java
 ```
@@ -12,9 +14,13 @@ One binary. Everything included:
 rava run Main.java          # Run Java source directly
 rava build                  # AOT compile to native binary
 rava init                   # Initialize project (generates rava.hcl)
-rava add spring-boot-web    # Add dependency
+rava add junit              # Add dependency
+rava remove junit           # Remove dependency
+rava update                 # Update dependency versions
+rava deps tree              # Show dependency entries
+rava deps lock              # Generate rava.lock
 rava test                   # Run tests
-rava fmt                    # Format code
+rava fmt                    # Format Java source files
 ```
 
 ---
@@ -82,6 +88,18 @@ rava build
 rava build --platform linux-amd64
 rava build --platform linux-arm64
 ```
+
+## Release Automation
+
+Tagging a version triggers cross-platform release packaging in GitHub Actions.
+
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+The `Release` workflow builds `rava` for Linux, macOS (Intel/Apple Silicon), and Windows,
+then publishes archives plus `SHA256SUMS.txt` to the GitHub Release page.
 
 ---
 
@@ -167,26 +185,13 @@ Project:
   init [name]              Initialize project
   test [pattern]           Run tests
   fmt [files...]           Format code
-  lint [files...]          Static analysis
-  repl                     Interactive Java REPL
-  clean                    Clean build artifacts
 
 Dependencies:
   add <package>            Add dependency
   remove <package>         Remove dependency
   update [package]         Update dependencies
   deps tree                Show dependency tree
-  deps outdated            Check for outdated dependencies
-  deps audit               Security vulnerability audit
-
-Publish:
-  publish                  Publish to repository
-  export maven             Export pom.xml
-
-Tools:
-  upgrade                  Upgrade Rava itself
-  doctor                   Diagnose environment
-  completions <shell>      Generate shell completions
+  deps lock                Generate or verify rava.lock
 ```
 
 **`rava run` options:**
@@ -194,27 +199,25 @@ Tools:
 | Option | Description |
 |--------|-------------|
 | `--watch` / `-w` | Watch for file changes, auto-restart |
-| `--jit` | Fall back to JIT mode (requires JVM) |
-| `--release` | Run with release optimization level |
 | `-- <args>` | Pass arguments to the program |
 
 **`rava build` options:**
 
 | Option | Description |
 |--------|-------------|
-| `--target <native\|jar\|jlink\|docker>` | Compile target, default `native` |
+| `--target <native\|jar\|jlink\|docker>` | Target flag is accepted; only `native` is implemented |
 | `--optimize <speed\|size\|debug>` | Optimization strategy |
 | `--platform <target>` | Cross-compile target |
-| `--static` | Fully static linking (Linux musl) |
+| `-o, --output <path>` | Output binary path |
 
 **Build output comparison:**
 
 | Target | Output | Size | Startup | Requires JVM |
 |--------|--------|------|---------|--------------|
-| `native` (default) | Single binary | ~15MB | ~10ms | No |
-| `jar` | Executable JAR | ~5MB + deps | ~2s | Yes |
-| `jlink` | Trimmed JRE + JAR | ~40MB | ~1s | No (bundled) |
-| `docker` | scratch container image | ~20MB | ~10ms | No |
+| `native` (implemented) | Single binary | ~15MB | ~10ms | No |
+| `jar` | Planned | - | - | - |
+| `jlink` | Planned | - | - | - |
+| `docker` | Planned | - | - | - |
 
 ---
 
@@ -272,7 +275,7 @@ Tools:
 
 See [docs/known-limitations.md](docs/known-limitations.md) for detailed technical notes.
 
-**Current limitation:** While loops with assignment-in-condition patterns (e.g., `while ((x = f()) != null)`) are not yet supported due to SSA lowering constraints. Workaround: separate the assignment from the condition. Proper fix requires implementing PHI nodes at loop headers.
+**Current status:** See `docs/known-limitations.md` for active implementation gaps and planned targets.
 
 ---
 
@@ -453,7 +456,7 @@ common    → (none)
 | Phase | Deliverable | Status |
 |-------|------------|--------|
 | Framework | Workspace skeleton: 10 crates, all traits defined, Cranelift wired up | ✅ |
-| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add`, `rava init`, static Java | 🚧 (frontend pipeline: lexer ✅, parser ✅, lowerer ✅; RIR interpreter ✅; builtins ✅ (String, Math, Collections, Format, I/O, Concurrency, Reflection, Network); `rava init` ✅; 391/393 e2e tests passing 99.5%; 2 tests ignored — known SSA limitation, see [docs/known-limitations.md](docs/known-limitations.md)) |
+| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add`, `rava init`, static Java | 🚧 (frontend pipeline: lexer ✅, parser ✅, lowerer ✅; RIR interpreter ✅; builtins ✅ (String, Math, Collections, Format, I/O, Concurrency, Reflection, Network); `rava init` ✅; 393/393 e2e tests passing 100%) |
 | Phase 2 (3-6mo) | Reflection: AOT metadata table + dual-path dispatch | ⬜ |
 | Phase 3 (6-12mo) | MicroRT v1: bytecode interpreter + class loader + unified object model | ⬜ |
 | Phase 4 (2-3mo) | Dynamic proxy AOT: pre-generated proxy classes | ⬜ |
@@ -463,7 +466,7 @@ common    → (none)
 
 ## Test Coverage
 
-445 tests passing (`cargo test --workspace`):
+447 tests passing (`cargo test --workspace`):
 
 | Crate | Tests |
 |-------|-------|
@@ -472,7 +475,7 @@ common    → (none)
 | `rava-frontend` | 37 — lexer (hex, binary, char, operators, keywords), parser (hello world, local var, do-while, for-each, break/continue, try/catch, lambda, enum, instanceof pattern, method ref, record, sealed class, text block, switch arrow, yield, module-info, guarded patterns, case null), lowerer (hello world, arithmetic, do-while, break/continue, ternary, for-each, record pattern), compiler, resolver |
 | `rava-hcl` | 6 — HCL parsing and generation |
 | `rava-micrort` | 13 — builtin dispatch (math, string, collections, format, I/O, concurrency, reflection, network) |
-| `rava-micrort` (e2e) | 391/393 (99.5%) — comprehensive Java language feature tests covering classes, inheritance, generics, lambdas, streams, collections, exceptions, pattern matching, switch expressions, records, sealed classes, text blocks, annotations, reflection, concurrency, I/O, networking, and more. 2 tests ignored due to documented SSA limitation (assignment-in-condition pattern), see [docs/known-limitations.md](docs/known-limitations.md). |
+| `rava-micrort` (e2e) | 393/393 (100%) — comprehensive Java language feature tests covering classes, inheritance, generics, lambdas, streams, collections, exceptions, pattern matching, switch expressions, records, sealed classes, text blocks, annotations, reflection, concurrency, I/O, networking, and more. |
 | `rava` (cli) | 1 — PascalCase conversion |
 
 ---

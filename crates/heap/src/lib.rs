@@ -33,7 +33,7 @@ pub mod heap;
 pub mod klass;
 pub mod object;
 
-pub use gc::GcStrategy;
+pub use gc::{GcStrategy, NoopGc};
 pub use heap::UnifiedHeap;
 pub use klass::KlassDescriptor;
 pub use object::{HeapRef, MarkWord, ObjectHeader};

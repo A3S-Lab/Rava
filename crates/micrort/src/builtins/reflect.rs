@@ -1,8 +1,8 @@
 //! Java reflection API stubs.
 
-use rava_common::error::Result;
-use crate::rir_interp::{RVal, ANNOTATION_REGISTRY};
 use super::format::fnv;
+use crate::rir_interp::{RVal, ANNOTATION_REGISTRY};
+use rava_common::error::Result;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -49,15 +49,17 @@ pub fn dispatch_named(method: &str, args: &[RVal]) -> Option<Result<RVal>> {
             Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![])))))
         }
         "newInstance" => Some(Ok(RVal::Null)),
-        "isInterface" | "isEnum" | "isRecord" | "isArray" | "isPrimitive" => Some(Ok(RVal::Bool(false))),
+        "isInterface" | "isEnum" | "isRecord" | "isArray" | "isPrimitive" => {
+            Some(Ok(RVal::Bool(false)))
+        }
         "getModifiers" => Some(Ok(RVal::Int(1))), // PUBLIC
         "getAnnotations" | "getDeclaredAnnotations" => {
             let cls = args.first().map(|v| v.to_display()).unwrap_or_default();
             let key = cls.strip_prefix("__class__").unwrap_or(&cls);
-            let annotations = ANNOTATION_REGISTRY.with(|r| {
-                r.borrow().get(key).cloned().unwrap_or_default()
-            });
-            let vals: Vec<RVal> = annotations.into_iter()
+            let annotations =
+                ANNOTATION_REGISTRY.with(|r| r.borrow().get(key).cloned().unwrap_or_default());
+            let vals: Vec<RVal> = annotations
+                .into_iter()
                 .map(|name| RVal::Str(format!("@{}", name)))
                 .collect();
             Some(Ok(RVal::Array(Rc::new(RefCell::new(vals)))))
@@ -68,7 +70,8 @@ pub fn dispatch_named(method: &str, args: &[RVal]) -> Option<Result<RVal>> {
             let key = cls.strip_prefix("__class__").unwrap_or(&cls);
             let ann_name = ann_type.strip_prefix("__class__").unwrap_or(&ann_type);
             let found = ANNOTATION_REGISTRY.with(|r| {
-                r.borrow().get(key)
+                r.borrow()
+                    .get(key)
                     .map(|anns| anns.iter().any(|a| a == ann_name))
                     .unwrap_or(false)
             });
@@ -84,7 +87,8 @@ pub fn dispatch_named(method: &str, args: &[RVal]) -> Option<Result<RVal>> {
             let key = cls.strip_prefix("__class__").unwrap_or(&cls);
             let ann_name = ann_type.strip_prefix("__class__").unwrap_or(&ann_type);
             let found = ANNOTATION_REGISTRY.with(|r| {
-                r.borrow().get(key)
+                r.borrow()
+                    .get(key)
                     .map(|anns| anns.iter().any(|a| a == ann_name))
                     .unwrap_or(false)
             });
@@ -93,4 +97,3 @@ pub fn dispatch_named(method: &str, args: &[RVal]) -> Option<Result<RVal>> {
         _ => None,
     }
 }
-

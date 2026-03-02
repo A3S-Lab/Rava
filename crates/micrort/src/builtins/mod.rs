@@ -29,8 +29,8 @@ pub mod string;
 pub mod system;
 pub mod time;
 
-use rava_common::error::Result;
 use crate::rir_interp::RVal;
+use rava_common::error::Result;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -75,14 +75,19 @@ pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Op
                     "getDeclaredMethods" | "getMethods" | "getDeclaredFields" | "getFields" => {
                         Some(Ok(RVal::Array(Rc::new(std::cell::RefCell::new(vec![])))))
                     }
-                    "isInterface" | "isEnum" | "isArray" | "isPrimitive" => Some(Ok(RVal::Bool(false))),
+                    "isInterface" | "isEnum" | "isArray" | "isPrimitive" => {
+                        Some(Ok(RVal::Bool(false)))
+                    }
                     _ => None,
                 };
             }
             // java.time objects
-            if s.starts_with("__date__") || s.starts_with("__time__")
-                || s.starts_with("__datetime__") || s.starts_with("__instant__")
-                || s.starts_with("__duration__") || s.starts_with("__period__")
+            if s.starts_with("__date__")
+                || s.starts_with("__time__")
+                || s.starts_with("__datetime__")
+                || s.starts_with("__instant__")
+                || s.starts_with("__duration__")
+                || s.starts_with("__period__")
             {
                 return time::dispatch_named(s, method, args);
             }
@@ -100,8 +105,8 @@ pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Op
             }
             string::dispatch_named(s, method, args)
         }
-        RVal::Array(arr)                => collections::dispatch_array_named(arr, method, args),
-        RVal::ArrayIter(arr, idx)       => dispatch_array_iter(arr, idx, method),
+        RVal::Array(arr) => collections::dispatch_array_named(arr, method, args),
+        RVal::ArrayIter(arr, idx) => dispatch_array_iter(arr, idx, method),
         RVal::Int(n) => match method {
             "compareTo" => {
                 let other = args.first().map(|v| v.as_int()).unwrap_or(0);
@@ -116,17 +121,17 @@ pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Op
         RVal::Float(f) => match method {
             "compareTo" => {
                 let other = args.first().map(|v| v.as_float()).unwrap_or(0.0);
-                Some(Ok(RVal::Int(f.partial_cmp(&other).map(|o| o as i64).unwrap_or(0))))
+                Some(Ok(RVal::Int(
+                    f.partial_cmp(&other).map(|o| o as i64).unwrap_or(0),
+                )))
             }
             "doubleValue" | "floatValue" => Some(Ok(RVal::Float(*f))),
             "intValue" | "longValue" | "shortValue" | "byteValue" => Some(Ok(RVal::Int(*f as i64))),
             "toString" => Some(Ok(RVal::Str(f.to_string()))),
             _ => None,
         },
-        RVal::Object(_) => {
-            concurrent::dispatch_named(method, args)
-                .or_else(|| reflect::dispatch_named(method, args))
-        }
+        RVal::Object(_) => concurrent::dispatch_named(method, args)
+            .or_else(|| reflect::dispatch_named(method, args)),
         _ => None,
     }
 }

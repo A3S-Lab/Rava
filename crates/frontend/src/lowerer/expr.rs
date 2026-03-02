@@ -7,35 +7,52 @@ impl<'a> FuncCtx<'a> {
     pub(super) fn lower_expr_into(&mut self, expr: &Expr, var_name: Option<&str>) -> Result<Value> {
         let name = match var_name {
             Some(n) => n,
-            None    => return self.lower_expr(expr),
+            None => return self.lower_expr(expr),
         };
         match expr {
             Expr::IntLit(n) => {
                 let ret = self.named_value(name);
-                self.emit(RirInstr::ConstInt { ret: ret.clone(), value: *n });
+                self.emit(RirInstr::ConstInt {
+                    ret: ret.clone(),
+                    value: *n,
+                });
                 Ok(ret)
             }
             Expr::FloatLit(f) => {
                 let ret = self.named_value(name);
-                self.emit(RirInstr::ConstFloat { ret: ret.clone(), value: *f });
+                self.emit(RirInstr::ConstFloat {
+                    ret: ret.clone(),
+                    value: *f,
+                });
                 Ok(ret)
             }
             Expr::StrLit(s) => {
                 let ret = self.named_value(name);
-                self.emit(RirInstr::ConstStr { ret: ret.clone(), value: s.clone() });
+                self.emit(RirInstr::ConstStr {
+                    ret: ret.clone(),
+                    value: s.clone(),
+                });
                 Ok(ret)
             }
             Expr::CharLit(c) => {
                 let ret = self.named_value(name);
                 let ch = char::from_u32(*c as u32).unwrap_or('\0');
-                self.emit(RirInstr::ConstStr { ret: ret.clone(), value: ch.to_string() });
+                self.emit(RirInstr::ConstStr {
+                    ret: ret.clone(),
+                    value: ch.to_string(),
+                });
                 Ok(ret)
             }
             Expr::BinOp { op, lhs, rhs } => {
                 let l = self.lower_expr(lhs)?;
                 let r = self.lower_expr(rhs)?;
                 let ret = self.named_value(name);
-                self.emit(RirInstr::BinOp { op: lower_binop(op), lhs: l, rhs: r, ret: ret.clone() });
+                self.emit(RirInstr::BinOp {
+                    op: lower_binop(op),
+                    lhs: l,
+                    rhs: r,
+                    ret: ret.clone(),
+                });
                 Ok(ret)
             }
             _ => {
@@ -56,29 +73,44 @@ impl<'a> FuncCtx<'a> {
         match expr {
             Expr::IntLit(n) => {
                 let ret = self.fresh_value();
-                self.emit(RirInstr::ConstInt { ret: ret.clone(), value: *n });
+                self.emit(RirInstr::ConstInt {
+                    ret: ret.clone(),
+                    value: *n,
+                });
                 Ok(ret)
             }
             Expr::FloatLit(f) => {
                 let ret = self.fresh_value();
-                self.emit(RirInstr::ConstFloat { ret: ret.clone(), value: *f });
+                self.emit(RirInstr::ConstFloat {
+                    ret: ret.clone(),
+                    value: *f,
+                });
                 Ok(ret)
             }
             Expr::StrLit(s) => {
                 let ret = self.fresh_value();
-                self.emit(RirInstr::ConstStr { ret: ret.clone(), value: s.clone() });
+                self.emit(RirInstr::ConstStr {
+                    ret: ret.clone(),
+                    value: s.clone(),
+                });
                 Ok(ret)
             }
             Expr::CharLit(c) => {
                 let ret = self.fresh_value();
                 // Store chars as single-character strings so println displays 'A' not 65
                 let ch = char::from_u32(*c as u32).unwrap_or('\0');
-                self.emit(RirInstr::ConstStr { ret: ret.clone(), value: ch.to_string() });
+                self.emit(RirInstr::ConstStr {
+                    ret: ret.clone(),
+                    value: ch.to_string(),
+                });
                 Ok(ret)
             }
             Expr::BoolLit(b) => {
                 let ret = self.fresh_value();
-                self.emit(RirInstr::ConstBool { ret: ret.clone(), value: *b });
+                self.emit(RirInstr::ConstBool {
+                    ret: ret.clone(),
+                    value: *b,
+                });
                 Ok(ret)
             }
             Expr::Null => {
@@ -132,7 +164,7 @@ impl<'a> FuncCtx<'a> {
                 }
                 Ok(Value(name.clone()))
             }
-            Expr::This  => Ok(Value("this".into())),
+            Expr::This => Ok(Value("this".into())),
             Expr::Super => Ok(Value("super".into())),
 
             Expr::Field { obj, name } => {
@@ -156,29 +188,39 @@ impl<'a> FuncCtx<'a> {
                 Ok(ret)
             }
 
-            Expr::Call { callee, args } => {
+            Expr::Call {
+                callee,
+                args,
+                type_args_raw: _,
+            } => {
                 let ret = self.fresh_value();
 
-                if let Expr::Field { obj, name: method_name } = callee.as_ref() {
+                if let Expr::Field {
+                    obj,
+                    name: method_name,
+                } = callee.as_ref()
+                {
                     let callee_str = expr_to_str(obj);
                     let full = format!("{}.{}", callee_str, method_name);
 
                     if is_static_path(&callee_str) {
-                        let arg_vals: Vec<Value> = args.iter()
+                        let arg_vals: Vec<Value> = args
+                            .iter()
                             .map(|a| self.lower_expr(a))
                             .collect::<Result<_>>()?;
                         let arg_vals = self.pack_varargs(&full, arg_vals);
                         self.emit(RirInstr::Call {
                             func: FuncId(encode_builtin(&full)),
                             args: arg_vals,
-                            ret:  Some(ret.clone()),
+                            ret: Some(ret.clone()),
                         });
                         return Ok(ret);
                     }
 
                     // super.method(...) — non-virtual dispatch to parent class method
                     if matches!(obj.as_ref(), Expr::Super) {
-                        let arg_vals: Vec<Value> = args.iter()
+                        let arg_vals: Vec<Value> = args
+                            .iter()
                             .map(|a| self.lower_expr(a))
                             .collect::<Result<_>>()?;
                         let mut super_args = vec![Value("this".into())];
@@ -193,24 +235,28 @@ impl<'a> FuncCtx<'a> {
 
                     let receiver_val = self.lower_expr(obj)?;
                     let mut arg_vals = vec![receiver_val];
-                    for a in args { arg_vals.push(self.lower_expr(a)?); }
+                    for a in args {
+                        arg_vals.push(self.lower_expr(a)?);
+                    }
                     self.emit(RirInstr::Call {
                         func: FuncId(encode_builtin(&format!("__method__{}", method_name))),
                         args: arg_vals,
-                        ret:  Some(ret.clone()),
+                        ret: Some(ret.clone()),
                     });
                     return Ok(ret);
                 }
 
                 if matches!(callee.as_ref(), Expr::Super) {
                     let mut arg_vals = vec![Value("this".into())];
-                    for a in args { arg_vals.push(self.lower_expr(a)?); }
+                    for a in args {
+                        arg_vals.push(self.lower_expr(a)?);
+                    }
                     // Encode calling class so interpreter knows which parent to look up
                     let super_init_key = format!("super.<init>@{}", self.class_name);
                     self.emit(RirInstr::Call {
                         func: FuncId(encode_builtin(&super_init_key)),
                         args: arg_vals,
-                        ret:  None,
+                        ret: None,
                     });
                     return Ok(Value("this".into()));
                 }
@@ -220,15 +266,17 @@ impl<'a> FuncCtx<'a> {
                     for a in args {
                         arg_vals.push(self.lower_expr(a)?);
                     }
+                    let ctor_arity = arg_vals.len() - 1;
                     self.emit(RirInstr::Call {
-                        func: FuncId(encode_builtin("this.<init>")),
+                        func: FuncId(encode_builtin(&format!("{}.<init>_{}", self.class_name, ctor_arity))),
                         args: arg_vals,
-                        ret:  None,
+                        ret: None,
                     });
                     return Ok(Value("this".into()));
                 }
 
-                let arg_vals: Vec<Value> = args.iter()
+                let arg_vals: Vec<Value> = args
+                    .iter()
                     .map(|a| self.lower_expr(a))
                     .collect::<Result<_>>()?;
                 if let Expr::Ident(name) = callee.as_ref() {
@@ -238,7 +286,7 @@ impl<'a> FuncCtx<'a> {
                         self.emit(RirInstr::Call {
                             func: FuncId(encode_builtin(&format!("__method__{}", name))),
                             args: method_args,
-                            ret:  Some(ret.clone()),
+                            ret: Some(ret.clone()),
                         });
                         return Ok(ret);
                     }
@@ -246,14 +294,18 @@ impl<'a> FuncCtx<'a> {
                     self.emit(RirInstr::Call {
                         func: FuncId(encode_builtin(name)),
                         args: arg_vals,
-                        ret:  Some(ret.clone()),
+                        ret: Some(ret.clone()),
                     });
                     return Ok(ret);
                 }
 
                 let receiver = self.lower_expr(callee)?;
                 // super.method(...) — non-virtual dispatch to parent class method
-                if let Expr::Field { obj, name: method_name } = callee.as_ref() {
+                if let Expr::Field {
+                    obj,
+                    name: method_name,
+                } = callee.as_ref()
+                {
                     if matches!(obj.as_ref(), Expr::Super) {
                         let mut super_args = vec![Value("this".into())];
                         super_args.extend(arg_vals);
@@ -266,7 +318,10 @@ impl<'a> FuncCtx<'a> {
                     }
                 }
                 // Extract method name from `obj.method(...)` callee for virtual dispatch
-                let method_hash = if let Expr::Field { name: method_name, .. } = callee.as_ref() {
+                let method_hash = if let Expr::Field {
+                    name: method_name, ..
+                } = callee.as_ref()
+                {
                     encode_builtin(method_name)
                 } else {
                     0
@@ -290,44 +345,74 @@ impl<'a> FuncCtx<'a> {
                 let l = self.lower_expr(lhs)?;
                 let r = self.lower_expr(rhs)?;
                 let ret = self.fresh_value();
-                self.emit(RirInstr::BinOp { op: lower_binop(op), lhs: l, rhs: r, ret: ret.clone() });
+                self.emit(RirInstr::BinOp {
+                    op: lower_binop(op),
+                    lhs: l,
+                    rhs: r,
+                    ret: ret.clone(),
+                });
                 Ok(ret)
             }
 
             Expr::UnaryOp { op, expr } => {
-                let var_name = if let Expr::Ident(n) = expr.as_ref() { Some(n.clone()) } else { None };
                 let val = self.lower_expr(expr)?;
                 let ret = self.fresh_value();
                 match op {
                     UnaryOp::Neg => {
-                        self.emit(RirInstr::UnaryOp { op: RirUnaryOp::Neg, operand: val, ret: ret.clone() });
+                        self.emit(RirInstr::UnaryOp {
+                            op: RirUnaryOp::Neg,
+                            operand: val,
+                            ret: ret.clone(),
+                        });
                     }
                     UnaryOp::Not => {
-                        self.emit(RirInstr::UnaryOp { op: RirUnaryOp::Not, operand: val, ret: ret.clone() });
+                        self.emit(RirInstr::UnaryOp {
+                            op: RirUnaryOp::Not,
+                            operand: val,
+                            ret: ret.clone(),
+                        });
                     }
                     UnaryOp::BitNot => {
                         let neg1 = self.fresh_value();
-                        self.emit(RirInstr::ConstInt { ret: neg1.clone(), value: -1 });
+                        self.emit(RirInstr::ConstInt {
+                            ret: neg1.clone(),
+                            value: -1,
+                        });
                         self.emit(RirInstr::BinOp {
-                            op: RirBinOp::Xor, lhs: val, rhs: neg1, ret: ret.clone(),
+                            op: RirBinOp::Xor,
+                            lhs: val,
+                            rhs: neg1,
+                            ret: ret.clone(),
                         });
                     }
                     UnaryOp::PostInc | UnaryOp::PreInc => {
                         let one = self.fresh_value();
-                        self.emit(RirInstr::ConstInt { ret: one.clone(), value: 1 });
+                        self.emit(RirInstr::ConstInt {
+                            ret: one.clone(),
+                            value: 1,
+                        });
                         let new_val = self.fresh_value();
                         self.emit(RirInstr::BinOp {
-                            op: RirBinOp::Add, lhs: val, rhs: one, ret: new_val.clone(),
+                            op: RirBinOp::Add,
+                            lhs: val,
+                            rhs: one,
+                            ret: new_val.clone(),
                         });
                         self.write_back(expr, new_val.clone());
                         return Ok(new_val);
                     }
                     UnaryOp::PostDec | UnaryOp::PreDec => {
                         let one = self.fresh_value();
-                        self.emit(RirInstr::ConstInt { ret: one.clone(), value: 1 });
+                        self.emit(RirInstr::ConstInt {
+                            ret: one.clone(),
+                            value: 1,
+                        });
                         let new_val = self.fresh_value();
                         self.emit(RirInstr::BinOp {
-                            op: RirBinOp::Sub, lhs: val, rhs: one, ret: new_val.clone(),
+                            op: RirBinOp::Sub,
+                            lhs: val,
+                            rhs: one,
+                            ret: new_val.clone(),
                         });
                         self.write_back(expr, new_val.clone());
                         return Ok(new_val);
@@ -341,7 +426,11 @@ impl<'a> FuncCtx<'a> {
                     let arr_val = self.lower_expr(arr)?;
                     let idx_val = self.lower_expr(idx)?;
                     let rhs_val = self.lower_expr(rhs)?;
-                    self.emit(RirInstr::ArrayStore { arr: arr_val, idx: idx_val, val: rhs_val.clone() });
+                    self.emit(RirInstr::ArrayStore {
+                        arr: arr_val,
+                        idx: idx_val,
+                        val: rhs_val.clone(),
+                    });
                     return Ok(rhs_val);
                 }
                 if let Expr::Field { obj, name } = lhs.as_ref() {
@@ -359,20 +448,33 @@ impl<'a> FuncCtx<'a> {
                     let obj_val = self.lower_expr(obj)?;
                     let rhs_val = self.lower_expr(rhs)?;
                     self.emit(RirInstr::SetField {
-                        obj: obj_val, field: FieldId(encode_builtin(name)), val: rhs_val.clone(),
+                        obj: obj_val,
+                        field: FieldId(encode_builtin(name)),
+                        val: rhs_val.clone(),
                     });
                     return Ok(rhs_val);
                 }
                 let val = self.lower_expr(rhs)?;
                 if let Expr::Ident(name) = lhs.as_ref() {
                     if self.vars.contains_key(name.as_str()) {
-                        // Known local variable — update mapping; emit copy if SSA names differ
+                        // Known local variable — materialize the assignment into a dedicated SSA slot
+                        // so `a = b; b = ...;` does not alias `a` and `b` to the same value name.
                         let old = self.vars[name.as_str()].clone();
-                        self.vars.insert(name.clone(), val.clone());
-                        if old != val {
+                        let assigned = if old != val {
+                            let slot = self.fresh_value();
+                            self.emit(RirInstr::ConstStr {
+                                ret: slot.clone(),
+                                value: format!("__copy__{}", val.0),
+                            });
+                            slot
+                        } else {
+                            val.clone()
+                        };
+                        self.vars.insert(name.clone(), assigned.clone());
+                        if old != assigned {
                             self.emit(RirInstr::ConstStr {
                                 ret: old,
-                                value: format!("__copy__{}", val.0),
+                                value: format!("__copy__{}", assigned.0),
                             });
                         }
                     } else if self.vars.contains_key("this") {
@@ -400,14 +502,17 @@ impl<'a> FuncCtx<'a> {
                 let desugared = Expr::Assign {
                     lhs: lhs.clone(),
                     rhs: Box::new(Expr::BinOp {
-                        op: op.clone(), lhs: lhs.clone(), rhs: rhs.clone(),
+                        op: op.clone(),
+                        lhs: lhs.clone(),
+                        rhs: rhs.clone(),
                     }),
                 };
                 self.lower_expr(&desugared)
             }
 
             Expr::New { ty, args, body } => {
-                let arg_vals: Vec<Value> = args.iter()
+                let arg_vals: Vec<Value> = args
+                    .iter()
                     .map(|a| self.lower_expr(a))
                     .collect::<Result<_>>()?;
 
@@ -427,19 +532,30 @@ impl<'a> FuncCtx<'a> {
 
                 let ret = self.fresh_value();
                 let class_id = ClassId(encode_builtin(&class_name));
-                self.emit(RirInstr::New { class: class_id, ret: ret.clone() });
+                self.emit(RirInstr::New {
+                    class: class_id,
+                    ret: ret.clone(),
+                });
                 let mut ctor_args = vec![ret.clone()];
                 ctor_args.extend(arg_vals);
+                // Use arity-specific constructor name to avoid symbol conflicts
+                // when a class has multiple constructors with different parameter counts.
+                let ctor_arity = ctor_args.len() - 1; // subtract `this`
                 self.emit(RirInstr::Call {
-                    func: FuncId(encode_builtin(&format!("{}.<init>", class_name))),
+                    func: FuncId(encode_builtin(&format!(
+                        "{}.<init>_{}",
+                        class_name, ctor_arity
+                    ))),
                     args: ctor_args,
-                    ret:  None,
+                    ret: None,
                 });
                 // For anonymous classes, store captured local variables as instance fields.
                 // Use the original variable name as field ID so anonymous class methods
                 // can read captures as regular instance fields (GetField this.varName).
                 if class_name.starts_with("__anon_") {
-                    let captures: Vec<(String, Value)> = self.vars.iter()
+                    let captures: Vec<(String, Value)> = self
+                        .vars
+                        .iter()
                         .filter(|(k, _)| k.as_str() != "this")
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect();
@@ -459,34 +575,51 @@ impl<'a> FuncCtx<'a> {
                 let len_val = self.lower_expr(len)?;
                 let ret = self.fresh_value();
                 self.emit(RirInstr::NewArray {
-                    elem_type: lower_type_name(&ty.name), len: len_val, ret: ret.clone(),
+                    elem_type: lower_type_name(&ty.name),
+                    len: len_val,
+                    ret: ret.clone(),
                 });
                 Ok(ret)
             }
 
             Expr::NewMultiArray { ty, dims } => {
-                let dim_vals: Vec<Value> = dims.iter()
+                let dim_vals: Vec<Value> = dims
+                    .iter()
                     .map(|d| self.lower_expr(d))
                     .collect::<Result<_>>()?;
                 let ret = self.fresh_value();
                 self.emit(RirInstr::NewMultiArray {
-                    elem_type: lower_type_name(&ty.name), dims: dim_vals, ret: ret.clone(),
+                    elem_type: lower_type_name(&ty.name),
+                    dims: dim_vals,
+                    ret: ret.clone(),
                 });
                 Ok(ret)
             }
 
             Expr::ArrayInit { elements, .. } => {
                 let len = self.fresh_value();
-                self.emit(RirInstr::ConstInt { ret: len.clone(), value: elements.len() as i64 });
+                self.emit(RirInstr::ConstInt {
+                    ret: len.clone(),
+                    value: elements.len() as i64,
+                });
                 let arr = self.fresh_value();
                 self.emit(RirInstr::NewArray {
-                    elem_type: RirType::I32, len, ret: arr.clone(),
+                    elem_type: RirType::I32,
+                    len,
+                    ret: arr.clone(),
                 });
                 for (i, elem) in elements.iter().enumerate() {
                     let val = self.lower_expr(elem)?;
                     let idx = self.fresh_value();
-                    self.emit(RirInstr::ConstInt { ret: idx.clone(), value: i as i64 });
-                    self.emit(RirInstr::ArrayStore { arr: arr.clone(), idx, val });
+                    self.emit(RirInstr::ConstInt {
+                        ret: idx.clone(),
+                        value: i as i64,
+                    });
+                    self.emit(RirInstr::ArrayStore {
+                        arr: arr.clone(),
+                        idx,
+                        val,
+                    });
                 }
                 Ok(arr)
             }
@@ -495,7 +628,11 @@ impl<'a> FuncCtx<'a> {
                 let arr_val = self.lower_expr(arr)?;
                 let idx_val = self.lower_expr(idx)?;
                 let ret = self.fresh_value();
-                self.emit(RirInstr::ArrayLoad { arr: arr_val, idx: idx_val, ret: ret.clone() });
+                self.emit(RirInstr::ArrayLoad {
+                    arr: arr_val,
+                    idx: idx_val,
+                    ret: ret.clone(),
+                });
                 Ok(ret)
             }
 
@@ -505,7 +642,12 @@ impl<'a> FuncCtx<'a> {
                 let to = lower_type_name(&ty.name);
                 if from != to {
                     let ret = self.fresh_value();
-                    self.emit(RirInstr::Convert { val, from, to, ret: ret.clone() });
+                    self.emit(RirInstr::Convert {
+                        val,
+                        from,
+                        to,
+                        ret: ret.clone(),
+                    });
                     Ok(ret)
                 } else {
                     Ok(val)
@@ -516,7 +658,9 @@ impl<'a> FuncCtx<'a> {
                 let val = self.lower_expr(expr)?;
                 let ret = self.fresh_value();
                 self.emit(RirInstr::Instanceof {
-                    obj: val, class: ClassId(encode_builtin(&ty.name)), ret: ret.clone(),
+                    obj: val,
+                    class: ClassId(encode_builtin(&ty.name)),
+                    ret: ret.clone(),
                 });
                 Ok(ret)
             }
@@ -525,17 +669,25 @@ impl<'a> FuncCtx<'a> {
                 let val = self.lower_expr(expr)?;
                 let ret = self.fresh_value();
                 self.emit(RirInstr::Instanceof {
-                    obj: val.clone(), class: ClassId(encode_builtin(&ty.name)), ret: ret.clone(),
+                    obj: val.clone(),
+                    class: ClassId(encode_builtin(&ty.name)),
+                    ret: ret.clone(),
                 });
                 self.vars.insert(name.clone(), val);
                 Ok(ret)
             }
 
-            Expr::RecordPattern { expr, ty, components } => {
+            Expr::RecordPattern {
+                expr,
+                ty,
+                components,
+            } => {
                 let val = self.lower_expr(expr)?;
                 let ret = self.fresh_value();
                 self.emit(RirInstr::Instanceof {
-                    obj: val.clone(), class: ClassId(encode_builtin(&ty.name)), ret: ret.clone(),
+                    obj: val.clone(),
+                    class: ClassId(encode_builtin(&ty.name)),
+                    ret: ret.clone(),
                 });
                 for (_, comp_name) in components {
                     let comp_ret = self.fresh_value();
@@ -552,13 +704,15 @@ impl<'a> FuncCtx<'a> {
             Expr::Ternary { cond, then, else_ } => {
                 let cond_val = self.lower_expr(cond)?;
                 let pre = self.current;
-                let then_bb  = self.new_block();
-                let else_bb  = self.new_block();
+                let then_bb = self.new_block();
+                let else_bb = self.new_block();
                 let merge_bb = self.new_block();
                 let result = self.fresh_value();
 
                 self.blocks[pre].instrs.push(RirInstr::Branch {
-                    cond: cond_val, then_bb, else_bb,
+                    cond: cond_val,
+                    then_bb,
+                    else_bb,
                 });
 
                 self.switch_to(then_bb);
@@ -588,10 +742,8 @@ impl<'a> FuncCtx<'a> {
 
                 let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
 
-                let captures: Vec<String> = self.vars.keys()
-                    .filter(|k| *k != "this")
-                    .cloned()
-                    .collect();
+                let captures: Vec<String> =
+                    self.vars.keys().filter(|k| *k != "this").cloned().collect();
 
                 self.pending_lambdas.push(PendingLambda {
                     name: lambda_name.clone(),
@@ -601,7 +753,10 @@ impl<'a> FuncCtx<'a> {
                 });
 
                 let ret = self.fresh_value();
-                self.emit(RirInstr::ConstStr { ret: ret.clone(), value: lambda_name });
+                self.emit(RirInstr::ConstStr {
+                    ret: ret.clone(),
+                    value: lambda_name,
+                });
                 Ok(ret)
             }
 
@@ -610,13 +765,23 @@ impl<'a> FuncCtx<'a> {
                 let obj_str = expr_to_str(obj);
                 // If obj is a variable (lowercase start, not a known class), emit a
                 // bound method ref that captures the receiver at runtime.
-                let is_var = obj_str.chars().next().map(|c| c.is_lowercase()).unwrap_or(false)
-                    && !matches!(obj_str.as_str(), "int" | "long" | "double" | "float" | "boolean");
+                let is_var = obj_str
+                    .chars()
+                    .next()
+                    .map(|c| c.is_lowercase())
+                    .unwrap_or(false)
+                    && !matches!(
+                        obj_str.as_str(),
+                        "int" | "long" | "double" | "float" | "boolean"
+                    );
                 if is_var {
                     // Emit: __bound_methodref__<varname>::<method>
                     // The interpreter will look up the variable value at call time.
                     let sentinel = format!("__bound_methodref__{}::{}", obj_str, name);
-                    self.emit(RirInstr::ConstStr { ret: ret.clone(), value: sentinel });
+                    self.emit(RirInstr::ConstStr {
+                        ret: ret.clone(),
+                        value: sentinel,
+                    });
                     // Also emit a capture instruction so the interpreter can find the receiver.
                     // We encode this as a lambda capture via a special Call.
                     let recv_val = Value(obj_str.clone());
@@ -649,13 +814,20 @@ impl<'a> FuncCtx<'a> {
                             let mut or_val = None;
                             let mut pattern_bindings: Vec<(String, Value)> = Vec::new();
                             for label_expr in labels {
-                                let cmp = self.lower_switch_label(label_expr, &switch_val, &mut pattern_bindings)?;
+                                let cmp = self.lower_switch_label(
+                                    label_expr,
+                                    &switch_val,
+                                    &mut pattern_bindings,
+                                )?;
                                 or_val = Some(match or_val {
                                     None => cmp,
                                     Some(prev) => {
                                         let merged = self.fresh_value();
                                         self.emit(RirInstr::BinOp {
-                                            op: RirBinOp::Or, lhs: prev, rhs: cmp, ret: merged.clone(),
+                                            op: RirBinOp::Or,
+                                            lhs: prev,
+                                            rhs: cmp,
+                                            ret: merged.clone(),
                                         });
                                         merged
                                     }
@@ -664,14 +836,18 @@ impl<'a> FuncCtx<'a> {
                             let cond_ret = or_val.unwrap();
                             let body_bb = self.new_block();
                             let next_bb = self.new_block();
-                            self.blocks[check].instrs.push(
-                                RirInstr::Branch { cond: cond_ret, then_bb: body_bb, else_bb: next_bb }
-                            );
+                            self.blocks[check].instrs.push(RirInstr::Branch {
+                                cond: cond_ret,
+                                then_bb: body_bb,
+                                else_bb: next_bb,
+                            });
                             self.switch_to(body_bb);
                             for (name, val) in pattern_bindings {
                                 self.vars.insert(name, val);
                             }
-                            for stmt in &case.body { self.lower_stmt(stmt)?; }
+                            for stmt in &case.body {
+                                self.lower_stmt(stmt)?;
+                            }
                             if !self.current_block_ends_with_terminator() {
                                 self.emit(RirInstr::Jump(exit_bb));
                             }
@@ -679,7 +855,9 @@ impl<'a> FuncCtx<'a> {
                         }
                         None => {
                             self.switch_to(self.blocks[check].id);
-                            for stmt in &case.body { self.lower_stmt(stmt)?; }
+                            for stmt in &case.body {
+                                self.lower_stmt(stmt)?;
+                            }
                             if !self.current_block_ends_with_terminator() {
                                 self.emit(RirInstr::Jump(exit_bb));
                             }
@@ -699,21 +877,30 @@ impl<'a> FuncCtx<'a> {
         }
     }
 
-    pub(super) fn lower_short_circuit(&mut self, lhs: &Expr, rhs: &Expr, is_and: bool) -> Result<Value> {
+    pub(super) fn lower_short_circuit(
+        &mut self,
+        lhs: &Expr,
+        rhs: &Expr,
+        is_and: bool,
+    ) -> Result<Value> {
         let l = self.lower_expr(lhs)?;
         let pre = self.current;
-        let rhs_bb   = self.new_block();
+        let rhs_bb = self.new_block();
         let merge_bb = self.new_block();
         let short_bb = self.new_block();
         let result = self.fresh_value();
 
         if is_and {
             self.blocks[pre].instrs.push(RirInstr::Branch {
-                cond: l.clone(), then_bb: rhs_bb, else_bb: short_bb,
+                cond: l.clone(),
+                then_bb: rhs_bb,
+                else_bb: short_bb,
             });
         } else {
             self.blocks[pre].instrs.push(RirInstr::Branch {
-                cond: l.clone(), then_bb: short_bb, else_bb: rhs_bb,
+                cond: l.clone(),
+                then_bb: short_bb,
+                else_bb: rhs_bb,
             });
         }
 

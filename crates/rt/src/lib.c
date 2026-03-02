@@ -147,3 +147,77 @@ void rava_arr_store(int64_t ptr, int64_t idx, int64_t val) {
         arr[1 + idx] = val;
     }
 }
+
+/* ── Bool / extra string conversions ────────────────────────────────────── */
+
+int64_t rava_bool_to_str(int64_t v) {
+    return (int64_t)(uintptr_t)(v ? "true" : "false");
+}
+
+/* ── Array iterator ──────────────────────────────────────────────────────── */
+/*
+ * Iterator layout: [arr_ptr: i64][current_index: i64]
+ */
+
+int64_t rava_iter_new(int64_t arr_ptr) {
+    int64_t* iter = (int64_t*)malloc(2 * sizeof(int64_t));
+    iter[0] = arr_ptr;
+    iter[1] = 0;
+    return (int64_t)(uintptr_t)iter;
+}
+
+int64_t rava_iter_has_next(int64_t iter_ptr) {
+    if (!iter_ptr) return 0;
+    int64_t* iter = (int64_t*)(uintptr_t)iter_ptr;
+    int64_t len = rava_arr_len(iter[0]);
+    return iter[1] < len ? 1 : 0;
+}
+
+int64_t rava_iter_next(int64_t iter_ptr) {
+    if (!iter_ptr) return 0;
+    int64_t* iter = (int64_t*)(uintptr_t)iter_ptr;
+    int64_t val = rava_arr_load(iter[0], iter[1]);
+    iter[1]++;
+    return val;
+}
+
+/* ── Math functions ──────────────────────────────────────────────────────── */
+
+#include <math.h>
+
+int64_t rava_math_sqrt(int64_t bits) {
+    double v;
+    memcpy(&v, &bits, 8);
+    double r = sqrt(v);
+    int64_t out;
+    memcpy(&out, &r, 8);
+    return out;
+}
+
+int64_t rava_math_pow(int64_t base_bits, int64_t exp_bits) {
+    double b, e;
+    memcpy(&b, &base_bits, 8);
+    memcpy(&e, &exp_bits, 8);
+    double r = pow(b, e);
+    int64_t out;
+    memcpy(&out, &r, 8);
+    return out;
+}
+
+int64_t rava_math_abs_int(int64_t v)   { return v < 0 ? -v : v; }
+int64_t rava_math_min_int(int64_t a, int64_t b) { return a < b ? a : b; }
+int64_t rava_math_max_int(int64_t a, int64_t b) { return a > b ? a : b; }
+
+/* ── String comparison ───────────────────────────────────────────────────── */
+
+int64_t rava_str_equals(int64_t a, int64_t b) {
+    const char* sa = a ? (const char*)(uintptr_t)a : "";
+    const char* sb = b ? (const char*)(uintptr_t)b : "";
+    return strcmp(sa, sb) == 0 ? 1 : 0;
+}
+
+int64_t rava_str_compare_to(int64_t a, int64_t b) {
+    const char* sa = a ? (const char*)(uintptr_t)a : "";
+    const char* sb = b ? (const char*)(uintptr_t)b : "";
+    return (int64_t)strcmp(sa, sb);
+}
