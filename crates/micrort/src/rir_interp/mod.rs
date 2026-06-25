@@ -171,12 +171,18 @@ const KNOWN_METHODS: &[&str] = &[
     // Map.Entry
     "getKey",
     "getValue",
-    // Functional interfaces (Function, Predicate, Consumer, Supplier)
+    // Functional interfaces (Function, Predicate, Consumer, Supplier, …)
     "apply",
     "test",
     "accept",
     "get",
     "run",
+    "applyAsInt",
+    "applyAsLong",
+    "applyAsDouble",
+    "compare",
+    "call",
+    "getAsBoolean",
     "andThen",
     "compose",
     "and",

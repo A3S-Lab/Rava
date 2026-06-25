@@ -1114,6 +1114,7 @@ mod tests {
     const CONCAT: &[u8] = include_bytes!("fixtures/Concat.class");
     const INTFN: &[u8] = include_bytes!("fixtures/IntFn.class");
     const LAM: &[u8] = include_bytes!("fixtures/Lam.class");
+    const LAM2: &[u8] = include_bytes!("fixtures/Lam2.class");
     const ARR: &[u8] = include_bytes!("fixtures/Arr.class");
     const NUM: &[u8] = include_bytes!("fixtures/Num.class");
     const SW: &[u8] = include_bytes!("fixtures/Sw.class");
@@ -1295,6 +1296,18 @@ mod tests {
         let interp = RirInterpreter::new(module);
         // twice(5) = f(f(5)) = f(10) = 20
         assert_eq!(interp.call("Lam.twice", vec![RVal::Int(5)]).unwrap().to_display(), "20");
+    }
+
+    #[test]
+    fn lambda_functional_interfaces() {
+        // IntUnaryOperator (applyAsInt) and IntBinaryOperator — non-capturing lambdas
+        let module = load_classes_module(&[LAM2]).unwrap();
+        let interp = RirInterpreter::new(module);
+        assert_eq!(interp.call("Lam2.op", vec![RVal::Int(5)]).unwrap().to_display(), "105");
+        assert_eq!(
+            interp.call("Lam2.combine", vec![RVal::Int(3), RVal::Int(4)]).unwrap().to_display(),
+            "13"
+        );
     }
 
     #[test]
