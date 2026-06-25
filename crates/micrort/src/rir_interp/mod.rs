@@ -126,6 +126,10 @@ const KNOWN_METHODS: &[&str] = &[
     "lastKey",
     "headMap",
     "tailMap",
+    "ceilingKey",
+    "floorKey",
+    "higherKey",
+    "lowerKey",
     "firstEntry",
     "lastEntry",
     // PriorityQueue / Queue / Deque

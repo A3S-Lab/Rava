@@ -932,6 +932,51 @@ impl RirInterpreter {
                                 })
                                 .unwrap_or(RVal::Null));
                         }
+                        // TreeMap ceilingKey/floorKey/higherKey/lowerKey — nearest key by order.
+                        if class_name == "TreeMap"
+                            && (method_name == "ceilingKey"
+                                || method_name == "floorKey"
+                                || method_name == "higherKey"
+                                || method_name == "lowerKey")
+                        {
+                            let target =
+                                method_args.first().map(|v| v.to_display()).unwrap_or_default();
+                            let mut keys: Vec<String> = {
+                                let heap = self.heap.borrow();
+                                heap.get(id)
+                                    .map(|o| {
+                                        o.fields
+                                            .keys()
+                                            .filter(|k| !k.starts_with("__"))
+                                            .cloned()
+                                            .collect()
+                                    })
+                                    .unwrap_or_default()
+                            };
+                            // numeric-aware ordering (matches headMap/display)
+                            keys.sort_by(|a, b| match (a.parse::<i64>(), b.parse::<i64>()) {
+                                (Ok(x), Ok(y)) => x.cmp(&y),
+                                _ => a.cmp(b),
+                            });
+                            let cmp = |k: &str| match (k.parse::<i64>(), target.parse::<i64>()) {
+                                (Ok(x), Ok(y)) => x.cmp(&y),
+                                _ => k.cmp(target.as_str()),
+                            };
+                            use std::cmp::Ordering;
+                            let found = match method_name.as_str() {
+                                "ceilingKey" => keys.iter().find(|k| cmp(k) != Ordering::Less),
+                                "higherKey" => keys.iter().find(|k| cmp(k) == Ordering::Greater),
+                                "floorKey" => keys.iter().rev().find(|k| cmp(k) != Ordering::Greater),
+                                _ => keys.iter().rev().find(|k| cmp(k) == Ordering::Less), // lowerKey
+                            };
+                            return Ok(found
+                                .map(|k| {
+                                    k.parse::<i64>()
+                                        .map(RVal::Int)
+                                        .unwrap_or_else(|_| RVal::Str(k.clone()))
+                                })
+                                .unwrap_or(RVal::Null));
+                        }
                         // TreeMap headMap(toKey) / tailMap(fromKey) — sorted sub-map view.
                         if class_name == "TreeMap"
                             && (method_name == "headMap" || method_name == "tailMap")

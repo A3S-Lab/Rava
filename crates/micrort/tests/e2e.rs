@@ -10082,3 +10082,21 @@ class Main {
 "#);
     assert_eq!(out.trim(), "-15\n0\n1\nhi");
 }
+
+#[test]
+fn treemap_navigation_keys() {
+    // NavigableMap ceilingKey/floorKey/higherKey/lowerKey, numeric-aware.
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        var n = new TreeMap<Integer,String>();
+        n.put(10, "x"); n.put(20, "y"); n.put(30, "z");
+        System.out.println(n.ceilingKey(15) + " " + n.floorKey(25));
+        System.out.println(n.higherKey(20) + " " + n.lowerKey(20));
+        System.out.println(n.ceilingKey(10) + " " + n.floorKey(30));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "20 20\n30 10\n10 30");
+}
