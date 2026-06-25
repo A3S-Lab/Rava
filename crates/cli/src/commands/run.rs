@@ -31,6 +31,19 @@ pub fn run(args: RunArgs) -> Result<()> {
 }
 
 fn run_once(args: &RunArgs) -> Result<()> {
+    // Run a pre-compiled `.class` file directly (bytecode → RIR → interpreter).
+    if let Some(ref file) = args.file {
+        if file.extension().and_then(|e| e.to_str()) == Some("class") {
+            let bytes = std::fs::read(file)
+                .with_context(|| format!("cannot read {}", file.display()))?;
+            let module = rava_micrort::bytecode::load_class_module(&bytes)
+                .map_err(|e| anyhow::anyhow!("class load error: {}", e))?;
+            return rava_micrort::RirInterpreter::new(module)
+                .run_main()
+                .map_err(|e| anyhow::anyhow!("runtime error: {}", e));
+        }
+    }
+
     let compiler = rava_frontend::Compiler::new();
 
     let module = if let Some(ref file) = args.file {

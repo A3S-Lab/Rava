@@ -12,7 +12,7 @@
 
 use crate::classfile::{ClassFile, Constant, Method};
 use rava_common::error::{RavaError, Result};
-use rava_rir::module::{BasicBlock, FuncFlags, RirFunction};
+use rava_rir::module::{BasicBlock, FuncFlags, RirFunction, RirModule};
 use rava_rir::{BinOp, BlockId, ClassId, FieldId, FuncId, RirInstr, RirType, UnaryOp, Value};
 use std::collections::BTreeSet;
 
@@ -43,6 +43,25 @@ pub fn lower_method(class: &ClassFile, method: &Method, func_id: u32) -> Result<
         basic_blocks: lower_blocks(code, class)?,
         flags: FuncFlags::default(),
     })
+}
+
+/// Parse a `.class` file and lower all of its (lowerable) methods into a runnable
+/// RIR module, populating field names. Methods using opcodes not yet supported are
+/// skipped, so a class can still run its `main` even if one method is too advanced.
+pub fn load_class_module(bytes: &[u8]) -> Result<RirModule> {
+    let cf = crate::classfile::parse(bytes)?;
+    let mut module = RirModule::new(&cf.name);
+    for f in &cf.fields {
+        module
+            .field_names
+            .insert(crate::lowerer_hash::encode_builtin(f), f.clone());
+    }
+    for (i, m) in cf.methods.iter().enumerate() {
+        if let Ok(func) = lower_method(&cf, m, i as u32) {
+            module.functions.push(func);
+        }
+    }
+    Ok(module)
 }
 
 // ── Control-flow graph construction ───────────────────────────────────────────
@@ -245,6 +264,24 @@ fn translate_block(
                 });
                 stack.push(r);
             }
+            0xb2 => {
+                // getstatic <fieldref index>
+                let (cls, name, _desc) = class.field_ref(read_u16(code, pc + 1)?)?;
+                let r = fresh();
+                if cls == "java/lang/System" && (name == "out" || name == "err") {
+                    // Sentinel receiver for System.out/err; println routing handles the call.
+                    instrs.push(RirInstr::ConstStr {
+                        ret: r.clone(),
+                        value: format!("__system_{name}__"),
+                    });
+                } else {
+                    instrs.push(RirInstr::GetStatic {
+                        field: FieldId(crate::lowerer_hash::encode_builtin(&name)),
+                        ret: r.clone(),
+                    });
+                }
+                stack.push(r);
+            }
             0xb4 => {
                 // getfield <fieldref index>
                 let (_cls, name, _desc) = class.field_ref(read_u16(code, pc + 1)?)?;
@@ -277,9 +314,17 @@ fn translate_block(
                     *slot = pop(&mut stack)?;
                 }
                 args[0] = pop(&mut stack)?;
-                // A library constructor (java/lang/Object.<init>, …) is a no-op: the object
-                // is already allocated by `new`.
-                if op == 0xb7 && name == "<init>" && cls.contains('/') {
+                if cls == "java/io/PrintStream" && (name == "println" || name == "print") {
+                    // System.out.println(x) → route to the builtin; drop the PrintStream receiver.
+                    let call_args: Vec<Value> = args.into_iter().skip(1).collect();
+                    instrs.push(RirInstr::Call {
+                        func: FuncId(crate::lowerer_hash::encode_builtin(&format!("System.out.{name}"))),
+                        args: call_args,
+                        ret: None,
+                    });
+                } else if op == 0xb7 && name == "<init>" && cls.contains('/') {
+                    // A library constructor (java/lang/Object.<init>, …) is a no-op: the object
+                    // is already allocated by `new`.
                     // discard
                 } else {
                     // Library instance methods (String.length, …) dispatch by name on the
@@ -452,7 +497,7 @@ fn instr_len(op: u8) -> Option<usize> {
     Some(match op {
         0x10 | 0x12 | 0x15 | 0x19 | 0x36 | 0x3a => 2, // bipush, ldc, iload, aload, istore, astore
         0x11 | 0x13 | 0x84 | 0xa7 | 0xb8 => 3,        // sipush, ldc_w, iinc, goto, invokestatic
-        0xb4 | 0xb5 | 0xb6 | 0xb7 | 0xbb => 3,        // getfield, putfield, invoke{virtual,special}, new
+        0xb2 | 0xb4 | 0xb5 | 0xb6 | 0xb7 | 0xbb => 3, // getstatic, get/putfield, invoke{virtual,special}, new
         0x99..=0xa4 => 3,                             // if<cond> / if_icmp<cond>
         0x00 => 1,                                    // nop
         0x02..=0x08 => 1,                             // iconst_m1..5
@@ -590,6 +635,28 @@ mod tests {
     const CALLER: &[u8] = include_bytes!("fixtures/Caller.class");
     const OBJ: &[u8] = include_bytes!("fixtures/Obj.class");
     const STR: &[u8] = include_bytes!("fixtures/Str.class");
+    const HELLO: &[u8] = include_bytes!("fixtures/Hello.class");
+
+    /// Lower a class, run its `main`, and capture stdout.
+    fn run_main_capture(fixture: &[u8]) -> String {
+        let cf = classfile::parse(fixture).unwrap();
+        let mut module = RirModule::new("M");
+        for f in &cf.fields {
+            module
+                .field_names
+                .insert(crate::lowerer_hash::encode_builtin(f), f.clone());
+        }
+        for (i, m) in cf.methods.iter().enumerate() {
+            if let Ok(func) = lower_method(&cf, m, i as u32) {
+                module.functions.push(func);
+            }
+        }
+        let mut buf = Vec::new();
+        RirInterpreter::new(module)
+            .run_main_with_output(&mut buf)
+            .unwrap();
+        String::from_utf8(buf).unwrap()
+    }
 
     #[test]
     fn arithmetic() {
@@ -636,5 +703,12 @@ mod tests {
         assert_eq!(run_class(STR, "subLen", vec![]), 5);
         // library invokestatic (Integer.parseInt) routed to the builtin
         assert_eq!(run_class(STR, "parsed", vec![]), 42);
+    }
+
+    #[test]
+    fn main_with_println() {
+        // Full program: getstatic System.out + ldc + println (string and int) + a loop.
+        let out = run_main_capture(HELLO);
+        assert_eq!(out.trim(), "Hello from compiled bytecode!\n15");
     }
 }
