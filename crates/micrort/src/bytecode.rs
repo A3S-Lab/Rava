@@ -115,10 +115,19 @@ fn lower_blocks(
     let starts: Vec<usize> = leaders.iter().copied().filter(|&l| l < code.len()).collect();
 
     let mut tmp = 0u32;
+    let mut synth_id = 0u32;
     let mut blocks = Vec::with_capacity(starts.len());
     for (i, &start) in starts.iter().enumerate() {
         let end = starts.get(i + 1).copied().unwrap_or(code.len());
-        blocks.push(translate_block(code, start, end, &mut tmp, class, exceptions)?);
+        blocks.extend(translate_block(
+            code,
+            start,
+            end,
+            &mut tmp,
+            &mut synth_id,
+            class,
+            exceptions,
+        )?);
     }
     Ok(blocks)
 }
@@ -131,8 +140,17 @@ fn find_leaders(code: &[u8]) -> Result<BTreeSet<usize>> {
     let mut pc = 0;
     while pc < code.len() {
         let op = code[pc];
-        let len = instr_len(op)
-            .ok_or_else(|| unsupported(op))?;
+        if op == 0xaa || op == 0xab {
+            let (len, cases, default) = parse_switch(code, pc)?;
+            for (_, t) in &cases {
+                leaders.insert(*t);
+            }
+            leaders.insert(default);
+            leaders.insert(pc + len);
+            pc += len;
+            continue;
+        }
+        let len = instr_len(op).ok_or_else(|| unsupported(op))?;
         if is_branch(op) {
             let target = (pc as i64 + read_i16(code, pc + 1)? as i64) as usize;
             leaders.insert(target);
@@ -151,11 +169,14 @@ fn translate_block(
     start: usize,
     end: usize,
     tmp: &mut u32,
+    synth_id: &mut u32,
     class: &ClassFile,
     exceptions: &[ExceptionEntry],
-) -> Result<BasicBlock> {
+) -> Result<Vec<BasicBlock>> {
     let mut instrs = Vec::new();
     let mut stack: Vec<Value> = Vec::new();
+    // Extra synthetic blocks emitted by this block (e.g. a switch's comparison chain).
+    let mut extra_blocks: Vec<BasicBlock> = Vec::new();
     let mut fresh = || {
         let v = Value(format!("t{tmp}"));
         *tmp += 1;
@@ -183,6 +204,59 @@ fn translate_block(
     let mut pc = start;
     while pc < end {
         let op = code[pc];
+        if op == 0xaa || op == 0xab {
+            // tableswitch / lookupswitch → a chain of `key == case` comparisons (RIR has no
+            // jump table). The key is held in a named local so each comparison block reads it.
+            let (len, cases, default) = parse_switch(code, pc)?;
+            let key = pop(&mut stack)?;
+            let key_slot = Value(format!("__sw{start}_key"));
+            instrs.push(copy(key, key_slot.clone()));
+            let n = cases.len();
+            let base = *synth_id;
+            *synth_id += n as u32;
+            let default_bb = BlockId(default as u32);
+            for (i, (m, target)) in cases.iter().enumerate() {
+                let else_bb = if i + 1 < n {
+                    BlockId(SYNTH_FLAG | (base + i as u32 + 1))
+                } else {
+                    default_bb
+                };
+                let c = fresh();
+                let cond = fresh();
+                let cmp = vec![
+                    RirInstr::ConstInt {
+                        ret: c.clone(),
+                        value: *m,
+                    },
+                    RirInstr::BinOp {
+                        op: BinOp::Eq,
+                        lhs: key_slot.clone(),
+                        rhs: c,
+                        ret: cond.clone(),
+                    },
+                    RirInstr::Branch {
+                        cond,
+                        then_bb: BlockId(*target as u32),
+                        else_bb,
+                    },
+                ];
+                if i == 0 {
+                    instrs.extend(cmp);
+                } else {
+                    extra_blocks.push(BasicBlock {
+                        id: BlockId(SYNTH_FLAG | (base + i as u32)),
+                        params: Vec::new(),
+                        instrs: cmp,
+                    });
+                }
+            }
+            if n == 0 {
+                instrs.push(RirInstr::Jump(default_bb));
+            }
+            terminated = true;
+            pc += len;
+            continue;
+        }
         let len = instr_len(op).ok_or_else(|| unsupported(op))?;
         match op {
             0x1a..=0x1d => stack.push(Value(format!("l{}", op - 0x1a))), // iload_0..3
@@ -677,11 +751,61 @@ fn translate_block(
     if !terminated {
         instrs.push(RirInstr::Jump(BlockId(end as u32)));
     }
-    Ok(BasicBlock {
+    let mut blocks = Vec::with_capacity(1 + extra_blocks.len());
+    blocks.push(BasicBlock {
         id: BlockId(start as u32),
         params: Vec::new(),
         instrs,
-    })
+    });
+    blocks.append(&mut extra_blocks);
+    Ok(blocks)
+}
+
+/// Block-id flag distinguishing synthetic blocks (switch comparison chains) from
+/// blocks keyed by bytecode offset. Real offsets are < 2^16, so the high bit is free.
+const SYNTH_FLAG: u32 = 0x8000_0000;
+
+fn read_i32(code: &[u8], at: usize) -> Result<i32> {
+    if at + 4 > code.len() {
+        return Err(RavaError::Other("truncated switch operand".into()));
+    }
+    Ok(i32::from_be_bytes([
+        code[at],
+        code[at + 1],
+        code[at + 2],
+        code[at + 3],
+    ]))
+}
+
+/// Parse a tableswitch/lookupswitch at `pc`. Returns (total length, (match, target) cases,
+/// default target). Targets are absolute bytecode offsets.
+fn parse_switch(code: &[u8], pc: usize) -> Result<(usize, Vec<(i64, usize)>, usize)> {
+    let op = code[pc];
+    let mut p = pc + 1 + (3 - (pc % 4)); // pad so operands start 4-byte aligned
+    let default = (pc as i64 + read_i32(code, p)? as i64) as usize;
+    p += 4;
+    let mut cases = Vec::new();
+    if op == 0xaa {
+        let low = read_i32(code, p)?;
+        p += 4;
+        let high = read_i32(code, p)?;
+        p += 4;
+        for k in low..=high {
+            let off = read_i32(code, p)?;
+            p += 4;
+            cases.push((k as i64, (pc as i64 + off as i64) as usize));
+        }
+    } else {
+        let npairs = read_i32(code, p)?.max(0) as usize;
+        p += 4;
+        for _ in 0..npairs {
+            let m = read_i32(code, p)?;
+            let off = read_i32(code, p + 4)?;
+            p += 8;
+            cases.push((m as i64, (pc as i64 + off as i64) as usize));
+        }
+    }
+    Ok((p - pc, cases, default))
 }
 
 // ── Instruction helpers ───────────────────────────────────────────────────────
@@ -941,6 +1065,7 @@ mod tests {
     const CONCAT: &[u8] = include_bytes!("fixtures/Concat.class");
     const ARR: &[u8] = include_bytes!("fixtures/Arr.class");
     const NUM: &[u8] = include_bytes!("fixtures/Num.class");
+    const SW: &[u8] = include_bytes!("fixtures/Sw.class");
     const BITS: &[u8] = include_bytes!("fixtures/Bits.class");
     const EXC: &[u8] = include_bytes!("fixtures/Exc.class");
     const STK: &[u8] = include_bytes!("fixtures/Stk.class");
@@ -1046,6 +1171,19 @@ mod tests {
         assert_eq!(interp.call("Exc.checked", vec![RVal::Int(5)]).unwrap().to_display(), "10");
         // throwing path (new + athrow) propagates as an error (no catch in bytecode yet)
         assert!(interp.call("Exc.checked", vec![RVal::Int(-1)]).is_err());
+    }
+
+    #[test]
+    fn switches() {
+        // tableswitch (dense 1..3)
+        assert_eq!(run_class(SW, "tbl", vec![RVal::Int(1)]), 10);
+        assert_eq!(run_class(SW, "tbl", vec![RVal::Int(2)]), 20);
+        assert_eq!(run_class(SW, "tbl", vec![RVal::Int(3)]), 30);
+        assert_eq!(run_class(SW, "tbl", vec![RVal::Int(9)]), -1); // default
+        // lookupswitch (sparse 100, 500)
+        assert_eq!(run_class(SW, "look", vec![RVal::Int(100)]), 1);
+        assert_eq!(run_class(SW, "look", vec![RVal::Int(500)]), 5);
+        assert_eq!(run_class(SW, "look", vec![RVal::Int(7)]), 0); // default
     }
 
     #[test]
