@@ -180,7 +180,7 @@ View full list: `rava alias list`
 rava <command> [options] [args]
 
 Project:
-  run [file]               Run Java source or project
+  run [file]               Run Java source, .class, or .jar (-c lib.jar for deps; rava.lock auto-loaded)
   build                    AOT compile to native binary
   init [name]              Initialize project
   test [pattern]           Run tests
@@ -466,7 +466,7 @@ common    → (none)
 | Phase | Deliverable | Status |
 |-------|------------|--------|
 | Framework | Workspace skeleton: 10 crates, all traits defined, Cranelift wired up | ✅ |
-| Phase 1 (6-12mo) | Toolchain + run static Java | 🚧 **Interpreter path ✅** (`rava run` / `rava test`: lexer, parser, type checker, lowerer, RIR interpreter, builtins — 393/393 e2e passing; CLI `run/build/init/add/remove/update/deps/test/fmt` ✅; CI/CD ✅). **AOT `rava build` experimental** — basic programs only; currently miscompiles loops and segfaults on generics. Dependency resolution is not yet wired into builds (`add`/`update` only edit `rava.hcl`). |
+| Phase 1 (6-12mo) | Toolchain + run static Java | 🚧 **Interpreter path ✅** (`rava run` / `rava test`: lexer, parser, type checker, lowerer, RIR interpreter, builtins — 393/393 e2e passing; CLI `run/build/init/add/remove/update/deps/test/fmt` ✅; CI/CD ✅). **AOT `rava build` experimental** — basic programs only; currently miscompiles loops and segfaults on generics. `rava run <jar>` auto-loads dependency JARs from `rava.lock` (or explicit `-c lib.jar`); AOT `rava build` does not yet link JARs. |
 | Phase 2 (3-6mo) | Reflection: AOT metadata table + dual-path dispatch | 🚧 (RIR metadata structures ✅; MetadataTableGenPass scaffolded ✅; function pointer resolution and field offsets pending) |
 | Phase 3 (6-12mo) | MicroRT v1: bytecode interpreter + class loader + unified object model | ⬜ |
 | Phase 4 (2-3mo) | Dynamic proxy AOT: pre-generated proxy classes | ⬜ |

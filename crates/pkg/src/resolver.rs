@@ -126,6 +126,13 @@ pub fn download_pom(
     Ok(text)
 }
 
+/// Default local Maven cache directory (`~/.rava/cache/maven`).
+pub fn default_cache_dir() -> Result<PathBuf> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| RavaError::Package("no home directory for cache".into()))?;
+    Ok(home.join(".rava").join("cache").join("maven"))
+}
+
 /// Compute SHA-256 hash of a file.
 pub fn compute_sha256(path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};

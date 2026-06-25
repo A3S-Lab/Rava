@@ -87,9 +87,12 @@ fix is invasive and risks regressing the 393-test suite):
 
 ## Toolchain
 
-- **Dependency resolution is not wired into builds.** `rava add` / `update` / `deps` only edit
-  `rava.hcl`; `rava build` never downloads or links the dependency JARs, so projects with
-  external dependencies cannot be built (executing `.class` from JARs is the larger blocker).
+- **Dependency resolution is wired into `rava run`, not `rava build`.** `rava run <jar>` now
+  auto-loads every dependency JAR named in `rava.lock` (downloading any not yet cached) onto the
+  classpath — no manual `-c` needed. You can also pass dependency JARs explicitly with
+  `-c lib1.jar,lib2.jar`. The AOT path (`rava build`) still does **not** download or link JARs.
+  Whether a real Maven JAR actually *executes* depends on bytecode coverage (capturing lambdas
+  and library-exception catch normalization are the remaining gaps — see below).
 - **Transitive POM resolution is partial.** `pom::parse_pom_dependencies` +
   `registry::resolve_closure` resolve transitive deps for POMs that declare versions literally
   or via same-POM `${...}` properties, filtering test/provided/optional. They do **not** yet
