@@ -32,7 +32,8 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         id if id == fnv("Math.cbrt") => Some(Ok(RVal::Float(f1().cbrt()))),
         id if id == fnv("Math.floor") => Some(Ok(RVal::Float(f1().floor()))),
         id if id == fnv("Math.ceil") => Some(Ok(RVal::Float(f1().ceil()))),
-        id if id == fnv("Math.round") => Some(Ok(RVal::Int(f1().round() as i64))),
+        // Java: Math.round(a) == floor(a + 0.5) (half rounds toward +inf, not away from 0)
+        id if id == fnv("Math.round") => Some(Ok(RVal::Int((f1() + 0.5).floor() as i64))),
         id if id == fnv("Math.log") => Some(Ok(RVal::Float(f1().ln()))),
         id if id == fnv("Math.log10") => Some(Ok(RVal::Float(f1().log10()))),
         id if id == fnv("Math.log1p") => Some(Ok(RVal::Float(f1().ln_1p()))),

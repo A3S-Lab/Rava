@@ -483,6 +483,7 @@ impl RirInterpreter {
             }
             if func_id == encode_builtin("Collectors.groupingBy") {
                 let lambda = args.first().cloned().unwrap_or(RVal::Null);
+                let downstream = args.get(1).cloned();
                 let id = self.alloc_object("Collector");
                 {
                     let mut heap = self.heap.borrow_mut();
@@ -490,6 +491,9 @@ impl RirInterpreter {
                         o.fields
                             .insert("__ctype__".into(), RVal::Str("groupingBy".into()));
                         o.fields.insert("__lambda__".into(), lambda);
+                        if let Some(ds) = downstream {
+                            o.fields.insert("__downstream__".into(), ds);
+                        }
                     }
                 }
                 return Ok(RVal::Object(id));
@@ -2315,6 +2319,24 @@ impl RirInterpreter {
                             .collect();
                         return format!("{{{}}}", pairs.join(", "));
                     }
+                }
+                // Map types: display as {k=v, k2=v2}. Entries are stored as plain
+                // (non-`__`) object fields. Sort keys (numeric-aware) so TreeMap matches
+                // Java; HashMap output is deterministic but not in Java's hash order.
+                if obj.class_name == "HashMap" || obj.class_name == "TreeMap" {
+                    let mut pairs: Vec<(String, String)> = obj
+                        .fields
+                        .iter()
+                        .filter(|(k, _)| !k.starts_with("__"))
+                        .map(|(k, v)| (k.clone(), v.to_display()))
+                        .collect();
+                    pairs.sort_by(|(a, _), (b, _)| match (a.parse::<i64>(), b.parse::<i64>()) {
+                        (Ok(x), Ok(y)) => x.cmp(&y),
+                        _ => a.cmp(b),
+                    });
+                    let body: Vec<String> =
+                        pairs.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+                    return format!("{{{}}}", body.join(", "));
                 }
                 return format!("{}@{}", obj.class_name, id);
             }

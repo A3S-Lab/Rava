@@ -4,6 +4,19 @@ use crate::rir_interp::RVal;
 
 /// Format a Java-style format string with arguments.
 /// Supports: %s, %d, %f, %n, %%, %b, %c, %x, %o.
+/// Insert ',' every three digits from the right (Java `%,d` grouping).
+fn group_thousands(digits: &str) -> String {
+    let len = digits.len();
+    let mut out = String::with_capacity(len + len / 3);
+    for (idx, ch) in digits.chars().enumerate() {
+        if idx > 0 && (len - idx) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 pub fn format_java_string(args: &[RVal]) -> String {
     let fmt = args.first().map(|v| v.to_display()).unwrap_or_default();
     let mut result = String::new();
@@ -15,7 +28,7 @@ pub fn format_java_string(args: &[RVal]) -> String {
         if chars[i] == '%' && i + 1 < chars.len() {
             i += 1;
             let mut flags = String::new();
-            while i < chars.len() && matches!(chars[i], '-' | '+' | ' ' | '0' | '#') {
+            while i < chars.len() && matches!(chars[i], '-' | '+' | ' ' | '0' | '#' | ',') {
                 flags.push(chars[i]);
                 i += 1;
             }
@@ -64,36 +77,33 @@ pub fn format_java_string(args: &[RVal]) -> String {
                 }
                 'd' => {
                     let val = args.get(arg_idx).map(|v| v.as_int()).unwrap_or(0);
-                    let plus = flags.contains('+');
-                    if let Some(w) = width {
-                        if flags.contains('0') {
-                            let s = if plus && val >= 0 {
-                                format!("+{:0>width$}", val, width = w.saturating_sub(1))
-                            } else {
-                                format!("{:0>width$}", val, width = w)
-                            };
-                            result.push_str(&s);
-                        } else if flags.contains('-') {
-                            let s = if plus && val >= 0 {
-                                format!("+{:<width$}", val, width = w.saturating_sub(1))
-                            } else {
-                                format!("{:<width$}", val, width = w)
-                            };
-                            result.push_str(&s);
-                        } else {
-                            let s = if plus && val >= 0 {
-                                format!("+{:>width$}", val, width = w.saturating_sub(1))
-                            } else {
-                                format!("{:>width$}", val, width = w)
-                            };
-                            result.push_str(&s);
-                        }
-                    } else if plus && val >= 0 {
-                        result.push_str(&format!("+{}", val));
-                    } else {
-                        result.push_str(&val.to_string());
-                    }
                     arg_idx += 1;
+                    let digits = if flags.contains(',') {
+                        group_thousands(&val.unsigned_abs().to_string())
+                    } else {
+                        val.unsigned_abs().to_string()
+                    };
+                    let sign = if val < 0 {
+                        "-"
+                    } else if flags.contains('+') {
+                        "+"
+                    } else if flags.contains(' ') {
+                        " "
+                    } else {
+                        ""
+                    };
+                    let s = match width {
+                        Some(w) if flags.contains('-') => {
+                            format!("{:<width$}", format!("{sign}{digits}"), width = w)
+                        }
+                        Some(w) if flags.contains('0') => {
+                            let pad = w.saturating_sub(sign.len() + digits.len());
+                            format!("{sign}{}{digits}", "0".repeat(pad))
+                        }
+                        Some(w) => format!("{:>width$}", format!("{sign}{digits}"), width = w),
+                        None => format!("{sign}{digits}"),
+                    };
+                    result.push_str(&s);
                 }
                 'f' => {
                     let val = args.get(arg_idx).map(|v| v.as_float()).unwrap_or(0.0);

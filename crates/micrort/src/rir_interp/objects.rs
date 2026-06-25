@@ -588,7 +588,7 @@ impl RirInterpreter {
             "collect" => {
                 let arr = self.as_array(receiver)?;
                 if let Some(RVal::Object(cid)) = args.first() {
-                    let (ctype, delim, prefix, suffix, lambda, key_fn, val_fn) = {
+                    let (ctype, delim, prefix, suffix, lambda, key_fn, val_fn, downstream_ctype) = {
                         let heap = self.heap.borrow();
                         if let Some(cobj) = heap.get(cid) {
                             let ctype = cobj
@@ -614,7 +614,19 @@ impl RirInterpreter {
                             let lambda = cobj.fields.get("__lambda__").cloned();
                             let key_fn = cobj.fields.get("__keyfn__").cloned();
                             let val_fn = cobj.fields.get("__valfn__").cloned();
-                            (ctype, delim, prefix, suffix, lambda, key_fn, val_fn)
+                            // For groupingBy(classifier, downstream): the downstream's own ctype.
+                            let downstream_ctype = cobj
+                                .fields
+                                .get("__downstream__")
+                                .and_then(|d| match d {
+                                    RVal::Object(did) => heap
+                                        .get(did)
+                                        .and_then(|o| o.fields.get("__ctype__"))
+                                        .map(|v| v.to_display()),
+                                    _ => None,
+                                })
+                                .unwrap_or_default();
+                            (ctype, delim, prefix, suffix, lambda, key_fn, val_fn, downstream_ctype)
                         } else {
                             (
                                 String::new(),
@@ -624,6 +636,7 @@ impl RirInterpreter {
                                 None,
                                 None,
                                 None,
+                                String::new(),
                             )
                         }
                     };
@@ -668,6 +681,20 @@ impl RirInterpreter {
                                     });
                                     if let RVal::Array(a) = bucket {
                                         a.borrow_mut().push(item.clone());
+                                    }
+                                }
+                            }
+                            // Apply the downstream collector to each group. counting() →
+                            // group size; otherwise the bucket stays a list (toList default).
+                            if downstream_ctype == "counting" {
+                                let mut heap = self.heap.borrow_mut();
+                                if let Some(map_obj) = heap.get_mut(&map_id) {
+                                    for v in map_obj.fields.values_mut() {
+                                        let n = match v {
+                                            RVal::Array(a) => a.borrow().len() as i64,
+                                            _ => continue,
+                                        };
+                                        *v = RVal::Int(n);
                                     }
                                 }
                             }
