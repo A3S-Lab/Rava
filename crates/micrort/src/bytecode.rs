@@ -333,6 +333,10 @@ fn translate_block(
             0x19 => stack.push(Value(format!("l{}", code[pc + 1]))),     // aload <idx>
             0x4b..=0x4e => store_local(&mut instrs, &mut stack, (op - 0x4b) as u16)?, // astore_0..3
             0x3a => store_local(&mut instrs, &mut stack, code[pc + 1] as u16)?,       // astore <idx>
+            0x57 => {
+                // pop
+                pop(&mut stack)?;
+            }
             0x59 => {
                 // dup
                 let top = stack
@@ -340,6 +344,33 @@ fn translate_block(
                     .cloned()
                     .ok_or_else(|| RavaError::Other("dup on empty operand stack".into()))?;
                 stack.push(top);
+            }
+            0x5a => {
+                // dup_x1: …, v2, v1 → …, v1, v2, v1
+                let v1 = pop(&mut stack)?;
+                let v2 = pop(&mut stack)?;
+                stack.push(v1.clone());
+                stack.push(v2);
+                stack.push(v1);
+            }
+            0x5c => {
+                // dup2: …, v2, v1 → …, v2, v1, v2, v1 (two category-1 values, e.g. arrayref+index)
+                let n = stack.len();
+                if n < 2 {
+                    return Err(RavaError::Other("dup2 on short operand stack".into()));
+                }
+                let a = stack[n - 2].clone();
+                let b = stack[n - 1].clone();
+                stack.push(a);
+                stack.push(b);
+            }
+            0x5f => {
+                // swap
+                let n = stack.len();
+                if n < 2 {
+                    return Err(RavaError::Other("swap on short operand stack".into()));
+                }
+                stack.swap(n - 1, n - 2);
             }
             0xbb => {
                 // new <class index>
@@ -668,7 +699,7 @@ fn instr_len(op: u8) -> Option<usize> {
         0x02..=0x0f => 1, // iconst/lconst/fconst/dconst
         0x1a..=0x35 => 1, // {i,l,f,d,a}load_0..3 + *aload (array load)
         0x3b..=0x56 => 1, // {i,l,f,d,a}store_0..3 + *astore (array store)
-        0x59 => 1,        // dup
+        0x57..=0x5f => 1, // pop/pop2/dup/dup_x1/dup_x2/dup2/.../swap
         0x60..=0x83 => 1, // arithmetic + negate + shifts/bitwise (int/long/float/double)
         0x85..=0x93 => 1, // numeric conversions
         0xac..=0xb1 => 1, // *return
@@ -804,6 +835,7 @@ mod tests {
     const NUM: &[u8] = include_bytes!("fixtures/Num.class");
     const BITS: &[u8] = include_bytes!("fixtures/Bits.class");
     const EXC: &[u8] = include_bytes!("fixtures/Exc.class");
+    const STK: &[u8] = include_bytes!("fixtures/Stk.class");
     const MATHLIB: &[u8] = include_bytes!("fixtures/MathLib.class");
     const APP: &[u8] = include_bytes!("fixtures/App.class");
 
@@ -873,6 +905,12 @@ mod tests {
         assert_eq!(run_class(STR, "subLen", vec![]), 5);
         // library invokestatic (Integer.parseInt) routed to the builtin
         assert_eq!(run_class(STR, "parsed", vec![]), 42);
+    }
+
+    #[test]
+    fn stack_ops_compound_assign() {
+        // a[0] += 5 then *= 2 uses dup2 (duplicate arrayref+index): ((10+5)*2) = 30
+        assert_eq!(run_class(STK, "compound", vec![RVal::Int(10)]), 30);
     }
 
     #[test]
