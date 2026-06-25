@@ -10066,3 +10066,19 @@ class Main {
 "#);
     assert_eq!(out.trim(), "RED-BLUE\np=P[x=1, y=2]");
 }
+
+#[test]
+fn string_compare_to_and_value_of_chars() {
+    // compareTo returns the char/length difference (not just -1/0/1); valueOf(char[]) joins chars.
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println("Hello".compareTo("World"));
+        System.out.println("abc".compareTo("abc"));
+        System.out.println("abc".compareTo("ab"));
+        System.out.println(String.valueOf(new char[]{'h', 'i'}));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "-15\n0\n1\nhi");
+}

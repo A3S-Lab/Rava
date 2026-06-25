@@ -24,9 +24,17 @@ pub fn dispatch_static(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
             let parts: Vec<String> = args[1..].iter().map(|v| v.to_display()).collect();
             Some(Ok(RVal::Str(parts.join(&delim))))
         }
-        id if id == fnv("String.copyValueOf") => Some(Ok(RVal::Str(
-            args.first().map(|v| v.to_display()).unwrap_or_default(),
-        ))),
+        id if id == fnv("String.valueOf") || id == fnv("String.copyValueOf") => {
+            match args.first() {
+                // valueOf(char[]) / copyValueOf(char[]) → the characters joined ("hi", not "[h, i]").
+                Some(RVal::Array(arr)) => {
+                    let joined: String = arr.borrow().iter().map(|v| v.to_display()).collect();
+                    Some(Ok(RVal::Str(joined)))
+                }
+                Some(v) => Some(Ok(RVal::Str(v.to_display()))),
+                None => Some(Ok(RVal::Str("null".into()))),
+            }
+        }
         _ => None,
     }
 }
@@ -187,13 +195,14 @@ pub fn dispatch_named(s: &str, method: &str, args: &[RVal]) -> Option<Result<RVa
         }
         "compareTo" => {
             let other = args.first().map(|v| v.to_display()).unwrap_or_default();
-            Some(Ok(RVal::Int(s.cmp(other.as_str()) as i64)))
+            Some(Ok(RVal::Int(java_string_compare(s, &other))))
         }
         "compareToIgnoreCase" => {
             let other = args.first().map(|v| v.to_display()).unwrap_or_default();
-            Some(Ok(RVal::Int(
-                s.to_lowercase().cmp(&other.to_lowercase()) as i64
-            )))
+            Some(Ok(RVal::Int(java_string_compare(
+                &s.to_lowercase(),
+                &other.to_lowercase(),
+            ))))
         }
         "hashCode" => {
             let mut h: i32 = 0;
@@ -256,4 +265,17 @@ pub fn dispatch_named(s: &str, method: &str, args: &[RVal]) -> Option<Result<RVa
         "regionMatches" => Some(Ok(RVal::Bool(false))), // simplified stub
         _ => None,
     }
+}
+
+/// Java's `String.compareTo`: the difference of the first differing UTF-16 code unit, or the
+/// length difference if one string is a prefix of the other (not just the sign, -1/0/1).
+fn java_string_compare(a: &str, b: &str) -> i64 {
+    let av: Vec<u16> = a.encode_utf16().collect();
+    let bv: Vec<u16> = b.encode_utf16().collect();
+    for k in 0..av.len().min(bv.len()) {
+        if av[k] != bv[k] {
+            return av[k] as i64 - bv[k] as i64;
+        }
+    }
+    av.len() as i64 - bv.len() as i64
 }

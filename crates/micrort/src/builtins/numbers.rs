@@ -306,10 +306,7 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
             Some(Ok(RVal::Int(c as i64)))
         }
 
-        // ── String static ─────────────────────────────────────────────────────
-        id if id == fnv("String.valueOf") => Some(Ok(RVal::Str(
-            args.first().map(|v| v.to_display()).unwrap_or_default(),
-        ))),
+        // String.valueOf is handled in `string::dispatch_static` (it needs char[] joining).
 
         _ => None,
     }
