@@ -156,6 +156,11 @@ impl RirInterpreter {
             }
 
             if let Some(val) = returned {
+                // NOTE: `finally` does not currently run when the try/catch body `return`s
+                // (only on normal fall-through / uncaught throw). Fixing this needs proper
+                // finally semantics rather than the marker+handler-stack scheme — a naive
+                // run-on-return here double-runs finally in nested cases. Tracked in
+                // docs/known-limitations.md.
                 return Ok(val);
             }
             match next_block {
