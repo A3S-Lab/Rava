@@ -224,6 +224,49 @@ impl Parser {
                 }
             }
 
+            // Canonical toString(): `Name[f0=v0, f1=v1, …]` (unless the user defined one).
+            // Built as a left-folding string-concatenation chain.
+            let user_to_string = members
+                .iter()
+                .any(|m| matches!(m, Member::Method(md) if md.name == "toString"));
+            if !user_to_string {
+                let mut expr = Expr::StrLit(format!("{name}["));
+                for (i, (_, fname)) in record_components.iter().enumerate() {
+                    let prefix = if i == 0 {
+                        format!("{fname}=")
+                    } else {
+                        format!(", {fname}=")
+                    };
+                    expr = Expr::BinOp {
+                        op: BinOp::Add,
+                        lhs: Box::new(expr),
+                        rhs: Box::new(Expr::StrLit(prefix)),
+                    };
+                    expr = Expr::BinOp {
+                        op: BinOp::Add,
+                        lhs: Box::new(expr),
+                        rhs: Box::new(Expr::Field {
+                            obj: Box::new(Expr::This),
+                            name: fname.clone(),
+                        }),
+                    };
+                }
+                expr = Expr::BinOp {
+                    op: BinOp::Add,
+                    lhs: Box::new(expr),
+                    rhs: Box::new(Expr::StrLit("]".into())),
+                };
+                members.push(Member::Method(MethodDecl {
+                    name: "toString".into(),
+                    type_params_raw: None,
+                    modifiers: vec![Modifier::Public],
+                    annotations: vec![],
+                    return_ty: TypeExpr::simple("String"),
+                    params: vec![],
+                    body: Some(Block(vec![Stmt::Return(Some(expr))])),
+                }));
+            }
+
             return Ok(ClassDecl {
                 name,
                 kind,

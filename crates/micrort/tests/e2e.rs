@@ -9976,3 +9976,20 @@ class Main {
 "#);
     assert_eq!(out.trim(), "30\n3 c");
 }
+
+#[test]
+fn record_auto_to_string() {
+    // Records get a canonical toString(): `Name[f0=v0, f1=v1, ...]`. A user-defined
+    // toString() still wins.
+    let out = run(r#"
+class Main {
+    record Point(int x, int y) {}
+    record Tagged(String name, int n) { public String toString(){ return name + ":" + n; } }
+    public static void main(String[] args) {
+        System.out.println(new Point(3, 4));
+        System.out.println(new Tagged("a", 7));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Point[x=3, y=4]\na:7");
+}

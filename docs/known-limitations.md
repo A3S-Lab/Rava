@@ -83,6 +83,9 @@ fix is invasive and risks regressing the 393-test suite):
 - **Mixed-type ternary / numeric widening on assignment**: `double d = cond ? 1 : 2.5;` keeps
   the `int` branch as `1` rather than widening to `1.0`. Assigning an int literal to a declared
   `double` is not coerced.
+- **Records** generate the canonical `toString()` (`Name[f0=v0, …]`) and accessors, but **not the
+  canonical `equals`/`hashCode`** — so `r1.equals(r2)` and using a record as a `HashMap` key compare
+  by identity, not by component values.
 - `IntStream.summaryStatistics()` is not implemented (the accessor calls — `getSum`/`getAverage`/…
   — are lowered down a path that can't read the result object's fields). Use `sum()`/`average()`/
   `min()`/`max()` directly, which work.
