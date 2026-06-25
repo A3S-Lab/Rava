@@ -254,6 +254,19 @@ fn translate_block(
                 });
                 stack.push(r);
             }
+            0x78..=0x83 => {
+                // {i,l}{shl,shr,ushr,and,or,xor} — shifts and bitwise ops
+                let rhs = pop(&mut stack)?;
+                let lhs = pop(&mut stack)?;
+                let r = fresh();
+                instrs.push(RirInstr::BinOp {
+                    op: bitwise_op(op),
+                    lhs,
+                    rhs,
+                    ret: r.clone(),
+                });
+                stack.push(r);
+            }
             0x85..=0x93 => {
                 // numeric conversions (i2l, i2d, l2i, f2i, d2i, i2b, …)
                 let v = pop(&mut stack)?;
@@ -579,6 +592,18 @@ fn arith_op(op: u8) -> BinOp {
     }
 }
 
+fn bitwise_op(op: u8) -> BinOp {
+    // {i,l}{shl,shr,ushr,and,or,xor} are laid out in pairs from 0x78.
+    match (op - 0x78) / 2 {
+        0 => BinOp::Shl,
+        1 => BinOp::Shr,
+        2 => BinOp::UShr,
+        3 => BinOp::BitAnd,
+        4 => BinOp::BitOr,
+        _ => BinOp::Xor,
+    }
+}
+
 /// Target RIR type for a numeric conversion opcode (i2l, i2d, l2i, d2i, …).
 fn convert_target(op: u8) -> RirType {
     match op {
@@ -636,7 +661,7 @@ fn instr_len(op: u8) -> Option<usize> {
         0x1a..=0x35 => 1, // {i,l,f,d,a}load_0..3 + *aload (array load)
         0x3b..=0x56 => 1, // {i,l,f,d,a}store_0..3 + *astore (array store)
         0x59 => 1,        // dup
-        0x60..=0x77 => 1, // arithmetic (int/long/float/double) + negate
+        0x60..=0x83 => 1, // arithmetic + negate + shifts/bitwise (int/long/float/double)
         0x85..=0x93 => 1, // numeric conversions
         0xac..=0xb1 => 1, // *return
         0xbe => 1,        // arraylength
@@ -769,6 +794,7 @@ mod tests {
     const HELLO: &[u8] = include_bytes!("fixtures/Hello.class");
     const ARR: &[u8] = include_bytes!("fixtures/Arr.class");
     const NUM: &[u8] = include_bytes!("fixtures/Num.class");
+    const BITS: &[u8] = include_bytes!("fixtures/Bits.class");
     const MATHLIB: &[u8] = include_bytes!("fixtures/MathLib.class");
     const APP: &[u8] = include_bytes!("fixtures/App.class");
 
@@ -838,6 +864,14 @@ mod tests {
         assert_eq!(run_class(STR, "subLen", vec![]), 5);
         // library invokestatic (Integer.parseInt) routed to the builtin
         assert_eq!(run_class(STR, "parsed", vec![]), 42);
+    }
+
+    #[test]
+    fn bitwise_ops() {
+        // shifts (<<, >>) + and/or/xor: ((5<<2)|(7&3)) ^ (5>>1) = (20|3)^2 = 23^2 = 21
+        assert_eq!(run_class(BITS, "ops", vec![RVal::Int(5), RVal::Int(7)]), 21);
+        // >>> on non-negative matches the JVM (negatives differ: our int is i64, not i32)
+        assert_eq!(run_class(BITS, "ushr", vec![RVal::Int(8)]), 4);
     }
 
     #[test]
