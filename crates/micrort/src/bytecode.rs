@@ -45,20 +45,30 @@ pub fn lower_method(class: &ClassFile, method: &Method, func_id: u32) -> Result<
     })
 }
 
-/// Parse a `.class` file and lower all of its (lowerable) methods into a runnable
-/// RIR module, populating field names. Methods using opcodes not yet supported are
-/// skipped, so a class can still run its `main` even if one method is too advanced.
+/// Parse one `.class` file and lower its (lowerable) methods into a runnable RIR module.
 pub fn load_class_module(bytes: &[u8]) -> Result<RirModule> {
-    let cf = crate::classfile::parse(bytes)?;
-    let mut module = RirModule::new(&cf.name);
-    for f in &cf.fields {
-        module
-            .field_names
-            .insert(crate::lowerer_hash::encode_builtin(f), f.clone());
-    }
-    for (i, m) in cf.methods.iter().enumerate() {
-        if let Ok(func) = lower_method(&cf, m, i as u32) {
-            module.functions.push(func);
+    load_classes_module(std::slice::from_ref(&bytes))
+}
+
+/// Lower several `.class` files into one module so cross-class calls resolve — the core
+/// of running a multi-class program or a JAR. Methods using opcodes not yet supported are
+/// skipped (so one advanced method doesn't block running the rest); field names are
+/// registered so `getfield`/`putfield` resolve.
+pub fn load_classes_module(classes: &[&[u8]]) -> Result<RirModule> {
+    let mut module = RirModule::new("app");
+    let mut func_id = 0u32;
+    for bytes in classes {
+        let cf = crate::classfile::parse(bytes)?;
+        for f in &cf.fields {
+            module
+                .field_names
+                .insert(crate::lowerer_hash::encode_builtin(f), f.clone());
+        }
+        for m in &cf.methods {
+            if let Ok(func) = lower_method(&cf, m, func_id) {
+                module.functions.push(func);
+                func_id += 1;
+            }
         }
     }
     Ok(module)
@@ -636,6 +646,8 @@ mod tests {
     const OBJ: &[u8] = include_bytes!("fixtures/Obj.class");
     const STR: &[u8] = include_bytes!("fixtures/Str.class");
     const HELLO: &[u8] = include_bytes!("fixtures/Hello.class");
+    const MATHLIB: &[u8] = include_bytes!("fixtures/MathLib.class");
+    const APP: &[u8] = include_bytes!("fixtures/App.class");
 
     /// Lower a class, run its `main`, and capture stdout.
     fn run_main_capture(fixture: &[u8]) -> String {
@@ -703,6 +715,20 @@ mod tests {
         assert_eq!(run_class(STR, "subLen", vec![]), 5);
         // library invokestatic (Integer.parseInt) routed to the builtin
         assert_eq!(run_class(STR, "parsed", vec![]), 42);
+    }
+
+    #[test]
+    fn cross_class_calls() {
+        // Two classes in one module (like a JAR): App calls MathLib (static + instance).
+        let module = load_classes_module(&[MATHLIB, APP]).unwrap();
+        let interp = RirInterpreter::new(module);
+        // App.compute(5) = MathLib.triple(5) + 1 = 16  (cross-class invokestatic)
+        assert_eq!(interp.call("App.compute", vec![RVal::Int(5)]).unwrap().to_display(), "16");
+        // App.viaInstance(4) = new MathLib(10).scaled(4) = 40  (cross-class new + invokevirtual)
+        assert_eq!(
+            interp.call("App.viaInstance", vec![RVal::Int(4)]).unwrap().to_display(),
+            "40"
+        );
     }
 
     #[test]
