@@ -10207,3 +10207,19 @@ class Main {
 "#);
     assert_eq!(out.trim(), "12|34\n56|78\na[1]b[2]c[3]\n4\ntrue");
 }
+
+#[test]
+fn enum_value_of() {
+    // The implicit static valueOf(String) — returns the named constant or throws.
+    let out = run(r#"
+class Main {
+    enum Day { MON, TUE, WED, THU, FRI }
+    public static void main(String[] args) {
+        System.out.println(Day.valueOf("WED"));
+        System.out.println(Day.valueOf("FRI").ordinal());
+        try { Day.valueOf("NOPE"); } catch (IllegalArgumentException e) { System.out.println("caught"); }
+    }
+}
+"#);
+    assert_eq!(out.trim(), "WED\n4\ncaught");
+}

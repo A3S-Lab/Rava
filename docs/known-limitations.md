@@ -8,7 +8,7 @@ It reflects the **verified** state of the code, not aspirational goals.
 Rava has two execution paths that share one IR (RIR):
 
 - **`rava run` / `rava test` → RIR interpreter** (`crates/micrort`). This is the **mature,
-  supported path**: 411/411 end-to-end Java tests pass. Treat this as the product today.
+  supported path**: 412/412 end-to-end Java tests pass. Treat this as the product today.
 - **`rava build` → Cranelift AOT** (`crates/codegen-cranelift`). This is **experimental** —
   it compiles only a subset of programs and miscompiles several basics (see below).
 
@@ -90,10 +90,10 @@ fix is invasive and risks regressing the e2e suite:
   have value semantics: `r1.equals(r2)`, records as `HashMap`/`HashSet` keys, and set dedup all work
   by component values. (Object map/set keys generally now compare by `toString` value, not identity —
   so any class with a meaningful `toString` works as a key; classes without one stay identity-based.)
-- **Enums**: `name()`/`ordinal()`/`values()`, `switch` on enums, custom methods, constructor
-  fields, and display via `println`/concat/`printf %s` all work. Still missing: `Enum.valueOf(name)`
-  (returns nothing) and `Arrays.toString(EnumType.values())` (shows `Type@id` — array-of-objects
-  stringification doesn't reach the per-element `toString`; use `printf`/a manual loop instead).
+- **Enums**: `name()`/`ordinal()`/`values()`/`valueOf(name)`, `switch` on enums, custom methods,
+  constructor fields, and display via `println`/concat/`printf %s` all work. Remaining gap:
+  `Arrays.toString(EnumType.values())` shows `Type@id` — array-of-objects stringification doesn't
+  reach the per-element `toString` (use `printf`/a manual loop instead).
 - **Interface `default` methods called on a *lambda*** dispatch to the SAM instead of the default
   (`Greeter g = () -> "World"; g.greet()` runs the lambda, not `greet()`). Default methods on an
   **anonymous class** work, and the built-in functional combinators (`Function.andThen`/`compose`,

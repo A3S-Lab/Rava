@@ -493,7 +493,8 @@ mod tests {
         "#;
         let file = parse(src);
         assert_eq!(file.classes[0].kind, ClassKind::Enum);
-        assert_eq!(file.classes[0].members.len(), 3);
+        // 3 constants + the generated static valueOf(String) = 4 members.
+        assert_eq!(file.classes[0].members.len(), 4);
     }
 
     #[test]

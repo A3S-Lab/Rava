@@ -414,6 +414,61 @@ impl Parser {
         }
         self.expect(&Token::RBrace)?;
 
+        // Generate the implicit static `valueOf(String name)` for enums: returns the constant
+        // whose name matches, else throws IllegalArgumentException (matches javac).
+        if kind == ClassKind::Enum {
+            let const_names: Vec<String> = members
+                .iter()
+                .filter_map(|m| match m {
+                    Member::EnumConstant(ec) => Some(ec.name.clone()),
+                    _ => None,
+                })
+                .collect();
+            let has_valueof = members
+                .iter()
+                .any(|m| matches!(m, Member::Method(md) if md.name == "valueOf"));
+            if !has_valueof && !const_names.is_empty() {
+                let mut stmts: Vec<Stmt> = Vec::new();
+                for cn in &const_names {
+                    stmts.push(Stmt::If {
+                        cond: Expr::Call {
+                            callee: Box::new(Expr::Field {
+                                obj: Box::new(Expr::Ident("name".into())),
+                                name: "equals".into(),
+                            }),
+                            args: vec![Expr::StrLit(cn.clone())],
+                            type_args_raw: None,
+                        },
+                        then: Box::new(Stmt::Return(Some(Expr::Ident(cn.clone())))),
+                        else_: None,
+                    });
+                }
+                stmts.push(Stmt::Throw(Expr::New {
+                    ty: TypeExpr::simple("IllegalArgumentException"),
+                    args: vec![Expr::BinOp {
+                        op: BinOp::Add,
+                        lhs: Box::new(Expr::StrLit("No enum constant ".into())),
+                        rhs: Box::new(Expr::Ident("name".into())),
+                    }],
+                    body: None,
+                }));
+                members.push(Member::Method(MethodDecl {
+                    name: "valueOf".into(),
+                    type_params_raw: None,
+                    modifiers: vec![Modifier::Public, Modifier::Static],
+                    annotations: vec![],
+                    return_ty: TypeExpr::simple(name.clone()),
+                    params: vec![Param {
+                        name: "name".into(),
+                        ty: TypeExpr::simple("String"),
+                        variadic: false,
+                        annotations: vec![],
+                    }],
+                    body: Some(Block(stmts)),
+                }));
+            }
+        }
+
         Ok(ClassDecl {
             name,
             kind,
