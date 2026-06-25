@@ -14,11 +14,17 @@ impl Compiler {
     }
 
     /// Compile a single Java source file to a RIR module.
+    ///
+    /// Sources with only top-level statements (no type declaration) are treated as
+    /// scripts and auto-wrapped in a synthetic `Main` class so they run directly
+    /// (Bun-style scripting, e.g. `rava run script.java`).
     pub fn compile(&self, source: &str, file: &Path) -> Result<Module> {
         let module_name = file
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("module");
+        let wrapped = wrap_script_if_needed(source);
+        let source = wrapped.as_deref().unwrap_or(source);
         let tokens = Lexer::new(source).tokenize()?;
         let ast = Parser::new(tokens).parse_file()?;
         GenericChecker::check_file(&ast)?;
@@ -58,6 +64,64 @@ impl Default for Compiler {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Detect "script" sources (only top-level statements, no type declaration) and wrap
+/// them in a synthetic `Main` class with a `main` method. Returns `None` when the source
+/// already declares a type, in which case it is compiled unchanged.
+// ponytail: line-scan heuristic — a `class`/`record`-leading line inside a string/text
+// block could false-positive; acceptable for a script runner. Mixed scripts (a type decl
+// *and* top-level statements) are not supported; declare a class explicitly for those.
+fn wrap_script_if_needed(source: &str) -> Option<String> {
+    if declares_top_level_type(source) {
+        return None;
+    }
+    let mut headers = Vec::new();
+    let mut body = Vec::new();
+    for line in source.lines() {
+        let t = line.trim_start();
+        if t.starts_with("import ") || t.starts_with("package ") {
+            headers.push(line);
+        } else {
+            body.push(line);
+        }
+    }
+    Some(format!(
+        "{headers}\npublic class Main {{\n    public static void main(String[] args) throws Exception {{\n{body}\n    }}\n}}\n",
+        headers = headers.join("\n"),
+        body = body.join("\n"),
+    ))
+}
+
+/// True if the source declares a top-level type (class / interface / enum / record /
+/// annotation), after stripping leading modifiers.
+fn declares_top_level_type(source: &str) -> bool {
+    const MODS: &[&str] = &[
+        "public ",
+        "final ",
+        "abstract ",
+        "sealed ",
+        "non-sealed ",
+        "static ",
+        "private ",
+        "protected ",
+        "strictfp ",
+    ];
+    for line in source.lines() {
+        let mut t = line.trim_start();
+        while let Some(rest) = MODS.iter().find_map(|m| t.strip_prefix(m)) {
+            t = rest.trim_start();
+        }
+        if t.starts_with("class ")
+            || t.starts_with("interface ")
+            || t.starts_with("enum ")
+            || t.starts_with("record ")
+            || t.starts_with("@interface ")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]

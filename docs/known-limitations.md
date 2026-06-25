@@ -60,7 +60,8 @@ reflection, dynamic proxies, and dynamic class loading. This is **aspirational (
 - CLI commands mentioned in the product vision (`lint`, `repl`, `publish`, `doctor`,
   `upgrade`, `export`) are not implemented. Implemented: `run`, `build`, `init`, `add`,
   `remove`, `update`, `deps`, `test`, `fmt`.
-- Script mode (running a `.java` file without a `main`) is documented but not implemented.
+- Fully-qualified references to builtin types (e.g. `java.util.List.of(...)`) do not resolve;
+  use the simple name (`List.of(...)`). Builtins are keyed by simple name.
 
 ## History
 

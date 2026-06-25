@@ -55,6 +55,33 @@ class Main {
 }
 
 #[test]
+fn script_mode_no_main() {
+    // No class, no main — top-level statements (Bun-style scripting).
+    let out = run(r#"
+int x = 21;
+int y = 2;
+System.out.println("answer=" + (x * y));
+for (int i = 1; i <= 3; i++) System.out.println(i);
+"#);
+    assert_eq!(out.trim(), "answer=42\n1\n2\n3");
+}
+
+#[test]
+fn script_mode_with_import() {
+    // Leading imports are hoisted above the synthetic class.
+    let out = run(r#"
+import java.util.ArrayList;
+var list = new ArrayList<Integer>();
+list.add(10);
+list.add(20);
+int sum = 0;
+for (int n : list) sum += n;
+System.out.println(sum);
+"#);
+    assert_eq!(out.trim(), "30");
+}
+
+#[test]
 fn arithmetic() {
     let out = run(r#"
 class Main {
