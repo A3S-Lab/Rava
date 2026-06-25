@@ -297,6 +297,50 @@ fn translate_block(
                 });
                 stack.push(r);
             }
+            0xbc => {
+                // newarray <atype> — primitive array (interpreter stores Int slots)
+                let len = pop(&mut stack)?;
+                let r = fresh();
+                instrs.push(RirInstr::NewArray {
+                    elem_type: RirType::I32,
+                    len,
+                    ret: r.clone(),
+                });
+                stack.push(r);
+            }
+            0xbd => {
+                // anewarray <class index> — reference array
+                let len = pop(&mut stack)?;
+                let r = fresh();
+                instrs.push(RirInstr::NewArray {
+                    elem_type: RirType::Ref(ClassId(0)),
+                    len,
+                    ret: r.clone(),
+                });
+                stack.push(r);
+            }
+            0xbe => {
+                // arraylength
+                let arr = pop(&mut stack)?;
+                let r = fresh();
+                instrs.push(RirInstr::ArrayLen { arr, ret: r.clone() });
+                stack.push(r);
+            }
+            0x2e..=0x35 => {
+                // *aload (array load): …, arrayref, index → value
+                let idx = pop(&mut stack)?;
+                let arr = pop(&mut stack)?;
+                let r = fresh();
+                instrs.push(RirInstr::ArrayLoad { arr, idx, ret: r.clone() });
+                stack.push(r);
+            }
+            0x4f..=0x56 => {
+                // *astore (array store): …, arrayref, index, value →
+                let val = pop(&mut stack)?;
+                let idx = pop(&mut stack)?;
+                let arr = pop(&mut stack)?;
+                instrs.push(RirInstr::ArrayStore { arr, idx, val });
+            }
             0xb2 => {
                 // getstatic <fieldref index>
                 let (cls, name, _desc) = class.field_ref(read_u16(code, pc + 1)?)?;
@@ -528,9 +572,10 @@ fn is_return(op: u8) -> bool {
 /// Total byte length of a supported instruction (incl. opcode); `None` if unsupported.
 fn instr_len(op: u8) -> Option<usize> {
     Some(match op {
-        0x10 | 0x12 | 0x15 | 0x19 | 0x36 | 0x3a => 2, // bipush, ldc, iload, aload, istore, astore
+        0x10 | 0x12 | 0x15 | 0x19 | 0x36 | 0x3a | 0xbc => 2, // bipush, ldc, iload, aload, istore, astore, newarray
         0x11 | 0x13 | 0x84 | 0xa7 | 0xb8 => 3,        // sipush, ldc_w, iinc, goto, invokestatic
-        0xb2 | 0xb4 | 0xb5 | 0xb6 | 0xb7 | 0xbb => 3, // getstatic, get/putfield, invoke{virtual,special}, new
+        0xb2 | 0xb4 | 0xb5 | 0xb6 | 0xb7 | 0xbb | 0xbd => 3, // getstatic, get/putfield, invoke{virtual,special}, new, anewarray
+        0xbe | 0x2e..=0x35 | 0x4f..=0x56 => 1,        // arraylength, *aload, *astore
         0x99..=0xa4 => 3,                             // if<cond> / if_icmp<cond>
         0x00 => 1,                                    // nop
         0x02..=0x08 => 1,                             // iconst_m1..5
@@ -669,6 +714,7 @@ mod tests {
     const OBJ: &[u8] = include_bytes!("fixtures/Obj.class");
     const STR: &[u8] = include_bytes!("fixtures/Str.class");
     const HELLO: &[u8] = include_bytes!("fixtures/Hello.class");
+    const ARR: &[u8] = include_bytes!("fixtures/Arr.class");
     const MATHLIB: &[u8] = include_bytes!("fixtures/MathLib.class");
     const APP: &[u8] = include_bytes!("fixtures/App.class");
 
@@ -738,6 +784,13 @@ mod tests {
         assert_eq!(run_class(STR, "subLen", vec![]), 5);
         // library invokestatic (Integer.parseInt) routed to the builtin
         assert_eq!(run_class(STR, "parsed", vec![]), 42);
+    }
+
+    #[test]
+    fn arrays() {
+        // new int[n], iastore in a loop, iaload, arraylength
+        assert_eq!(run_class(ARR, "sumSquares", vec![RVal::Int(5)]), 30); // 0+1+4+9+16
+        assert_eq!(run_class(ARR, "len", vec![]), 3);
     }
 
     #[test]
