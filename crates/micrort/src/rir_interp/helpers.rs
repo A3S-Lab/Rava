@@ -678,6 +678,25 @@ impl RirInterpreter {
                         return Ok(RVal::Void);
                     }
                 }
+                // removeIf(predicate) on a list — needs interpreter for lambda invocation
+                if method_name == "removeIf" {
+                    if let RVal::Array(arr) = receiver {
+                        let predicate = method_args.first().cloned().unwrap_or(RVal::Null);
+                        let items = arr.borrow().clone();
+                        let mut kept = Vec::with_capacity(items.len());
+                        let mut removed = false;
+                        for item in items {
+                            let test = self.invoke_lambda(&predicate, std::slice::from_ref(&item))?;
+                            if test.is_truthy() {
+                                removed = true;
+                            } else {
+                                kept.push(item);
+                            }
+                        }
+                        *arr.borrow_mut() = kept;
+                        return Ok(RVal::Bool(removed));
+                    }
+                }
                 // ArrayIter hasNext/next
                 if let RVal::ArrayIter(arr, idx) = receiver {
                     match method_name.as_str() {
@@ -2277,6 +2296,12 @@ impl RirInterpreter {
             // Fallback: check known fields
             let heap = self.heap.borrow();
             if let Some(obj) = heap.get(id) {
+                // StringBuilder/StringBuffer: implicit toString() in string concatenation.
+                if obj.class_name == "StringBuilder" || obj.class_name == "StringBuffer" {
+                    if let Some(buf) = obj.fields.get("__buf__") {
+                        return buf.to_display();
+                    }
+                }
                 if let Some(msg) = obj.fields.get("message") {
                     return msg.to_display();
                 }

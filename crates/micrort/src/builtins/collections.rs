@@ -344,10 +344,13 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
         // ── ArrayDeque / LinkedList (as Deque) ────────────────────────────────
         id if id == fnv("ArrayDeque")
             || id == fnv("ArrayDeque.<init>")
+            || id == fnv("ArrayDeque.<init>_1")
             || id == fnv("LinkedList")
-            || id == fnv("LinkedList.<init>") =>
+            || id == fnv("LinkedList.<init>")
+            || id == fnv("LinkedList.<init>_1") =>
         {
-            if let Some(RVal::Array(src)) = args.first() {
+            // Copy source: constructor form passes [this, source]; factory form [source].
+            if let Some(RVal::Array(src)) = args.get(1).or_else(|| args.first()) {
                 return Some(Ok(RVal::Array(Rc::new(RefCell::new(src.borrow().clone())))));
             }
             Some(Ok(RVal::Array(Rc::new(RefCell::new(Vec::new())))))
@@ -491,7 +494,7 @@ pub fn dispatch_array_named(
             }
             Some(Ok(RVal::Null))
         }
-        "removeIf" => Some(Ok(RVal::Bool(false))), // lambda-based, handled by interpreter
+        // removeIf is lambda-based → handled by the interpreter (return None to fall through)
         "contains" => {
             let target = args.first().map(|v| v.to_display()).unwrap_or_default();
             Some(Ok(RVal::Bool(

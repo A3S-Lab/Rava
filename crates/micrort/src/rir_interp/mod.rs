@@ -102,6 +102,7 @@ const KNOWN_METHODS: &[&str] = &[
     "iterator",
     "toArray",
     "sort",
+    "removeIf",
     "subList",
     "indexOf",
     // HashMap
