@@ -10223,3 +10223,21 @@ class Main {
 "#);
     assert_eq!(out.trim(), "WED\n4\ncaught");
 }
+
+#[test]
+fn arrays_tostring_objects() {
+    // Arrays.toString uses each element's toString (enum name, record toString), not Foo@id.
+    let out = run(r#"
+import java.util.*;
+class Main {
+    enum Color { RED, GREEN, BLUE }
+    record P(int x, int y) {}
+    public static void main(String[] args) {
+        System.out.println(Arrays.toString(Color.values()));
+        System.out.println(Arrays.toString(new P[]{new P(1, 2), new P(3, 4)}));
+        System.out.println(Arrays.toString(new int[]{1, 2, 3}));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[RED, GREEN, BLUE]\n[P[x=1, y=2], P[x=3, y=4]]\n[1, 2, 3]");
+}

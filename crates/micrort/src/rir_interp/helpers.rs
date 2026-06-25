@@ -1635,6 +1635,19 @@ impl RirInterpreter {
             }
         }
 
+        // Arrays.toString: the pure builtin shows objects as `Foo@id`. Build it here via
+        // obj_to_string so enum/record/object elements use their name/toString.
+        {
+            use crate::lowerer_hash::encode_builtin;
+            if func_id == encode_builtin("Arrays.toString") {
+                if let Some(RVal::Array(arr)) = args.first() {
+                    let parts: Vec<String> =
+                        arr.borrow().iter().map(|v| self.obj_to_string(v)).collect();
+                    return Ok(RVal::Str(format!("[{}]", parts.join(", "))));
+                }
+            }
+        }
+
         // Arrays.sort(array, comparator): the pure builtin ignores the comparator (it can't invoke
         // lambdas). Sort here using the comparator, like List.sort. No comparator → natural order.
         {
