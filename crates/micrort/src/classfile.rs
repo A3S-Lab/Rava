@@ -15,6 +15,9 @@ use rava_common::error::{RavaError, Result};
 pub struct ClassFile {
     pub name: String,
     pub super_name: Option<String>,
+    /// Declared instance/static field names (used to populate the interpreter's
+    /// field-id → name table so `getfield`/`putfield` resolve).
+    pub fields: Vec<String>,
     pub methods: Vec<Method>,
     pool: ConstantPool,
 }
@@ -24,6 +27,17 @@ impl ClassFile {
     /// (class name, method name, descriptor).
     pub fn method_ref(&self, index: u16) -> Result<(String, String, String)> {
         self.pool.method_ref(index)
+    }
+
+    /// Resolve a `Fieldref` index (a `getfield`/`putfield` operand). Shares the
+    /// class + NameAndType shape with method refs.
+    pub fn field_ref(&self, index: u16) -> Result<(String, String, String)> {
+        self.pool.method_ref(index)
+    }
+
+    /// Resolve a `Class` constant-pool index → its name (a `new` operand).
+    pub fn class_name_at(&self, index: u16) -> Result<String> {
+        self.pool.class_name(index)
     }
 }
 
@@ -60,8 +74,9 @@ pub fn parse(bytes: &[u8]) -> Result<ClassFile> {
         r.u16()?;
     }
     let field_count = r.u16()? as usize;
+    let mut fields = Vec::with_capacity(field_count);
     for _ in 0..field_count {
-        skip_member(r)?;
+        fields.push(parse_field_name(r, &cp)?);
     }
     let method_count = r.u16()? as usize;
     let mut methods = Vec::with_capacity(method_count);
@@ -71,6 +86,7 @@ pub fn parse(bytes: &[u8]) -> Result<ClassFile> {
     Ok(ClassFile {
         name,
         super_name,
+        fields,
         methods,
         pool: cp,
     })
@@ -109,9 +125,10 @@ fn extract_code(body: &[u8]) -> Result<Vec<u8>> {
     Ok(cr.bytes(code_len)?.to_vec())
 }
 
-fn skip_member(r: &mut Reader) -> Result<()> {
-    r.u16()?; // access
-    r.u16()?; // name index
+/// Parse a field, returning its name and skipping the rest.
+fn parse_field_name(r: &mut Reader, cp: &ConstantPool) -> Result<String> {
+    r.u16()?; // access flags
+    let name = cp.utf8(r.u16()?)?;
     r.u16()?; // descriptor index
     let attr_count = r.u16()? as usize;
     for _ in 0..attr_count {
@@ -119,7 +136,7 @@ fn skip_member(r: &mut Reader) -> Result<()> {
         let attr_len = r.u32()? as usize;
         r.bytes(attr_len)?;
     }
-    Ok(())
+    Ok(name)
 }
 
 // ── Constant pool ─────────────────────────────────────────────────────────────
@@ -202,8 +219,8 @@ fn parse_constant_pool(r: &mut Reader) -> Result<ConstantPool> {
                 r.u32()?; // Integer / Float
                 entries[i] = CpEntry::Other;
             }
-            10 | 11 => {
-                // Methodref / InterfaceMethodref: class_index, name_and_type_index
+            9 | 10 | 11 => {
+                // Fieldref / Methodref / InterfaceMethodref: class_index, name_and_type_index
                 let class = r.u16()?;
                 let nat = r.u16()?;
                 entries[i] = CpEntry::Methodref(class, nat);
@@ -214,9 +231,9 @@ fn parse_constant_pool(r: &mut Reader) -> Result<ConstantPool> {
                 let desc = r.u16()?;
                 entries[i] = CpEntry::NameAndType(name, desc);
             }
-            9 | 17 | 18 => {
+            17 | 18 => {
                 r.u16()?;
-                r.u16()?; // Fieldref / (Invoke)Dynamic — not needed yet
+                r.u16()?; // (Invoke)Dynamic — not needed yet
                 entries[i] = CpEntry::Other;
             }
             15 => {

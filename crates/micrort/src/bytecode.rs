@@ -13,7 +13,7 @@
 use crate::classfile::{ClassFile, Method};
 use rava_common::error::{RavaError, Result};
 use rava_rir::module::{BasicBlock, FuncFlags, RirFunction};
-use rava_rir::{BinOp, BlockId, ClassId, FuncId, RirInstr, RirType, UnaryOp, Value};
+use rava_rir::{BinOp, BlockId, ClassId, FieldId, FuncId, RirInstr, RirType, UnaryOp, Value};
 use std::collections::BTreeSet;
 
 /// Lower one method to an RIR function named `Class.method`.
@@ -205,6 +205,80 @@ fn translate_block(
                 push_branch(&mut instrs, cond, code, pc, len)?;
                 terminated = true;
             }
+            0x2a..=0x2d => stack.push(Value(format!("l{}", op - 0x2a))), // aload_0..3
+            0x19 => stack.push(Value(format!("l{}", code[pc + 1]))),     // aload <idx>
+            0x4b..=0x4e => store_local(&mut instrs, &mut stack, (op - 0x4b) as u16)?, // astore_0..3
+            0x3a => store_local(&mut instrs, &mut stack, code[pc + 1] as u16)?,       // astore <idx>
+            0x59 => {
+                // dup
+                let top = stack
+                    .last()
+                    .cloned()
+                    .ok_or_else(|| RavaError::Other("dup on empty operand stack".into()))?;
+                stack.push(top);
+            }
+            0xbb => {
+                // new <class index>
+                let cls = class.class_name_at(read_u16(code, pc + 1)?)?;
+                let r = fresh();
+                instrs.push(RirInstr::New {
+                    class: ClassId(crate::lowerer_hash::encode_builtin(&cls)),
+                    ret: r.clone(),
+                });
+                stack.push(r);
+            }
+            0xb4 => {
+                // getfield <fieldref index>
+                let (_cls, name, _desc) = class.field_ref(read_u16(code, pc + 1)?)?;
+                let obj = pop(&mut stack)?;
+                let r = fresh();
+                instrs.push(RirInstr::GetField {
+                    obj,
+                    field: FieldId(crate::lowerer_hash::encode_builtin(&name)),
+                    ret: r.clone(),
+                });
+                stack.push(r);
+            }
+            0xb5 => {
+                // putfield <fieldref index>
+                let (_cls, name, _desc) = class.field_ref(read_u16(code, pc + 1)?)?;
+                let val = pop(&mut stack)?;
+                let obj = pop(&mut stack)?;
+                instrs.push(RirInstr::SetField {
+                    obj,
+                    field: FieldId(crate::lowerer_hash::encode_builtin(&name)),
+                    val,
+                });
+            }
+            0xb6 | 0xb7 => {
+                // invokevirtual / invokespecial — receiver + args (direct call; no vtable yet)
+                let (cls, name, desc) = class.method_ref(read_u16(code, pc + 1)?)?;
+                let argc = parse_arg_types(&desc)?.len();
+                let mut args = vec![Value(String::new()); argc + 1]; // slot 0 = receiver
+                for slot in args.iter_mut().skip(1).rev() {
+                    *slot = pop(&mut stack)?;
+                }
+                args[0] = pop(&mut stack)?;
+                // A library constructor (java/lang/Object.<init>, …) is a no-op: the object
+                // is already allocated by `new`.
+                if op == 0xb7 && name == "<init>" && cls.contains('/') {
+                    // discard
+                } else {
+                    let ret = if matches!(parse_return_type(&desc)?, RirType::Void) {
+                        None
+                    } else {
+                        Some(fresh())
+                    };
+                    instrs.push(RirInstr::Call {
+                        func: FuncId(crate::lowerer_hash::encode_builtin(&format!("{cls}.{name}"))),
+                        args,
+                        ret: ret.clone(),
+                    });
+                    if let Some(r) = ret {
+                        stack.push(r);
+                    }
+                }
+            }
             0xb8 => {
                 // invokestatic <methodref index> — direct call, no receiver
                 let (cls, name, desc) = class.method_ref(read_u16(code, pc + 1)?)?;
@@ -232,7 +306,8 @@ fn translate_block(
                 instrs.push(RirInstr::Jump(BlockId(target as u32)));
                 terminated = true;
             }
-            0xac => {
+            0xac | 0xb0 => {
+                // ireturn / areturn
                 let v = pop(&mut stack)?;
                 instrs.push(RirInstr::Return(Some(v)));
                 terminated = true;
@@ -259,12 +334,14 @@ fn translate_block(
 
 // ── Instruction helpers ───────────────────────────────────────────────────────
 
-/// Identity int copy `dst = src` (the RIR interpreter treats I32→I32 Convert as a move).
+/// Type-preserving identity copy `dst = src` for local stores. Uses a `RawPtr` Convert
+/// because the interpreter passes those through unchanged (an `I32` Convert would coerce
+/// the value to an int, destroying object references).
 fn copy(src: Value, dst: Value) -> RirInstr {
     RirInstr::Convert {
         val: src,
-        from: RirType::I32,
-        to: RirType::I32,
+        from: RirType::RawPtr,
+        to: RirType::RawPtr,
         ret: dst,
     }
 }
@@ -341,16 +418,20 @@ fn is_return(op: u8) -> bool {
 /// Total byte length of a supported instruction (incl. opcode); `None` if unsupported.
 fn instr_len(op: u8) -> Option<usize> {
     Some(match op {
-        0x10 | 0x15 | 0x36 => 2,                      // bipush, iload, istore (1 operand)
+        0x10 | 0x15 | 0x19 | 0x36 | 0x3a => 2,        // bipush, iload, aload, istore, astore
         0x11 | 0x84 | 0xa7 | 0xb8 => 3,               // sipush, iinc, goto, invokestatic
+        0xb4 | 0xb5 | 0xb6 | 0xb7 | 0xbb => 3,        // getfield, putfield, invoke{virtual,special}, new
         0x99..=0xa4 => 3,                             // if<cond> / if_icmp<cond>
         0x00 => 1,                                    // nop
         0x02..=0x08 => 1,                             // iconst_m1..5
         0x1a..=0x1d => 1,                             // iload_0..3
+        0x2a..=0x2d => 1,                             // aload_0..3
         0x3b..=0x3e => 1,                             // istore_0..3
+        0x4b..=0x4e => 1,                             // astore_0..3
+        0x59 => 1,                                    // dup
         0x60 | 0x64 | 0x68 | 0x6c | 0x70 => 1,        // iadd isub imul idiv irem
         0x74 => 1,                                    // ineg
-        0xac | 0xb1 => 1,                             // ireturn, return
+        0xac | 0xb0 | 0xb1 => 1,                      // ireturn, areturn, return
         _ => return None,
     })
 }
@@ -453,6 +534,11 @@ mod tests {
     fn run_class(fixture: &[u8], method: &str, args: Vec<RVal>) -> i64 {
         let cf = classfile::parse(fixture).unwrap();
         let mut module = RirModule::new("M");
+        for f in &cf.fields {
+            module
+                .field_names
+                .insert(crate::lowerer_hash::encode_builtin(f), f.clone());
+        }
         for (i, m) in cf.methods.iter().enumerate() {
             if let Ok(func) = lower_method(&cf, m, i as u32) {
                 module.functions.push(func);
@@ -470,6 +556,7 @@ mod tests {
     const ADD: &[u8] = include_bytes!("fixtures/Add.class");
     const CALC: &[u8] = include_bytes!("fixtures/Calc.class");
     const CALLER: &[u8] = include_bytes!("fixtures/Caller.class");
+    const OBJ: &[u8] = include_bytes!("fixtures/Obj.class");
 
     #[test]
     fn arithmetic() {
@@ -499,5 +586,13 @@ mod tests {
         assert_eq!(run_class(CALLER, "square", vec![RVal::Int(6)]), 36);
         assert_eq!(run_class(CALLER, "sumSquares", vec![RVal::Int(3), RVal::Int(4)]), 25);
         assert_eq!(run_class(CALLER, "fib", vec![RVal::Int(10)]), 55);
+    }
+
+    #[test]
+    fn objects_and_instance_methods() {
+        // new + putfield + getfield (default constructor; super Object.<init> no-op)
+        assert_eq!(run_class(OBJ, "make", vec![RVal::Int(3), RVal::Int(4)]), 7);
+        // new + putfield + invokevirtual (instance method reading fields)
+        assert_eq!(run_class(OBJ, "useSum", vec![RVal::Int(10), RVal::Int(20)]), 30);
     }
 }
