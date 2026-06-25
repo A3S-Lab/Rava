@@ -157,6 +157,7 @@ const KNOWN_METHODS: &[&str] = &[
     "deleteCharAt",
     "delete",
     "replace",
+    "setLength",
     // Number boxing
     "intValue",
     "longValue",

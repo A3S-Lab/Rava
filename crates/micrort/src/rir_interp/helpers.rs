@@ -1635,6 +1635,33 @@ impl RirInterpreter {
             }
         }
 
+        // Arrays.sort(array, comparator): the pure builtin ignores the comparator (it can't invoke
+        // lambdas). Sort here using the comparator, like List.sort. No comparator → natural order.
+        {
+            use crate::lowerer_hash::encode_builtin;
+            if func_id == encode_builtin("Arrays.sort") && args.len() >= 2 {
+                if let RVal::Array(arr) = &args[0] {
+                    let comparator = args[1].clone();
+                    let mut elems = arr.borrow().clone();
+                    for i in 1..elems.len() {
+                        let mut j = i;
+                        while j > 0 {
+                            let cmp = self
+                                .invoke_lambda(&comparator, &[elems[j - 1].clone(), elems[j].clone()])?;
+                            if cmp.as_int() > 0 {
+                                elems.swap(j - 1, j);
+                                j -= 1;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    *arr.borrow_mut() = elems;
+                    return Ok(RVal::Void);
+                }
+            }
+        }
+
         // printf/format format objects with %s via the heap-less display (→ `Foo@id`). Pre-convert
         // any object arg through obj_to_string (enum → name, record → toString) so %s is correct.
         {

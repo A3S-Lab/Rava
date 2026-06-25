@@ -44,9 +44,29 @@ impl RirInterpreter {
                 let len = heap
                     .get(&id)
                     .and_then(|o| o.fields.get("__buf__"))
-                    .map(|v| v.to_display().len() as i64)
+                    .map(|v| v.to_display().chars().count() as i64)
                     .unwrap_or(0);
                 Some(Ok(RVal::Int(len)))
+            }
+            "setLength" => {
+                let n = args.first().map(|v| v.as_int()).unwrap_or(0).max(0) as usize;
+                let mut heap = self.heap.borrow_mut();
+                if let Some(obj) = heap.get_mut(&id) {
+                    let cur = obj
+                        .fields
+                        .get("__buf__")
+                        .map(|v| v.to_display())
+                        .unwrap_or_default();
+                    let chars: Vec<char> = cur.chars().collect();
+                    let new_s: String = if n <= chars.len() {
+                        chars[..n].iter().collect()
+                    } else {
+                        // Java pads the extension with '\0'.
+                        chars.iter().collect::<String>() + &"\0".repeat(n - chars.len())
+                    };
+                    obj.fields.insert("__buf__".into(), RVal::Str(new_s));
+                }
+                Some(Ok(RVal::Void))
             }
             "insert" => {
                 let offset = args.first().map(|v| v.as_int()).unwrap_or(0) as usize;

@@ -94,7 +94,6 @@ fix is invasive and risks regressing the 393-test suite):
 - `IntStream.summaryStatistics()` is not implemented (the accessor calls — `getSum`/`getAverage`/…
   — are lowered down a path that can't read the result object's fields). Use `sum()`/`average()`/
   `min()`/`max()` directly, which work.
-- `StringBuilder.setLength(n)` is not implemented.
 - Explicit reference casts do not throw `ClassCastException` on a bad cast (the cast is a no-op
   in the interpreter).
 

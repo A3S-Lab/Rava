@@ -10125,3 +10125,22 @@ class Main {
 "#);
     assert_eq!(out.trim(), "true\nfalse\ntrue\nfound\nfalse\n1");
 }
+
+#[test]
+fn arrays_sort_comparator_and_setlength() {
+    // Arrays.sort(array, comparator) applies the comparator; StringBuilder.setLength truncates.
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        Integer[] arr = {5, 2, 8, 1};
+        Arrays.sort(arr, Collections.reverseOrder());
+        System.out.println(Arrays.toString(arr));
+        StringBuilder sb = new StringBuilder("a,b,c,");
+        sb.setLength(sb.length() - 1);
+        System.out.println(sb + " len=" + sb.length());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[8, 5, 2, 1]\na,b,c len=5");
+}
