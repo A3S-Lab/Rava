@@ -13,6 +13,10 @@ pub struct RunArgs {
     #[arg(long)]
     pub watch: bool,
 
+    /// Dependency JARs to load alongside a `.class`/`.jar` (comma-separated or repeated)
+    #[arg(long, short = 'c', value_delimiter = ',')]
+    pub classpath: Vec<PathBuf>,
+
     /// Arguments passed to the Java program
     #[arg(last = true)]
     pub program_args: Vec<String>,
@@ -38,7 +42,16 @@ fn run_once(args: &RunArgs) -> Result<()> {
             let bytes = std::fs::read(file)
                 .with_context(|| format!("cannot read {}", file.display()))?;
             let module = if ext == Some("jar") {
-                rava_micrort::bytecode::load_jar(&bytes)
+                // Load the main JAR plus any dependency JARs (classpath) into one module.
+                let mut jars: Vec<Vec<u8>> = vec![bytes];
+                for cp in &args.classpath {
+                    jars.push(
+                        std::fs::read(cp)
+                            .with_context(|| format!("cannot read classpath jar {}", cp.display()))?,
+                    );
+                }
+                let refs: Vec<&[u8]> = jars.iter().map(|v| v.as_slice()).collect();
+                rava_micrort::bytecode::load_jars(&refs)
             } else {
                 rava_micrort::bytecode::load_class_module(&bytes)
             }
