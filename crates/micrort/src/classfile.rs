@@ -20,6 +20,7 @@ pub struct ClassFile {
     pub fields: Vec<String>,
     pub methods: Vec<Method>,
     pool: ConstantPool,
+    bootstrap_methods: Vec<BootstrapMethod>,
 }
 
 impl ClassFile {
@@ -43,6 +44,12 @@ impl ClassFile {
     /// Resolve an `ldc`/`ldc_w` constant-pool index → a String or Integer constant.
     pub fn constant(&self, index: u16) -> Result<Constant> {
         self.pool.constant(index)
+    }
+
+    /// Resolve an `invokedynamic` operand to a string concatenation if it is one
+    /// (StringConcatFactory); `Ok(None)` for unsupported indy kinds.
+    pub fn indy_concat(&self, index: u16) -> Result<Option<IndyConcat>> {
+        self.pool.indy_concat(index, &self.bootstrap_methods)
     }
 }
 
@@ -103,13 +110,45 @@ pub fn parse(bytes: &[u8]) -> Result<ClassFile> {
     for _ in 0..method_count {
         methods.push(parse_method(r, &cp)?);
     }
+
+    // class-level attributes — find BootstrapMethods (needed to resolve invokedynamic)
+    let mut bootstrap_methods = Vec::new();
+    if let Ok(attr_count) = r.u16() {
+        for _ in 0..attr_count {
+            let Ok(name_idx) = r.u16() else { break };
+            let attr_name = cp.utf8(name_idx).unwrap_or_default();
+            let Ok(attr_len) = r.u32() else { break };
+            let Ok(body) = r.bytes(attr_len as usize) else { break };
+            if attr_name == "BootstrapMethods" {
+                bootstrap_methods = parse_bootstrap_methods(body)?;
+            }
+        }
+    }
+
     Ok(ClassFile {
         name,
         super_name,
         fields,
         methods,
         pool: cp,
+        bootstrap_methods,
     })
+}
+
+fn parse_bootstrap_methods(body: &[u8]) -> Result<Vec<BootstrapMethod>> {
+    let cr = &mut Reader::new(body);
+    let n = cr.u16()? as usize;
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        let handle_index = cr.u16()?;
+        let argc = cr.u16()? as usize;
+        let mut args = Vec::with_capacity(argc);
+        for _ in 0..argc {
+            args.push(cr.u16()?);
+        }
+        out.push(BootstrapMethod { handle_index, args });
+    }
+    Ok(out)
 }
 
 const ACC_STATIC: u16 = 0x0008;
@@ -189,8 +228,10 @@ enum CpEntry {
     Integer(i64),          // Integer constant value
     Long(i64),             // Long constant value
     Double(f64),           // Double constant value
-    Methodref(u16, u16),   // class_index, name_and_type_index
-    NameAndType(u16, u16), // name_index, descriptor_index
+    Methodref(u16, u16),     // class_index, name_and_type_index
+    NameAndType(u16, u16),   // name_index, descriptor_index
+    MethodHandle(u16),       // reference_index → Methodref
+    InvokeDynamic(u16, u16), // bootstrap_method_attr_index, name_and_type_index
     Other,
     Placeholder, // unused slot 0, and the slot following Long/Double
 }
@@ -200,6 +241,24 @@ pub enum Constant {
     Str(String),
     Int(i64),
     Float(f64),
+}
+
+/// One entry of the class-level `BootstrapMethods` attribute.
+#[derive(Clone)]
+struct BootstrapMethod {
+    handle_index: u16,
+    args: Vec<u16>,
+}
+
+/// A resolved string-concatenation `invokedynamic` (StringConcatFactory).
+pub struct IndyConcat {
+    /// `makeConcatWithConstants` recipe (``=arg, ``=constant, else literal);
+    /// `None` for `makeConcat` (concatenate the dynamic args directly).
+    pub recipe: Option<String>,
+    /// The call-site descriptor (its argument count = number of dynamic operands).
+    pub descriptor: String,
+    /// Constant operands filling `` recipe slots.
+    pub const_args: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -259,6 +318,61 @@ impl ConstantPool {
             ))),
         }
     }
+
+    fn string_const(&self, idx: u16) -> Result<String> {
+        match self.entries.get(idx as usize) {
+            Some(CpEntry::Str(utf8_idx)) => self.utf8(*utf8_idx),
+            _ => Err(RavaError::Other(format!(
+                "constant pool index {idx} is not a String constant"
+            ))),
+        }
+    }
+
+    /// Resolve a string-concatenation `invokedynamic`; `Ok(None)` for any other indy
+    /// (lambda metafactory, etc.) which is not yet supported.
+    fn indy_concat(&self, idx: u16, bsms: &[BootstrapMethod]) -> Result<Option<IndyConcat>> {
+        let (bsm_idx, nat) = match self.entries.get(idx as usize) {
+            Some(CpEntry::InvokeDynamic(b, n)) => (*b, *n),
+            _ => return Ok(None),
+        };
+        let Some(bsm) = bsms.get(bsm_idx as usize) else {
+            return Ok(None);
+        };
+        let ref_idx = match self.entries.get(bsm.handle_index as usize) {
+            Some(CpEntry::MethodHandle(r)) => *r,
+            _ => return Ok(None),
+        };
+        let (_cls, method, _desc) = self.method_ref(ref_idx)?;
+        let descriptor = match self.entries.get(nat as usize) {
+            Some(CpEntry::NameAndType(_n, d)) => self.utf8(*d)?,
+            _ => return Ok(None),
+        };
+        match method.as_str() {
+            "makeConcatWithConstants" => {
+                let recipe = match bsm.args.first() {
+                    Some(&a) => self.string_const(a)?,
+                    None => String::new(),
+                };
+                let const_args = bsm
+                    .args
+                    .iter()
+                    .skip(1)
+                    .filter_map(|&a| self.string_const(a).ok())
+                    .collect();
+                Ok(Some(IndyConcat {
+                    recipe: Some(recipe),
+                    descriptor,
+                    const_args,
+                }))
+            }
+            "makeConcat" => Ok(Some(IndyConcat {
+                recipe: None,
+                descriptor,
+                const_args: vec![],
+            })),
+            _ => Ok(None),
+        }
+    }
 }
 
 fn parse_constant_pool(r: &mut Reader) -> Result<ConstantPool> {
@@ -296,15 +410,19 @@ fn parse_constant_pool(r: &mut Reader) -> Result<ConstantPool> {
                 let desc = r.u16()?;
                 entries[i] = CpEntry::NameAndType(name, desc);
             }
-            17 | 18 => {
+            18 => {
+                let bsm = r.u16()?;
+                let nat = r.u16()?;
+                entries[i] = CpEntry::InvokeDynamic(bsm, nat);
+            }
+            17 => {
                 r.u16()?;
-                r.u16()?; // (Invoke)Dynamic — not needed yet
+                r.u16()?; // Dynamic — not needed yet
                 entries[i] = CpEntry::Other;
             }
             15 => {
-                r.u8()?;
-                r.u16()?; // MethodHandle
-                entries[i] = CpEntry::Other;
+                let _kind = r.u8()?;
+                entries[i] = CpEntry::MethodHandle(r.u16()?); // reference_index
             }
             5 => {
                 let bits = ((r.u32()? as u64) << 32) | r.u32()? as u64;

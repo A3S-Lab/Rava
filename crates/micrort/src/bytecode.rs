@@ -585,11 +585,88 @@ fn translate_block(
                 terminated = true;
             }
             0xbf => {
-                // athrow — throw the top-of-stack exception (uncaught → propagates;
-                // bytecode exception-table → catch translation is not implemented yet).
+                // athrow — throw the top-of-stack exception (uncaught → propagates).
                 let v = pop(&mut stack)?;
                 instrs.push(RirInstr::Throw(v));
                 terminated = true;
+            }
+            0xba => {
+                // invokedynamic — only string concatenation (StringConcatFactory) is supported.
+                let concat = class.indy_concat(read_u16(code, pc + 1)?)?.ok_or_else(|| {
+                    RavaError::Other(
+                        "unsupported invokedynamic (only string concatenation is implemented)".into(),
+                    )
+                })?;
+                let argc = parse_arg_types(&concat.descriptor)?.len();
+                let mut args = vec![Value(String::new()); argc];
+                for slot in args.iter_mut().rev() {
+                    *slot = pop(&mut stack)?;
+                }
+                // Accumulate into a string (starts as "" so RIR Add concatenates).
+                let mut acc = fresh();
+                instrs.push(RirInstr::ConstStr {
+                    ret: acc.clone(),
+                    value: String::new(),
+                });
+                macro_rules! append {
+                    ($piece:expr) => {{
+                        let next = fresh();
+                        instrs.push(RirInstr::BinOp {
+                            op: BinOp::Add,
+                            lhs: acc.clone(),
+                            rhs: $piece,
+                            ret: next.clone(),
+                        });
+                        acc = next;
+                    }};
+                }
+                macro_rules! append_lit {
+                    ($s:expr) => {{
+                        let lit = fresh();
+                        instrs.push(RirInstr::ConstStr {
+                            ret: lit.clone(),
+                            value: $s,
+                        });
+                        append!(lit);
+                    }};
+                }
+                match &concat.recipe {
+                    None => {
+                        for a in args {
+                            append!(a);
+                        }
+                    }
+                    Some(recipe) => {
+                        let mut arg_iter = args.into_iter();
+                        let mut const_iter = concat.const_args.iter();
+                        let mut literal = String::new();
+                        for ch in recipe.chars() {
+                            match ch {
+                                '\u{0001}' => {
+                                    if !literal.is_empty() {
+                                        append_lit!(std::mem::take(&mut literal));
+                                    }
+                                    if let Some(a) = arg_iter.next() {
+                                        append!(a);
+                                    }
+                                }
+                                '\u{0002}' => {
+                                    if !literal.is_empty() {
+                                        append_lit!(std::mem::take(&mut literal));
+                                    }
+                                    if let Some(c) = const_iter.next() {
+                                        append_lit!(c.clone());
+                                    }
+                                }
+                                _ => literal.push(ch),
+                            }
+                        }
+                        if !literal.is_empty() {
+                            append_lit!(literal);
+                        }
+                    }
+                }
+                stack.push(acc);
             }
             0x00 => {} // nop
             other => return Err(unsupported(other)),
@@ -733,6 +810,7 @@ fn instr_len(op: u8) -> Option<usize> {
         0x85..=0x93 => 1, // numeric conversions
         0xac..=0xb1 => 1, // *return
         0xbe | 0xbf => 1, // arraylength, athrow
+        0xba => 5,        // invokedynamic (indexbyte1, indexbyte2, 0, 0)
         _ => return None,
     })
 }
@@ -860,6 +938,7 @@ mod tests {
     const OBJ: &[u8] = include_bytes!("fixtures/Obj.class");
     const STR: &[u8] = include_bytes!("fixtures/Str.class");
     const HELLO: &[u8] = include_bytes!("fixtures/Hello.class");
+    const CONCAT: &[u8] = include_bytes!("fixtures/Concat.class");
     const ARR: &[u8] = include_bytes!("fixtures/Arr.class");
     const NUM: &[u8] = include_bytes!("fixtures/Num.class");
     const BITS: &[u8] = include_bytes!("fixtures/Bits.class");
@@ -1018,6 +1097,13 @@ mod tests {
             .unwrap();
         // App2.main: println(MathLib.triple(7))=21; println(new MathLib(10).scaled(5))=50
         assert_eq!(String::from_utf8(buf).unwrap().trim(), "21\n50");
+    }
+
+    #[test]
+    fn string_concat_invokedynamic() {
+        // "x=" + x and "Hi " + name + ", you have " + n + " msgs" via makeConcatWithConstants
+        let out = run_main_capture(CONCAT);
+        assert_eq!(out.trim(), "x=5\nHi Bob, you have 3 msgs");
     }
 
     #[test]
