@@ -51,6 +51,11 @@ impl ClassFile {
     pub fn indy_concat(&self, index: u16) -> Result<Option<IndyConcat>> {
         self.pool.indy_concat(index, &self.bootstrap_methods)
     }
+
+    /// Resolve a LambdaMetafactory `invokedynamic` → (impl class, impl method, descriptor).
+    pub fn indy_lambda(&self, index: u16) -> Result<Option<(String, String, String)>> {
+        self.pool.indy_lambda(index, &self.bootstrap_methods)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -372,6 +377,41 @@ impl ConstantPool {
             })),
             _ => Ok(None),
         }
+    }
+
+    /// Resolve a LambdaMetafactory `invokedynamic` → (impl class, impl method, call-site
+    /// descriptor). The impl is the synthetic `lambda$...` method; the descriptor's arg
+    /// count is the number of captured variables (0 = non-capturing).
+    fn indy_lambda(&self, idx: u16, bsms: &[BootstrapMethod]) -> Result<Option<(String, String, String)>> {
+        let (bsm_idx, nat) = match self.entries.get(idx as usize) {
+            Some(CpEntry::InvokeDynamic(b, n)) => (*b, *n),
+            _ => return Ok(None),
+        };
+        let Some(bsm) = bsms.get(bsm_idx as usize) else {
+            return Ok(None);
+        };
+        let factory = match self.entries.get(bsm.handle_index as usize) {
+            Some(CpEntry::MethodHandle(r)) => self.method_ref(*r)?.1,
+            _ => return Ok(None),
+        };
+        if factory != "metafactory" && factory != "altMetafactory" {
+            return Ok(None);
+        }
+        // bootstrap arg[1] = the implementation MethodHandle (the synthetic lambda method).
+        let impl_handle = match bsm.args.get(1) {
+            Some(&h) => h,
+            None => return Ok(None),
+        };
+        let impl_ref = match self.entries.get(impl_handle as usize) {
+            Some(CpEntry::MethodHandle(r)) => *r,
+            _ => return Ok(None),
+        };
+        let (impl_class, impl_method, _) = self.method_ref(impl_ref)?;
+        let descriptor = match self.entries.get(nat as usize) {
+            Some(CpEntry::NameAndType(_n, d)) => self.utf8(*d)?,
+            _ => return Ok(None),
+        };
+        Ok(Some((impl_class, impl_method, descriptor)))
     }
 }
 

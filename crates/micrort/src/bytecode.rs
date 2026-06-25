@@ -13,7 +13,9 @@
 use crate::classfile::{ClassFile, Constant, ExceptionEntry, Method};
 use rava_common::error::{RavaError, Result};
 use rava_rir::module::{BasicBlock, FuncFlags, RirFunction, RirModule};
-use rava_rir::{BinOp, BlockId, ClassId, FieldId, FuncId, RirInstr, RirType, UnaryOp, Value};
+use rava_rir::{
+    BinOp, BlockId, ClassId, FieldId, FuncId, MethodId, RirInstr, RirType, UnaryOp, Value,
+};
 use std::collections::BTreeSet;
 
 /// Lower one method to an RIR function named `Class.method`.
@@ -664,13 +666,60 @@ fn translate_block(
                 instrs.push(RirInstr::Throw(v));
                 terminated = true;
             }
+            0xb9 => {
+                // invokeinterface <methodref> <count> 0 — virtual dispatch on the receiver
+                // (resolves the impl on the receiver's actual class, and invokes lambdas).
+                let (_cls, name, desc) = class.method_ref(read_u16(code, pc + 1)?)?;
+                let argc = parse_arg_types(&desc)?.len();
+                let mut args = vec![Value(String::new()); argc];
+                for slot in args.iter_mut().rev() {
+                    *slot = pop(&mut stack)?;
+                }
+                let receiver = pop(&mut stack)?;
+                let ret = if matches!(parse_return_type(&desc)?, RirType::Void) {
+                    None
+                } else {
+                    Some(fresh())
+                };
+                instrs.push(RirInstr::CallVirtual {
+                    receiver,
+                    method: MethodId(crate::lowerer_hash::encode_builtin(&name)),
+                    args,
+                    ret: ret.clone(),
+                });
+                if let Some(r) = ret {
+                    stack.push(r);
+                }
+            }
             0xba => {
-                // invokedynamic — only string concatenation (StringConcatFactory) is supported.
-                let concat = class.indy_concat(read_u16(code, pc + 1)?)?.ok_or_else(|| {
-                    RavaError::Other(
-                        "unsupported invokedynamic (only string concatenation is implemented)".into(),
-                    )
-                })?;
+                // invokedynamic — string concatenation or a non-capturing lambda.
+                let cp_idx = read_u16(code, pc + 1)?;
+                let concat = match class.indy_concat(cp_idx)? {
+                    Some(c) => c,
+                    None => {
+                        if let Some((lcls, lmethod, ldesc)) = class.indy_lambda(cp_idx)? {
+                            if !parse_arg_types(&ldesc)?.is_empty() {
+                                return Err(RavaError::Other(
+                                    "capturing lambdas are not supported yet (bytecode→RIR)".into(),
+                                ));
+                            }
+                            // A non-capturing lambda → a method-ref value the interpreter invokes
+                            // when the functional-interface method (apply/test/…) is called.
+                            let r = fresh();
+                            instrs.push(RirInstr::ConstStr {
+                                ret: r.clone(),
+                                value: format!("__methodref__{lcls}.{lmethod}"),
+                            });
+                            stack.push(r);
+                            pc += len;
+                            continue;
+                        }
+                        return Err(RavaError::Other(
+                            "unsupported invokedynamic (only string concat and non-capturing lambdas)"
+                                .into(),
+                        ));
+                    }
+                };
                 let argc = parse_arg_types(&concat.descriptor)?.len();
                 let mut args = vec![Value(String::new()); argc];
                 for slot in args.iter_mut().rev() {
@@ -934,7 +983,7 @@ fn instr_len(op: u8) -> Option<usize> {
         0x85..=0x93 => 1, // numeric conversions
         0xac..=0xb1 => 1, // *return
         0xbe | 0xbf => 1, // arraylength, athrow
-        0xba => 5,        // invokedynamic (indexbyte1, indexbyte2, 0, 0)
+        0xb9 | 0xba => 5, // invokeinterface, invokedynamic
         _ => return None,
     })
 }
@@ -1063,6 +1112,8 @@ mod tests {
     const STR: &[u8] = include_bytes!("fixtures/Str.class");
     const HELLO: &[u8] = include_bytes!("fixtures/Hello.class");
     const CONCAT: &[u8] = include_bytes!("fixtures/Concat.class");
+    const INTFN: &[u8] = include_bytes!("fixtures/IntFn.class");
+    const LAM: &[u8] = include_bytes!("fixtures/Lam.class");
     const ARR: &[u8] = include_bytes!("fixtures/Arr.class");
     const NUM: &[u8] = include_bytes!("fixtures/Num.class");
     const SW: &[u8] = include_bytes!("fixtures/Sw.class");
@@ -1235,6 +1286,15 @@ mod tests {
             .unwrap();
         // App2.main: println(MathLib.triple(7))=21; println(new MathLib(10).scaled(5))=50
         assert_eq!(String::from_utf8(buf).unwrap().trim(), "21\n50");
+    }
+
+    #[test]
+    fn non_capturing_lambda() {
+        // IntFn f = n -> n*2 (invokedynamic/LambdaMetafactory) + f.apply (invokeinterface)
+        let module = load_classes_module(&[INTFN, LAM]).unwrap();
+        let interp = RirInterpreter::new(module);
+        // twice(5) = f(f(5)) = f(10) = 20
+        assert_eq!(interp.call("Lam.twice", vec![RVal::Int(5)]).unwrap().to_display(), "20");
     }
 
     #[test]
