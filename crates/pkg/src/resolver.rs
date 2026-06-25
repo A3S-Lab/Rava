@@ -87,6 +87,45 @@ pub fn download_jar(
     Ok(jar_path)
 }
 
+/// Download a POM file from Maven Central and return its XML contents (cached on disk).
+pub fn download_pom(
+    group_id: &str,
+    artifact_id: &str,
+    version: &str,
+    cache_dir: &Path,
+) -> Result<String> {
+    let group_path = group_id.replace('.', "/");
+    let pom_filename = format!("{artifact_id}-{version}.pom");
+    let url = format!(
+        "https://repo1.maven.org/maven2/{group_path}/{artifact_id}/{version}/{pom_filename}"
+    );
+
+    let artifact_cache_dir = cache_dir.join(group_id).join(artifact_id).join(version);
+    fs::create_dir_all(&artifact_cache_dir)
+        .map_err(|e| RavaError::Package(format!("failed to create cache directory: {e}")))?;
+    let pom_path = artifact_cache_dir.join(&pom_filename);
+
+    if pom_path.exists() {
+        return fs::read_to_string(&pom_path)
+            .map_err(|e| RavaError::Package(format!("failed to read cached POM: {e}")));
+    }
+
+    let resp = reqwest::blocking::get(&url)
+        .map_err(|e| RavaError::Package(format!("failed to download POM: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(RavaError::Package(format!(
+            "POM not found: {group_id}:{artifact_id}:{version} (HTTP {})",
+            resp.status()
+        )));
+    }
+    let text = resp
+        .text()
+        .map_err(|e| RavaError::Package(format!("failed to read POM response: {e}")))?;
+    fs::write(&pom_path, &text)
+        .map_err(|e| RavaError::Package(format!("failed to write POM file: {e}")))?;
+    Ok(text)
+}
+
 /// Compute SHA-256 hash of a file.
 pub fn compute_sha256(path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};

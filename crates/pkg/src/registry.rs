@@ -103,9 +103,44 @@ impl ClassResolver for MavenCentralResolver {
         })
     }
 
-    fn transitive_deps(&self, _dep: &Dependency) -> Result<Vec<Dependency>> {
-        // TODO: Parse POM file and extract dependencies
-        // For now, return empty list (no transitive resolution)
-        Ok(Vec::new())
+    fn transitive_deps(&self, dep: &Dependency) -> Result<Vec<Dependency>> {
+        use crate::resolver::{download_pom, latest_version};
+
+        let version = if dep.version == "*" {
+            latest_version(&format!("{}:{}", dep.group_id, dep.artifact_id))?
+        } else {
+            dep.version.clone()
+        };
+        let pom = download_pom(&dep.group_id, &dep.artifact_id, &version, &self.cache_dir)?;
+        Ok(crate::pom::parse_pom_dependencies(&pom))
     }
+}
+
+/// Resolve the full transitive closure of `roots` (breadth-first, deduplicated by
+/// `groupId:artifactId` — first version wins, matching nearest-wins resolution).
+/// Returns every resolved artifact (JAR path + SHA-256) needed to build.
+pub fn resolve_closure(
+    resolver: &dyn ClassResolver,
+    roots: &[Dependency],
+) -> Result<Vec<ResolvedArtifact>> {
+    use std::collections::HashSet;
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut queue: Vec<Dependency> = roots.to_vec();
+    let mut resolved = Vec::new();
+
+    while let Some(dep) = queue.pop() {
+        let key = format!("{}:{}", dep.group_id, dep.artifact_id);
+        if !seen.insert(key) {
+            continue;
+        }
+        let artifact = resolver.resolve(&dep)?;
+        // Enqueue transitive deps before recording (best-effort: a missing POM for one
+        // dep should not abort the whole build).
+        if let Ok(children) = resolver.transitive_deps(&artifact.dep) {
+            queue.extend(children);
+        }
+        resolved.push(artifact);
+    }
+    Ok(resolved)
 }

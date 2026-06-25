@@ -78,7 +78,12 @@ fix is invasive and risks regressing the 393-test suite):
 
 - **Dependency resolution is not wired into builds.** `rava add` / `update` / `deps` only edit
   `rava.hcl`; `rava build` never downloads or links the dependency JARs, so projects with
-  external dependencies cannot be built. Transitive resolution (POM parsing) is also a stub.
+  external dependencies cannot be built (executing `.class` from JARs is the larger blocker).
+- **Transitive POM resolution is partial.** `pom::parse_pom_dependencies` +
+  `registry::resolve_closure` resolve transitive deps for POMs that declare versions literally
+  or via same-POM `${...}` properties, filtering test/provided/optional. They do **not** yet
+  resolve **parent POMs**, `<dependencyManagement>`, or BOM imports — so a dependency whose
+  version is inherited from a parent (common: Jackson, Spring) is skipped rather than guessed.
 - CLI commands mentioned in the product vision (`lint`, `repl`, `publish`, `doctor`,
   `upgrade`, `export`) are not implemented. Implemented: `run`, `build`, `init`, `add`,
   `remove`, `update`, `deps`, `test`, `fmt`.
