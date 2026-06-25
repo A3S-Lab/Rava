@@ -10009,3 +10009,21 @@ class Main {
 "#);
     assert_eq!(out.trim(), "3.5\n2.1\n8\n3");
 }
+
+#[test]
+fn collectors_summing_averaging() {
+    // Collectors.summingInt / averagingInt as terminal collectors and as a groupingBy downstream.
+    let out = run(r#"
+import java.util.*;
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        var nums = List.of(1,2,3,4,5,6,7,8,9,10);
+        System.out.println(nums.stream().collect(Collectors.summingInt(n -> n)));
+        System.out.println(nums.stream().collect(Collectors.averagingInt(n -> n)));
+        System.out.println(nums.stream().collect(Collectors.groupingBy(n -> n % 3, Collectors.summingInt(n -> n))));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "55\n5.5\n{0=18, 1=22, 2=15}");
+}

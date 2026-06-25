@@ -526,6 +526,33 @@ impl RirInterpreter {
                 });
                 return Ok(RVal::Object(id));
             }
+            // summingInt/Long/Double and averagingInt/Long/Double — each carries the mapping fn.
+            {
+                let ctype = if func_id == encode_builtin("Collectors.summingInt")
+                    || func_id == encode_builtin("Collectors.summingLong")
+                {
+                    Some("summingInt")
+                } else if func_id == encode_builtin("Collectors.summingDouble") {
+                    Some("summingDouble")
+                } else if func_id == encode_builtin("Collectors.averagingInt")
+                    || func_id == encode_builtin("Collectors.averagingLong")
+                    || func_id == encode_builtin("Collectors.averagingDouble")
+                {
+                    Some("averaging")
+                } else {
+                    None
+                };
+                if let Some(ctype) = ctype {
+                    let lambda = args.first().cloned().unwrap_or(RVal::Null);
+                    let id = self.alloc_object("Collector");
+                    if let Some(o) = self.heap.borrow_mut().get_mut(&id) {
+                        o.fields
+                            .insert("__ctype__".into(), RVal::Str(ctype.into()));
+                        o.fields.insert("__lambda__".into(), lambda);
+                    }
+                    return Ok(RVal::Object(id));
+                }
+            }
             if func_id == encode_builtin("Collectors.partitioningBy") {
                 let lambda = args.first().cloned().unwrap_or(RVal::Null);
                 let id = self.alloc_object("Collector");

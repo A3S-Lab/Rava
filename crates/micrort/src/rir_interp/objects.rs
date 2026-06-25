@@ -178,6 +178,17 @@ impl RirInterpreter {
         }
     }
 
+    /// Apply a collector's mapping function (summingInt/averagingInt/…) to one element,
+    /// or pass the element through when there is no mapping function.
+    pub(super) fn collector_map_value(&self, lambda: &Option<RVal>, item: &RVal) -> RVal {
+        match lambda {
+            Some(lam) if !matches!(lam, RVal::Null) => self
+                .invoke_lambda(lam, std::slice::from_ref(item))
+                .unwrap_or(RVal::Int(0)),
+            _ => item.clone(),
+        }
+    }
+
     // ── HashMap methods ───────────────────────────────────────────────────────
 
     pub(super) fn dispatch_hash_map(
@@ -592,7 +603,18 @@ impl RirInterpreter {
             "collect" => {
                 let arr = self.as_array(receiver)?;
                 if let Some(RVal::Object(cid)) = args.first() {
-                    let (ctype, delim, prefix, suffix, lambda, key_fn, val_fn, downstream_ctype) = {
+                    #[allow(clippy::type_complexity)]
+                    let (
+                        ctype,
+                        delim,
+                        prefix,
+                        suffix,
+                        lambda,
+                        key_fn,
+                        val_fn,
+                        downstream_ctype,
+                        downstream_lambda,
+                    ) = {
                         let heap = self.heap.borrow();
                         if let Some(cobj) = heap.get(cid) {
                             let ctype = cobj
@@ -630,7 +652,24 @@ impl RirInterpreter {
                                     _ => None,
                                 })
                                 .unwrap_or_default();
-                            (ctype, delim, prefix, suffix, lambda, key_fn, val_fn, downstream_ctype)
+                            let downstream_lambda =
+                                cobj.fields.get("__downstream__").and_then(|d| match d {
+                                    RVal::Object(did) => {
+                                        heap.get(did).and_then(|o| o.fields.get("__lambda__").cloned())
+                                    }
+                                    _ => None,
+                                });
+                            (
+                                ctype,
+                                delim,
+                                prefix,
+                                suffix,
+                                lambda,
+                                key_fn,
+                                val_fn,
+                                downstream_ctype,
+                                downstream_lambda,
+                            )
                         } else {
                             (
                                 String::new(),
@@ -641,6 +680,7 @@ impl RirInterpreter {
                                 None,
                                 None,
                                 String::new(),
+                                None,
                             )
                         }
                     };
@@ -666,6 +706,33 @@ impl RirInterpreter {
                                 .collect();
                             return Some(Ok(RVal::Array(Rc::new(RefCell::new(deduped)))));
                         }
+                        "summingInt" => {
+                            let items = arr.borrow().clone();
+                            let mut total: i64 = 0;
+                            for it in &items {
+                                total += self.collector_map_value(&lambda, it).as_int();
+                            }
+                            return Some(Ok(RVal::Int(total)));
+                        }
+                        "summingDouble" => {
+                            let items = arr.borrow().clone();
+                            let mut total = 0.0;
+                            for it in &items {
+                                total += self.collector_map_value(&lambda, it).as_float();
+                            }
+                            return Some(Ok(RVal::Float(total)));
+                        }
+                        "averaging" => {
+                            let items = arr.borrow().clone();
+                            if items.is_empty() {
+                                return Some(Ok(RVal::Float(0.0)));
+                            }
+                            let mut total = 0.0;
+                            for it in &items {
+                                total += self.collector_map_value(&lambda, it).as_float();
+                            }
+                            return Some(Ok(RVal::Float(total / items.len() as f64)));
+                        }
                         "groupingBy" => {
                             let items = arr.borrow().clone();
                             let map_id = self.alloc_object("HashMap");
@@ -689,16 +756,72 @@ impl RirInterpreter {
                                 }
                             }
                             // Apply the downstream collector to each group. counting() →
-                            // group size; otherwise the bucket stays a list (toList default).
-                            if downstream_ctype == "counting" {
-                                let mut heap = self.heap.borrow_mut();
-                                if let Some(map_obj) = heap.get_mut(&map_id) {
-                                    for v in map_obj.fields.values_mut() {
-                                        let n = match v {
-                                            RVal::Array(a) => a.borrow().len() as i64,
-                                            _ => continue,
-                                        };
-                                        *v = RVal::Int(n);
+                            // group size; summing/averaging → reduce the bucket; otherwise the
+                            // bucket stays a list (toList default).
+                            if matches!(
+                                downstream_ctype.as_str(),
+                                "counting" | "summingInt" | "summingDouble" | "averaging"
+                            ) {
+                                // Snapshot buckets first (computing values calls invoke_lambda,
+                                // which needs the heap — can't hold a heap borrow across it).
+                                let buckets: Vec<(String, Vec<RVal>)> = {
+                                    let heap = self.heap.borrow();
+                                    heap.get(&map_id)
+                                        .map(|m| {
+                                            m.fields
+                                                .iter()
+                                                .filter_map(|(k, v)| match v {
+                                                    RVal::Array(a) => {
+                                                        Some((k.clone(), a.borrow().clone()))
+                                                    }
+                                                    _ => None,
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default()
+                                };
+                                for (key, elems) in buckets {
+                                    let reduced = match downstream_ctype.as_str() {
+                                        "counting" => RVal::Int(elems.len() as i64),
+                                        "summingInt" => RVal::Int(
+                                            elems
+                                                .iter()
+                                                .map(|e| {
+                                                    self.collector_map_value(&downstream_lambda, e)
+                                                        .as_int()
+                                                })
+                                                .sum(),
+                                        ),
+                                        "summingDouble" => RVal::Float(
+                                            elems
+                                                .iter()
+                                                .map(|e| {
+                                                    self.collector_map_value(&downstream_lambda, e)
+                                                        .as_float()
+                                                })
+                                                .sum(),
+                                        ),
+                                        _ => {
+                                            // averaging
+                                            if elems.is_empty() {
+                                                RVal::Float(0.0)
+                                            } else {
+                                                let s: f64 = elems
+                                                    .iter()
+                                                    .map(|e| {
+                                                        self.collector_map_value(
+                                                            &downstream_lambda,
+                                                            e,
+                                                        )
+                                                        .as_float()
+                                                    })
+                                                    .sum();
+                                                RVal::Float(s / elems.len() as f64)
+                                            }
+                                        }
+                                    };
+                                    if let Some(map_obj) = self.heap.borrow_mut().get_mut(&map_id) {
+                                        map_obj.fields.insert(key, reduced);
                                     }
                                 }
                             }
