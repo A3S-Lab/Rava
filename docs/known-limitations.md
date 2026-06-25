@@ -8,11 +8,11 @@ It reflects the **verified** state of the code, not aspirational goals.
 Rava has two execution paths that share one IR (RIR):
 
 - **`rava run` / `rava test` → RIR interpreter** (`crates/micrort`). This is the **mature,
-  supported path**: 393/393 end-to-end Java tests pass. Treat this as the product today.
+  supported path**: 408/408 end-to-end Java tests pass. Treat this as the product today.
 - **`rava build` → Cranelift AOT** (`crates/codegen-cranelift`). This is **experimental** —
   it compiles only a subset of programs and miscompiles several basics (see below).
 
-`cargo test --workspace` completes and is green (545 passing, 14 AOT tests quarantined).
+`cargo test --workspace` completes and is green (~500 passing, 14 AOT tests quarantined).
 
 ## AOT backend (`rava build`) — experimental
 
