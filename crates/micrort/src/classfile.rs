@@ -53,6 +53,21 @@ pub struct Method {
     pub is_static: bool,
     /// Raw Code-attribute bytecode (`None` for abstract / native methods).
     pub code: Option<Vec<u8>>,
+    /// Exception table from the Code attribute: `try` ranges and their handlers.
+    pub exceptions: Vec<ExceptionEntry>,
+}
+
+/// One `try`/`catch` range from a method's exception table.
+#[derive(Debug, Clone)]
+pub struct ExceptionEntry {
+    /// Bytecode offset where the protected (`try`) region begins (inclusive).
+    pub start: u16,
+    /// Bytecode offset where the protected region ends (exclusive).
+    pub end: u16,
+    /// Bytecode offset of the handler (`catch`/`finally`) block.
+    pub handler: u16,
+    /// Caught class name; `None` for a catch-all (`finally` / `catch (Throwable)` with index 0).
+    pub catch_type: Option<String>,
 }
 
 /// Parse the bytes of a `.class` file.
@@ -105,12 +120,15 @@ fn parse_method(r: &mut Reader, cp: &ConstantPool) -> Result<Method> {
     let descriptor = cp.utf8(r.u16()?)?;
     let attr_count = r.u16()? as usize;
     let mut code = None;
+    let mut exceptions = Vec::new();
     for _ in 0..attr_count {
         let attr_name = cp.utf8(r.u16()?)?;
         let attr_len = r.u32()? as usize;
         let body = r.bytes(attr_len)?;
         if attr_name == "Code" {
-            code = Some(extract_code(body)?);
+            let (c, exc) = parse_code(body, cp)?;
+            code = Some(c);
+            exceptions = exc;
         }
     }
     Ok(Method {
@@ -118,16 +136,33 @@ fn parse_method(r: &mut Reader, cp: &ConstantPool) -> Result<Method> {
         descriptor,
         is_static: access & ACC_STATIC != 0,
         code,
+        exceptions,
     })
 }
 
-/// Code attribute layout: u2 max_stack, u2 max_locals, u4 code_length, u1 code[code_length], …
-fn extract_code(body: &[u8]) -> Result<Vec<u8>> {
+/// Code attribute: u2 max_stack, u2 max_locals, u4 code_length, code[], u2 exc_len, exc[], attrs.
+fn parse_code(body: &[u8], cp: &ConstantPool) -> Result<(Vec<u8>, Vec<ExceptionEntry>)> {
     let cr = &mut Reader::new(body);
     let _max_stack = cr.u16()?;
     let _max_locals = cr.u16()?;
     let code_len = cr.u32()? as usize;
-    Ok(cr.bytes(code_len)?.to_vec())
+    let code = cr.bytes(code_len)?.to_vec();
+    let exc_len = cr.u16()? as usize;
+    let mut exceptions = Vec::with_capacity(exc_len);
+    for _ in 0..exc_len {
+        let start = cr.u16()?;
+        let end = cr.u16()?;
+        let handler = cr.u16()?;
+        let ct = cr.u16()?;
+        let catch_type = if ct == 0 { None } else { cp.class_name(ct).ok() };
+        exceptions.push(ExceptionEntry {
+            start,
+            end,
+            handler,
+            catch_type,
+        });
+    }
+    Ok((code, exceptions))
 }
 
 /// Parse a field, returning its name and skipping the rest.

@@ -10,7 +10,7 @@
 //! the RIR interpreter is a mutable-environment tree-walker, so loops work via block
 //! re-execution without needing phi / block parameters.
 
-use crate::classfile::{ClassFile, Constant, Method};
+use crate::classfile::{ClassFile, Constant, ExceptionEntry, Method};
 use rava_common::error::{RavaError, Result};
 use rava_rir::module::{BasicBlock, FuncFlags, RirFunction, RirModule};
 use rava_rir::{BinOp, BlockId, ClassId, FieldId, FuncId, RirInstr, RirType, UnaryOp, Value};
@@ -40,7 +40,7 @@ pub fn lower_method(class: &ClassFile, method: &Method, func_id: u32) -> Result<
         name: format!("{}.{}", class.name, method.name),
         params,
         return_type: parse_return_type(&method.descriptor)?,
-        basic_blocks: lower_blocks(code, class)?,
+        basic_blocks: lower_blocks(code, class, &method.exceptions)?,
         flags: FuncFlags::default(),
     })
 }
@@ -99,15 +99,26 @@ pub fn load_jar(jar_bytes: &[u8]) -> Result<RirModule> {
 
 // ── Control-flow graph construction ───────────────────────────────────────────
 
-fn lower_blocks(code: &[u8], class: &ClassFile) -> Result<Vec<BasicBlock>> {
-    let leaders = find_leaders(code)?;
+fn lower_blocks(
+    code: &[u8],
+    class: &ClassFile,
+    exceptions: &[ExceptionEntry],
+) -> Result<Vec<BasicBlock>> {
+    let mut leaders = find_leaders(code)?;
+    // try-region start and handler are block leaders. (Not `end`: it can fall in the
+    // middle of a straight-line sequence and splitting there would break the operand
+    // stack; the handler is registered per-block from the try start, which is enough.)
+    for e in exceptions {
+        leaders.insert(e.start as usize);
+        leaders.insert(e.handler as usize);
+    }
     let starts: Vec<usize> = leaders.iter().copied().filter(|&l| l < code.len()).collect();
 
     let mut tmp = 0u32;
     let mut blocks = Vec::with_capacity(starts.len());
     for (i, &start) in starts.iter().enumerate() {
         let end = starts.get(i + 1).copied().unwrap_or(code.len());
-        blocks.push(translate_block(code, start, end, &mut tmp, class)?);
+        blocks.push(translate_block(code, start, end, &mut tmp, class, exceptions)?);
     }
     Ok(blocks)
 }
@@ -141,6 +152,7 @@ fn translate_block(
     end: usize,
     tmp: &mut u32,
     class: &ClassFile,
+    exceptions: &[ExceptionEntry],
 ) -> Result<BasicBlock> {
     let mut instrs = Vec::new();
     let mut stack: Vec<Value> = Vec::new();
@@ -150,6 +162,23 @@ fn translate_block(
         v
     };
     let mut terminated = false;
+
+    // A catch/handler block receives the caught exception on the operand stack.
+    if exceptions.iter().any(|e| e.handler as usize == start) {
+        stack.push(Value("__exception__".into()));
+    }
+    // Entering a try region: register its catch handlers via the interpreter's
+    // __try_catch__ marker (handler block id : caught type; empty = catch-all).
+    for e in exceptions {
+        if e.start as usize == start {
+            let ret = fresh();
+            let ty = e.catch_type.clone().unwrap_or_default();
+            instrs.push(RirInstr::ConstStr {
+                ret,
+                value: format!("__try_catch__{}:{}", e.handler, ty),
+            });
+        }
+    }
 
     let mut pc = start;
     while pc < end {
@@ -836,6 +865,8 @@ mod tests {
     const BITS: &[u8] = include_bytes!("fixtures/Bits.class");
     const EXC: &[u8] = include_bytes!("fixtures/Exc.class");
     const STK: &[u8] = include_bytes!("fixtures/Stk.class");
+    const APPEXC: &[u8] = include_bytes!("fixtures/AppExc.class");
+    const TRYC: &[u8] = include_bytes!("fixtures/TryC.class");
     const MATHLIB: &[u8] = include_bytes!("fixtures/MathLib.class");
     const APP: &[u8] = include_bytes!("fixtures/App.class");
 
@@ -911,6 +942,15 @@ mod tests {
     fn stack_ops_compound_assign() {
         // a[0] += 5 then *= 2 uses dup2 (duplicate arrayref+index): ((10+5)*2) = 30
         assert_eq!(run_class(STK, "compound", vec![RVal::Int(10)]), 30);
+    }
+
+    #[test]
+    fn try_catch() {
+        // try { if (n<0) throw new AppExc(); return n*2; } catch (AppExc e) { return -1; }
+        let module = load_classes_module(&[APPEXC, TRYC]).unwrap();
+        let interp = RirInterpreter::new(module);
+        assert_eq!(interp.call("TryC.f", vec![RVal::Int(5)]).unwrap().to_display(), "10"); // no throw
+        assert_eq!(interp.call("TryC.f", vec![RVal::Int(-1)]).unwrap().to_display(), "-1"); // caught
     }
 
     #[test]
