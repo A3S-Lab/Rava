@@ -16,7 +16,7 @@ use rava_rir::module::{BasicBlock, FuncFlags, RirFunction, RirModule};
 use rava_rir::{
     BinOp, BlockId, ClassId, FieldId, FuncId, MethodId, RirInstr, RirType, UnaryOp, Value,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 /// Lower one method to an RIR function named `Class.method`.
 pub fn lower_method(class: &ClassFile, method: &Method, func_id: u32) -> Result<RirFunction> {
@@ -130,6 +130,10 @@ fn lower_blocks(
     }
     let starts: Vec<usize> = leaders.iter().copied().filter(|&l| l < code.len()).collect();
 
+    // Operand-stack depth at each block start, so values that cross a block boundary on the
+    // stack (e.g. javac's boolean `cond ? 1 : 0`) can be spilled to / reloaded from locals.
+    let heights = stack_heights(code, class, exceptions)?;
+
     let mut tmp = 0u32;
     let mut synth_id = 0u32;
     let mut blocks = Vec::with_capacity(starts.len());
@@ -143,6 +147,7 @@ fn lower_blocks(
             &mut synth_id,
             class,
             exceptions,
+            heights.get(&start).copied().unwrap_or(0),
         )?);
     }
     Ok(blocks)
@@ -180,6 +185,7 @@ fn find_leaders(code: &[u8]) -> Result<BTreeSet<usize>> {
     Ok(leaders)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn translate_block(
     code: &[u8],
     start: usize,
@@ -188,6 +194,7 @@ fn translate_block(
     synth_id: &mut u32,
     class: &ClassFile,
     exceptions: &[ExceptionEntry],
+    entry_height: usize,
 ) -> Result<Vec<BasicBlock>> {
     let mut instrs = Vec::new();
     let mut stack: Vec<Value> = Vec::new();
@@ -200,9 +207,14 @@ fn translate_block(
     };
     let mut terminated = false;
 
-    // A catch/handler block receives the caught exception on the operand stack.
+    // Seed the operand stack at block entry. A catch/handler block receives the caught
+    // exception; other blocks reload any stack values their predecessors spilled to `__s{i}`.
     if exceptions.iter().any(|e| e.handler as usize == start) {
         stack.push(Value("__exception__".into()));
+    } else {
+        for i in 0..entry_height {
+            stack.push(Value(format!("__s{i}")));
+        }
     }
     // Entering a try region: register its catch handlers via the interpreter's
     // __try_catch__ marker (handler block id : caught type; empty = catch-all).
@@ -227,6 +239,8 @@ fn translate_block(
             let key = pop(&mut stack)?;
             let key_slot = Value(format!("__sw{start}_key"));
             instrs.push(copy(key, key_slot.clone()));
+            // Case/default blocks reload any residual stack their predecessor spills here.
+            spill_stack(&stack, &mut instrs);
             let n = cases.len();
             let base = *synth_id;
             *synth_id += n as u32;
@@ -414,6 +428,7 @@ fn translate_block(
                     rhs: zero,
                     ret: cond.clone(),
                 });
+                spill_stack(&stack, &mut instrs);
                 push_branch(&mut instrs, cond, code, pc, len)?;
                 terminated = true;
             }
@@ -428,6 +443,7 @@ fn translate_block(
                     rhs: b,
                     ret: cond.clone(),
                 });
+                spill_stack(&stack, &mut instrs);
                 push_branch(&mut instrs, cond, code, pc, len)?;
                 terminated = true;
             }
@@ -597,7 +613,21 @@ fn translate_block(
                 args[0] = pop(&mut stack)?;
                 if cls == "java/io/PrintStream" && (name == "println" || name == "print") {
                     // System.out.println(x) → route to the builtin; drop the PrintStream receiver.
-                    let call_args: Vec<Value> = args.into_iter().skip(1).collect();
+                    let mut call_args: Vec<Value> = args.into_iter().skip(1).collect();
+                    // A boolean argument (`println(Z)`) is an int on the stack — convert so it
+                    // prints "true"/"false" rather than 1/0.
+                    if parse_arg_types(&desc)?.first() == Some(&RirType::Bool) {
+                        if let Some(v) = call_args.first().cloned() {
+                            let b = fresh();
+                            instrs.push(RirInstr::Convert {
+                                val: v,
+                                from: RirType::I32,
+                                to: RirType::Bool,
+                                ret: b.clone(),
+                            });
+                            call_args[0] = b;
+                        }
+                    }
                     instrs.push(RirInstr::Call {
                         func: FuncId(crate::lowerer_hash::encode_builtin(&format!("System.out.{name}"))),
                         args: call_args,
@@ -661,6 +691,7 @@ fn translate_block(
             }
             0xa7 => {
                 let target = (pc as i64 + read_i16(code, pc + 1)? as i64) as usize;
+                spill_stack(&stack, &mut instrs);
                 instrs.push(RirInstr::Jump(BlockId(target as u32)));
                 terminated = true;
             }
@@ -712,19 +743,43 @@ fn translate_block(
                     Some(c) => c,
                     None => {
                         if let Some((lcls, lmethod, ldesc)) = class.indy_lambda(cp_idx)? {
-                            if !parse_arg_types(&ldesc)?.is_empty() {
-                                return Err(RavaError::Other(
-                                    "capturing lambdas are not supported yet (bytecode→RIR)".into(),
-                                ));
+                            // The indy factory descriptor's args are the captured variables;
+                            // javac lifts them into the leading params of the synthetic method.
+                            let ncap = parse_arg_types(&ldesc)?.len();
+                            if ncap == 0 {
+                                // Non-capturing → a method-ref value the interpreter invokes when
+                                // the functional-interface method (apply/test/…) is called.
+                                let r = fresh();
+                                instrs.push(RirInstr::ConstStr {
+                                    ret: r.clone(),
+                                    value: format!("__methodref__{lcls}.{lmethod}"),
+                                });
+                                stack.push(r);
+                            } else {
+                                // Capturing → pop the captured values (pushed in order, last on top)
+                                // and pack them into a closure carrying the target method name.
+                                let mut cap_args = vec![Value(String::new()); ncap];
+                                for slot in cap_args.iter_mut().rev() {
+                                    *slot = pop(&mut stack)?;
+                                }
+                                let name_v = fresh();
+                                instrs.push(RirInstr::ConstStr {
+                                    ret: name_v.clone(),
+                                    value: format!("{lcls}.{lmethod}"),
+                                });
+                                let mut call_args = Vec::with_capacity(1 + ncap);
+                                call_args.push(name_v);
+                                call_args.extend(cap_args);
+                                let r = fresh();
+                                instrs.push(RirInstr::Call {
+                                    func: FuncId(crate::lowerer_hash::encode_builtin(
+                                        "__make_closure__",
+                                    )),
+                                    args: call_args,
+                                    ret: Some(r.clone()),
+                                });
+                                stack.push(r);
                             }
-                            // A non-capturing lambda → a method-ref value the interpreter invokes
-                            // when the functional-interface method (apply/test/…) is called.
-                            let r = fresh();
-                            instrs.push(RirInstr::ConstStr {
-                                ret: r.clone(),
-                                value: format!("__methodref__{lcls}.{lmethod}"),
-                            });
-                            stack.push(r);
                             pc += len;
                             continue;
                         }
@@ -806,12 +861,14 @@ fn translate_block(
                 stack.push(acc);
             }
             0x00 => {} // nop
+            0xc0 => {} // checkcast — the interpreter doesn't enforce casts; leave the ref as-is
             other => return Err(unsupported(other)),
         }
         pc += len;
     }
 
     if !terminated {
+        spill_stack(&stack, &mut instrs);
         instrs.push(RirInstr::Jump(BlockId(end as u32)));
     }
     let mut blocks = Vec::with_capacity(1 + extra_blocks.len());
@@ -979,6 +1036,129 @@ fn is_return(op: u8) -> bool {
     op == 0xac || op == 0xb1
 }
 
+/// Net operand-stack height change for one instruction, in the translator's collapsed
+/// model where **every value is one slot** (longs/doubles included). Used to compute the
+/// operand-stack depth at each block boundary so values that live across a basic-block
+/// edge (e.g. javac's `cond ? 1 : 0` boolean idiom) can be spilled/reloaded.
+fn stack_delta(code: &[u8], pc: usize, class: &ClassFile) -> Result<i32> {
+    let op = code[pc];
+    let invoke = |has_receiver: bool, desc: &str| -> Result<i32> {
+        let argc = parse_arg_types(desc)?.len() as i32;
+        let ret = if matches!(parse_return_type(desc)?, RirType::Void) { 0 } else { 1 };
+        Ok(ret - argc - if has_receiver { 1 } else { 0 })
+    };
+    Ok(match op {
+        0x00 => 0,                                  // nop
+        0x01..=0x14 => 1,                           // const/ldc loads push one
+        0x15..=0x2d => 1,                           // *load <idx> / *load_0..3
+        0x2e..=0x35 => -1,                          // *aload: arrayref,index -> value
+        0x36..=0x4e => -1,                          // *store <idx> / *store_0..3
+        0x4f..=0x56 => -3,                          // *astore: arrayref,index,value ->
+        0x57 => -1,                                 // pop
+        0x58 => -2,                                 // pop2 (two collapsed slots)
+        0x59..=0x5b => 1,                           // dup / dup_x1 / dup_x2
+        0x5c..=0x5e => 2,                           // dup2 / dup2_x1 / dup2_x2 (two slots)
+        0x5f => 0,                                  // swap
+        0x60..=0x73 => -1,                          // arithmetic (binary)
+        0x74..=0x77 => 0,                           // neg
+        0x78..=0x83 => -1,                          // shifts / bitwise (binary)
+        0x84 => 0,                                  // iinc
+        0x85..=0x93 => 0,                           // numeric conversions
+        0x99..=0x9e => -1,                          // if<cond> vs 0
+        0x9f..=0xa4 => -2,                          // if_icmp / if_acmp
+        0xa7 => 0,                                  // goto
+        0xac..=0xb0 => -1,                          // *return (value)
+        0xb1 => 0,                                  // return void
+        0xb2 => 1,                                  // getstatic
+        0xb4 => 0,                                  // getfield: objref -> value
+        0xb5 => -2,                                 // putfield: objref,value ->
+        0xb6 | 0xb7 => invoke(true, &class.method_ref(read_u16(code, pc + 1)?)?.2)?,
+        0xb8 => invoke(false, &class.method_ref(read_u16(code, pc + 1)?)?.2)?,
+        0xb9 => invoke(true, &class.method_ref(read_u16(code, pc + 1)?)?.2)?,
+        0xba => {
+            // invokedynamic: pops the factory/recipe args, pushes one result.
+            let cp = read_u16(code, pc + 1)?;
+            let desc = if let Some(c) = class.indy_concat(cp)? {
+                c.descriptor
+            } else if let Some((_, _, d)) = class.indy_lambda(cp)? {
+                d
+            } else {
+                return Err(unsupported(op));
+            };
+            1 - parse_arg_types(&desc)?.len() as i32
+        }
+        0xbb => 1,                                  // new
+        0xbc | 0xbd => 0,                           // newarray / anewarray: count -> arrayref
+        0xbe => 0,                                  // arraylength: arrayref -> length
+        0xbf => -1,                                 // athrow
+        0xc0 => 0,                                  // checkcast: objref -> objref
+        0xc1 => 0,                                  // instanceof: objref -> int
+        _ => return Err(unsupported(op)),
+    })
+}
+
+/// Operand-stack depth at the start of every reachable instruction, by abstract
+/// interpretation of the CFG. javac guarantees the depth is identical on all paths to a
+/// given offset (a verifier invariant), so the first time an offset is reached fixes it.
+fn stack_heights(
+    code: &[u8],
+    class: &ClassFile,
+    exceptions: &[ExceptionEntry],
+) -> Result<HashMap<usize, usize>> {
+    let mut heights: HashMap<usize, usize> = HashMap::new();
+    // (offset, incoming height). Handler blocks receive the caught exception (height 1).
+    let mut work: Vec<(usize, i32)> = vec![(0, 0)];
+    for e in exceptions {
+        work.push((e.handler as usize, 1));
+    }
+    while let Some((mut pc, mut h)) = work.pop() {
+        while pc < code.len() {
+            if heights.contains_key(&pc) {
+                break; // already fixed (a merge point) — paths agree by the verifier invariant
+            }
+            heights.insert(pc, h.max(0) as usize);
+            let op = code[pc];
+            if op == 0xaa || op == 0xab {
+                let (_, cases, default) = parse_switch(code, pc)?;
+                let nh = h - 1; // pops the key
+                for (_, t) in &cases {
+                    work.push((*t, nh));
+                }
+                work.push((default, nh));
+                break;
+            }
+            let len = instr_len(op).ok_or_else(|| unsupported(op))?;
+            let nh = h + stack_delta(code, pc, class)?;
+            if (0x99..=0xa4).contains(&op) {
+                // conditional branch: both target and fall-through continue at `nh`
+                let target = (pc as i64 + read_i16(code, pc + 1)? as i64) as usize;
+                work.push((target, nh));
+                h = nh;
+                pc += len;
+            } else if op == 0xa7 {
+                let target = (pc as i64 + read_i16(code, pc + 1)? as i64) as usize;
+                work.push((target, nh));
+                break;
+            } else if is_return(op) || (0xac..=0xb0).contains(&op) || op == 0xbf {
+                break; // terminator, no fall-through
+            } else {
+                h = nh;
+                pc += len;
+            }
+        }
+    }
+    Ok(heights)
+}
+
+/// Spill the residual operand stack to deterministic `__s{i}` locals before an inter-block
+/// control transfer, so the successor block can reload them (the operand stack is otherwise
+/// block-local; locals persist across blocks in the interpreter's mutable env).
+fn spill_stack(stack: &[Value], instrs: &mut Vec<RirInstr>) {
+    for (i, v) in stack.iter().enumerate() {
+        instrs.push(copy(v.clone(), Value(format!("__s{i}"))));
+    }
+}
+
 /// Total byte length of a supported instruction (incl. opcode); `None` if unsupported.
 fn instr_len(op: u8) -> Option<usize> {
     Some(match op {
@@ -986,7 +1166,8 @@ fn instr_len(op: u8) -> Option<usize> {
         0x10 | 0x12 | 0x15..=0x19 | 0x36..=0x3a | 0xbc => 2,
         // 3-byte (2 operands): sipush, ldc_w, ldc2_w, iinc, if<cond>, goto, getstatic,
         //   get/putfield, invoke{virtual,special,static}, new, anewarray
-        0x11 | 0x13 | 0x14 | 0x84 | 0x99..=0xa4 | 0xa7 | 0xb2 | 0xb4..=0xb8 | 0xbb | 0xbd => 3,
+        0x11 | 0x13 | 0x14 | 0x84 | 0x99..=0xa4 | 0xa7 | 0xb2 | 0xb4..=0xb8 | 0xbb | 0xbd
+        | 0xc0 => 3,
         // 1-byte
         0x00 => 1,        // nop
         0x02..=0x0f => 1, // iconst/lconst/fconst/dconst
@@ -1129,6 +1310,8 @@ mod tests {
     const INTFN: &[u8] = include_bytes!("fixtures/IntFn.class");
     const LAM: &[u8] = include_bytes!("fixtures/Lam.class");
     const LAM2: &[u8] = include_bytes!("fixtures/Lam2.class");
+    const CAP: &[u8] = include_bytes!("fixtures/Cap.class");
+    const BOOL: &[u8] = include_bytes!("fixtures/Bool.class");
     const ARR: &[u8] = include_bytes!("fixtures/Arr.class");
     const NUM: &[u8] = include_bytes!("fixtures/Num.class");
     const SW: &[u8] = include_bytes!("fixtures/Sw.class");
@@ -1336,6 +1519,27 @@ mod tests {
             interp.call("Lam2.combine", vec![RVal::Int(3), RVal::Int(4)]).unwrap().to_display(),
             "13"
         );
+    }
+
+    #[test]
+    fn cross_block_operand_stack() {
+        // Booleans/ternaries leave a value on the operand stack across a basic-block edge
+        // (javac's `cond ? a : b` idiom). The lowerer spills/reloads it via `__s{i}` locals.
+        // Output matches `java Bool` exactly (nested ternaries, short-circuit &&, multi-ternary).
+        let out = run_main_capture(BOOL);
+        assert_eq!(
+            out.trim(),
+            "true\nfalse\n9\n-1\n0\n1\nbig\nsmall\n10\n0\n5\ntrue\nfalse\n2"
+        );
+    }
+
+    #[test]
+    fn capturing_lambdas() {
+        // Lambdas that close over locals: javac lifts captures into leading params of the
+        // synthetic lambda$ method; the closure carries them and prepends at invoke time.
+        let out = run_main_capture(CAP);
+        // matches `java Cap`: int capture, String capture (+ concat), predicate, multi-capture.
+        assert_eq!(out.trim(), "15\nHi: Bob\ntrue\nfalse\n125");
     }
 
     #[test]

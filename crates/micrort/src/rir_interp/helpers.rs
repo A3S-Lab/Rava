@@ -375,6 +375,26 @@ impl RirInterpreter {
         {
             use crate::lowerer_hash::encode_builtin;
             // Capture bound method ref receiver: __capture_bound_methodref__(sentinel, receiver)
+            // Pack a capturing bytecode lambda: __make_closure__(methodName, cap0, cap1, …).
+            // The closure is a heap object holding the synthetic method name + captured values;
+            // dispatch prepends the captures (positional, javac's convention) at invoke time.
+            if func_id == encode_builtin("__make_closure__") {
+                if let Some(RVal::Str(method)) = args.first() {
+                    let id = self.alloc_object("__bclosure__");
+                    let caps = &args[1..];
+                    if let Some(obj) = self.heap.borrow_mut().get_mut(&id) {
+                        obj.fields
+                            .insert("__method__".into(), RVal::Str(method.clone()));
+                        obj.fields
+                            .insert("__ncap__".into(), RVal::Int(caps.len() as i64));
+                        for (i, c) in caps.iter().enumerate() {
+                            obj.fields.insert(format!("__cap{i}__"), c.clone());
+                        }
+                    }
+                    return Ok(RVal::Object(id));
+                }
+                return Ok(RVal::Null);
+            }
             if func_id == encode_builtin("__capture_bound_methodref__") {
                 if let (Some(RVal::Str(sentinel)), Some(receiver)) = (args.first(), args.get(1)) {
                     super::LAMBDA_CAPTURES.with(|lc| {
@@ -1610,6 +1630,11 @@ impl RirInterpreter {
     ) -> Result<RVal> {
         let args: Vec<RVal> = arg_vals.iter().map(|v| self.resolve(env, v)).collect();
 
+        // Capturing bytecode closure (any SAM name) — invoke its target with captures prepended.
+        if let Some(result) = self.try_invoke_bclosure(&receiver, &args) {
+            return result;
+        }
+
         // Lambda / method-ref dispatch
         if let RVal::Str(ref s) = receiver {
             if s.starts_with("__lambda_") {
@@ -2003,6 +2028,50 @@ impl RirInterpreter {
 
     // ── Lambda helpers ────────────────────────────────────────────────────────
 
+    /// If `receiver` is a capturing bytecode closure (`__bclosure__`), invoke its target
+    /// synthetic method with the captured values prepended to `args`. Returns `None` otherwise.
+    pub(super) fn try_invoke_bclosure(
+        &self,
+        receiver: &RVal,
+        args: &[RVal],
+    ) -> Option<Result<RVal>> {
+        let RVal::Object(id) = receiver else {
+            return None;
+        };
+        let (method, mut all) = {
+            let heap = self.heap.borrow();
+            let obj = heap.get(id)?;
+            if obj.class_name != "__bclosure__" {
+                return None;
+            }
+            let method = match obj.fields.get("__method__") {
+                Some(RVal::Str(m)) => m.clone(),
+                _ => return None,
+            };
+            let ncap = obj.fields.get("__ncap__").map(|v| v.as_int()).unwrap_or(0);
+            let mut caps = Vec::new();
+            for i in 0..ncap {
+                caps.push(
+                    obj.fields
+                        .get(&format!("__cap{i}__"))
+                        .cloned()
+                        .unwrap_or(RVal::Null),
+                );
+            }
+            (method, caps)
+        };
+        all.extend_from_slice(args); // captures first, then the actual SAM arguments
+        let Some(idx) = self.module.functions.iter().position(|f| f.name == method) else {
+            return Some(Ok(RVal::Null));
+        };
+        let func = &self.module.functions[idx];
+        let mut call_env: HashMap<String, RVal> = HashMap::new();
+        for ((param_name, _), val) in func.params.iter().zip(all.iter()) {
+            call_env.insert(param_name.0.clone(), val.clone());
+        }
+        Some(self.exec_function_idx(idx, call_env))
+    }
+
     pub(super) fn call_lambda_by_name(&self, name: &str, args: &[RVal]) -> Result<RVal> {
         if let Some(idx) = self.module.functions.iter().position(|f| f.name == name) {
             let func = &self.module.functions[idx];
@@ -2022,6 +2091,10 @@ impl RirInterpreter {
     }
 
     pub(super) fn invoke_lambda(&self, lambda: &RVal, args: &[RVal]) -> Result<RVal> {
+        // Capturing bytecode closure passed as a higher-order arg (stream.map, forEach, sort…).
+        if let Some(result) = self.try_invoke_bclosure(lambda, args) {
+            return result;
+        }
         match lambda {
             RVal::Str(s) if s.starts_with("__composed_andThen__") => {
                 let captures =

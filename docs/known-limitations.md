@@ -49,16 +49,20 @@ bytecode to RIR and running it on the existing interpreter
 (`crates/micrort/src/{classfile,bytecode}.rs`); output matches the JVM. A JAR's `.class` entries
 are loaded into one module so cross-class calls link (`bytecode::load_jar`/`load_classes_module`).
 **Supported subset:** int/long/float/double arithmetic + conversions + bitwise/shifts, control
-flow + loops, static/virtual/special calls + recursion, objects/fields/constructors (incl.
-cross-class), arrays, `String` + library method calls (routed to builtins), `System.out.println`,
-stack ops (`dup`/`swap`/…), `throw`, `try`/`catch`, `switch` (`tableswitch`/`lookupswitch`),
-**string concatenation** (`invokedynamic` `makeConcatWithConstants`), interface dispatch
-(`invokeinterface`), and **non-capturing lambdas / method references** (LambdaMetafactory →
-method-ref value invoked on `apply`/`test`/…). **Not yet:** **capturing** lambdas (those that close
-over local variables), and catching *library* exceptions (catch matches by class name — user
-exception types work; built-in types like `ArithmeticException` need name normalization). The
-common JVM instruction set for non-capturing code is now covered. The separate JVM-bytecode VM in
-`interpreter.rs` remains an unused stub — the bytecode→RIR path supersedes it.
+flow + loops, **booleans and (nested) ternaries / short-circuit `&&`/`||`** (values that cross a
+basic-block edge on the operand stack are spilled to / reloaded from locals), static/virtual/special
+calls + recursion, objects/fields/constructors (incl. cross-class), arrays, `String` + library
+method calls (routed to builtins), `System.out.println` (incl. `println(boolean)` → `true`/`false`),
+stack ops (`dup`/`swap`/…), `checkcast` (lenient, like the interpreter's casts), `throw`,
+`try`/`catch`, `switch` (`tableswitch`/`lookupswitch`), **string concatenation** (`invokedynamic`
+`makeConcatWithConstants`), interface dispatch (`invokeinterface`), and **lambdas / method
+references** — both **non-capturing** (LambdaMetafactory → method-ref value) and **capturing**
+(closures that close over locals; javac lifts captures into leading params, packed into a
+`__bclosure__` heap object that prepends them at invoke time). **Not yet:** `instanceof`, and
+catching *library* exceptions (catch matches by class name — user exception types work; built-in
+types like `ArithmeticException` need name normalization). The common JVM instruction set is now
+covered. The separate JVM-bytecode VM in `interpreter.rs` remains an unused stub — the
+bytecode→RIR path supersedes it.
 
 The README's MicroRT "dynamic Java" escape hatch (dynamic reflection / proxy / class loading, JNI)
 is still **aspirational — not implemented**.
@@ -91,8 +95,8 @@ fix is invasive and risks regressing the 393-test suite):
   auto-loads every dependency JAR named in `rava.lock` (downloading any not yet cached) onto the
   classpath — no manual `-c` needed. You can also pass dependency JARs explicitly with
   `-c lib1.jar,lib2.jar`. The AOT path (`rava build`) still does **not** download or link JARs.
-  Whether a real Maven JAR actually *executes* depends on bytecode coverage (capturing lambdas
-  and library-exception catch normalization are the remaining gaps — see below).
+  Whether a real Maven JAR actually *executes* depends on bytecode coverage (`instanceof` and
+  library-exception catch normalization are the main remaining gaps — see below).
 - **Transitive POM resolution is partial.** `pom::parse_pom_dependencies` +
   `registry::resolve_closure` resolve transitive deps for POMs that declare versions literally
   or via same-POM `${...}` properties, filtering test/provided/optional. They do **not** yet
