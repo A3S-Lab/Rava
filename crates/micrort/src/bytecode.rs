@@ -126,7 +126,8 @@ fn find_leaders(code: &[u8]) -> Result<BTreeSet<usize>> {
             let target = (pc as i64 + read_i16(code, pc + 1)? as i64) as usize;
             leaders.insert(target);
             leaders.insert(pc + len);
-        } else if is_return(op) {
+        } else if is_return(op) || op == 0xbf {
+            // return / athrow end a block; the following instruction starts a new one.
             leaders.insert(pc + len);
         }
         pc += len;
@@ -523,6 +524,13 @@ fn translate_block(
                 instrs.push(RirInstr::Return(None));
                 terminated = true;
             }
+            0xbf => {
+                // athrow — throw the top-of-stack exception (uncaught → propagates;
+                // bytecode exception-table → catch translation is not implemented yet).
+                let v = pop(&mut stack)?;
+                instrs.push(RirInstr::Throw(v));
+                terminated = true;
+            }
             0x00 => {} // nop
             other => return Err(unsupported(other)),
         }
@@ -664,7 +672,7 @@ fn instr_len(op: u8) -> Option<usize> {
         0x60..=0x83 => 1, // arithmetic + negate + shifts/bitwise (int/long/float/double)
         0x85..=0x93 => 1, // numeric conversions
         0xac..=0xb1 => 1, // *return
-        0xbe => 1,        // arraylength
+        0xbe | 0xbf => 1, // arraylength, athrow
         _ => return None,
     })
 }
@@ -795,6 +803,7 @@ mod tests {
     const ARR: &[u8] = include_bytes!("fixtures/Arr.class");
     const NUM: &[u8] = include_bytes!("fixtures/Num.class");
     const BITS: &[u8] = include_bytes!("fixtures/Bits.class");
+    const EXC: &[u8] = include_bytes!("fixtures/Exc.class");
     const MATHLIB: &[u8] = include_bytes!("fixtures/MathLib.class");
     const APP: &[u8] = include_bytes!("fixtures/App.class");
 
@@ -864,6 +873,22 @@ mod tests {
         assert_eq!(run_class(STR, "subLen", vec![]), 5);
         // library invokestatic (Integer.parseInt) routed to the builtin
         assert_eq!(run_class(STR, "parsed", vec![]), 42);
+    }
+
+    #[test]
+    fn throw_propagates() {
+        let cf = classfile::parse(EXC).unwrap();
+        let mut module = RirModule::new("M");
+        for (i, m) in cf.methods.iter().enumerate() {
+            if let Ok(f) = lower_method(&cf, m, i as u32) {
+                module.functions.push(f);
+            }
+        }
+        let interp = RirInterpreter::new(module);
+        // non-throwing path returns a value
+        assert_eq!(interp.call("Exc.checked", vec![RVal::Int(5)]).unwrap().to_display(), "10");
+        // throwing path (new + athrow) propagates as an error (no catch in bytecode yet)
+        assert!(interp.call("Exc.checked", vec![RVal::Int(-1)]).is_err());
     }
 
     #[test]
