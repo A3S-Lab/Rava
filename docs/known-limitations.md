@@ -42,15 +42,19 @@ Rava has two execution paths that share one IR (RIR):
   method signatures, and superclass extraction are TODO; the table is not embedded in the
   binary. `ProxyPregenPass` (Phase 4) and `MicroRtBridgePass` (Phase 3) are empty stubs.
 
-## MicroRT "dynamic Java" escape hatch — not implemented
+## Compiled `.class` execution (bytecode → RIR)
 
-The README markets an embedded bytecode runtime that transparently handles dynamic
-reflection, dynamic proxies, and dynamic class loading. This is **aspirational (Phase 3+)**:
+`rava run File.class` executes a pre-compiled `.class` file by lowering its JVM bytecode to RIR
+and running it on the existing interpreter (`crates/micrort/src/{classfile,bytecode}.rs`); output
+matches the JVM. **Supported subset:** int arithmetic, control flow + loops, static/virtual/special
+calls + recursion, objects/fields/constructors, `String` + library method calls (routed to
+builtins), and `System.out.println`. **Not yet:** `long`/`double`/`float` arithmetic, arrays in
+bytecode, `invokedynamic` (so string `+` concatenation and lambdas in compiled code), exceptions,
+`tableswitch`/`lookupswitch`, and loading classes from JAR dependencies. The separate JVM-bytecode
+VM in `interpreter.rs` remains an unused stub — the bytecode→RIR path supersedes it.
 
-- The JVM bytecode interpreter, class loader, and bytecode verifier are architecture stubs
-  (e.g. `aload`/`invoke*` opcodes return `null`). No `.class` bytecode is ever loaded.
-- Dynamic reflection / dynamic proxy / dynamic class loading / JNI are **not implemented**.
-- All Java currently executes through the RIR interpreter, not a bytecode runtime.
+The README's MicroRT "dynamic Java" escape hatch (dynamic reflection / proxy / class loading, JNI)
+is still **aspirational — not implemented**.
 
 ## Interpreter semantics (verified via differential testing vs OpenJDK 17)
 
