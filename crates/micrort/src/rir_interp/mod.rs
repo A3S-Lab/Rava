@@ -212,6 +212,9 @@ const KNOWN_METHODS: &[&str] = &[
     "average",
     "min",
     "max",
+    "boxed",
+    "asLongStream",
+    "asDoubleStream",
     // Iterable / Iterator
     "of",
     "iterator",
@@ -224,6 +227,9 @@ const KNOWN_METHODS: &[&str] = &[
     "orElse",
     "orElseGet",
     "orElseThrow",
+    "getAsInt",
+    "getAsLong",
+    "getAsDouble",
     "ifPresent",
     // Set / HashSet / TreeSet
     "contains",

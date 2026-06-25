@@ -116,6 +116,10 @@ pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Op
             "doubleValue" | "floatValue" => Some(Ok(RVal::Float(*n as f64))),
             "booleanValue" => Some(Ok(RVal::Bool(*n != 0))),
             "toString" => Some(Ok(RVal::Str(n.to_string()))),
+            // OptionalInt/OptionalLong accessors — IntStream max()/min() return a bare number.
+            "getAsInt" | "getAsLong" | "orElseThrow" | "orElse" => Some(Ok(RVal::Int(*n))),
+            "getAsDouble" => Some(Ok(RVal::Float(*n as f64))),
+            "isPresent" => Some(Ok(RVal::Bool(true))),
             _ => None,
         },
         RVal::Float(f) => match method {
@@ -128,6 +132,10 @@ pub fn dispatch_named_method(receiver: &RVal, method: &str, args: &[RVal]) -> Op
             "doubleValue" | "floatValue" => Some(Ok(RVal::Float(*f))),
             "intValue" | "longValue" | "shortValue" | "byteValue" => Some(Ok(RVal::Int(*f as i64))),
             "toString" => Some(Ok(RVal::Str(f.to_string()))),
+            // OptionalDouble accessors — IntStream average() returns a bare float.
+            "getAsDouble" | "orElseThrow" | "orElse" => Some(Ok(RVal::Float(*f))),
+            "getAsInt" | "getAsLong" => Some(Ok(RVal::Int(*f as i64))),
+            "isPresent" => Some(Ok(RVal::Bool(true))),
             _ => None,
         },
         RVal::Object(_) => concurrent::dispatch_named(method, args)

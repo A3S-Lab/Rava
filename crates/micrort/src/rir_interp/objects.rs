@@ -542,6 +542,10 @@ impl RirInterpreter {
     ) -> Option<Result<RVal>> {
         match method {
             "stream" | "toList" => Some(Ok(receiver.clone())),
+            // Identity ops: in our representation int/Integer streams share one array form.
+            "boxed" | "asLongStream" | "asDoubleStream" | "sequential" | "parallel" => {
+                Some(Ok(receiver.clone()))
+            }
             "of" => Some(Ok(RVal::Array(Rc::new(RefCell::new(args.to_vec()))))),
             "mapToInt" | "mapToLong" | "mapToDouble" | "map" => {
                 let arr = self.as_array(receiver)?;
