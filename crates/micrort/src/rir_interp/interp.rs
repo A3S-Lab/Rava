@@ -16,6 +16,23 @@ pub(super) struct ExecState<'a> {
 }
 
 impl RirInterpreter {
+    /// Invoke a function by name with positional arguments, binding them to the
+    /// function's parameters in order. Entry point for executing a lowered `.class`
+    /// method (and useful for testing individual functions).
+    pub fn call(&self, name: &str, args: Vec<RVal>) -> Result<RVal> {
+        let func = self
+            .module
+            .functions
+            .iter()
+            .find(|f| f.name == name)
+            .ok_or_else(|| RavaError::Other(format!("function not found: {name}")))?;
+        let mut env: HashMap<String, RVal> = HashMap::new();
+        for ((pname, _), val) in func.params.iter().zip(args) {
+            env.insert(pname.0.clone(), val);
+        }
+        self.exec_function(name, env)
+    }
+
     pub fn run_main(&self) -> Result<()> {
         let clinit_names: Vec<String> = self
             .module

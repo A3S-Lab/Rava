@@ -5,6 +5,7 @@
 //!          (`BytecodeVerifier`) + reflection engine (`ReflectionEngine`).
 
 pub mod builtins;
+pub mod bytecode;
 pub mod classfile;
 pub mod interpreter;
 pub mod loader;
