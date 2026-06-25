@@ -51,13 +51,13 @@ are loaded into one module so cross-class calls link (`bytecode::load_jar`/`load
 **Supported subset:** int/long/float/double arithmetic + conversions + bitwise/shifts, control
 flow + loops, static/virtual/special calls + recursion, objects/fields/constructors (incl.
 cross-class), arrays, `String` + library method calls (routed to builtins), `System.out.println`,
-stack ops (`dup`/`swap`/…), `throw`, `try`/`catch`, and **string concatenation** (`invokedynamic`
-`makeConcatWithConstants`). **Not yet:** `invokedynamic` for **lambdas / method references**
-(LambdaMetafactory), `tableswitch`/`lookupswitch`, and catching *library* exceptions (catch matches
-by class name — user exception types work; built-in types like `ArithmeticException` need name
-normalization). So self-contained compiled programs — and JARs whose only "modern" feature is
-string concat — run end-to-end; JARs using lambdas/switch-tables only partially load. The separate
-JVM-bytecode VM in `interpreter.rs` remains an unused stub — the bytecode→RIR path supersedes it.
+stack ops (`dup`/`swap`/…), `throw`, `try`/`catch`, `switch` (`tableswitch`/`lookupswitch`), and
+**string concatenation** (`invokedynamic` `makeConcatWithConstants`). **Not yet:** `invokedynamic`
+for **lambdas / method references** (LambdaMetafactory), and catching *library* exceptions (catch
+matches by class name — user exception types work; built-in types like `ArithmeticException` need
+name normalization). So self-contained compiled programs run end-to-end; JARs using lambdas only
+partially load. The separate JVM-bytecode VM in `interpreter.rs` remains an unused stub — the
+bytecode→RIR path supersedes it.
 
 The README's MicroRT "dynamic Java" escape hatch (dynamic reflection / proxy / class loading, JNI)
 is still **aspirational — not implemented**.
