@@ -9959,3 +9959,20 @@ class Main {
 "#);
     assert_eq!(out.trim(), "résumé\n6\n12");
 }
+
+#[test]
+fn new_array_with_initializer() {
+    // `new int[]{...}` / `new String[]{...}` — array creation with an initializer expression.
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        int sum = 0;
+        for (int v : new int[]{5, 10, 15}) sum += v;
+        System.out.println(sum);
+        String[] s = new String[]{"a", "b", "c"};
+        System.out.println(s.length + " " + s[2]);
+    }
+}
+"#);
+    assert_eq!(out.trim(), "30\n3 c");
+}

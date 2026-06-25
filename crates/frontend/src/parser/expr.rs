@@ -509,6 +509,16 @@ impl Parser {
             Token::New => {
                 self.advance();
                 let ty = self.parse_type_expr()?;
+                // `new int[]{1,2,3}` — parse_type_expr greedily consumes the `[]` as an array
+                // type, so the initializer `{...}` is what remains. (Sized `new int[5]` keeps the
+                // brackets for the LBracket branch below since `[5]` isn't an array-type suffix.)
+                if self.peek() == &Token::LBrace {
+                    let elements = self.parse_array_init()?;
+                    return Ok(Expr::ArrayInit {
+                        ty: Some(ty),
+                        elements,
+                    });
+                }
                 if self.peek() == &Token::LBracket {
                     self.advance();
                     // new Type[] { ... } — array init with explicit type
