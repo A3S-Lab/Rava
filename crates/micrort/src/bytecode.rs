@@ -40,14 +40,14 @@ pub fn lower_method(class: &ClassFile, method: &Method, func_id: u32) -> Result<
         name: format!("{}.{}", class.name, method.name),
         params,
         return_type: parse_return_type(&method.descriptor)?,
-        basic_blocks: lower_blocks(code)?,
+        basic_blocks: lower_blocks(code, class)?,
         flags: FuncFlags::default(),
     })
 }
 
 // ── Control-flow graph construction ───────────────────────────────────────────
 
-fn lower_blocks(code: &[u8]) -> Result<Vec<BasicBlock>> {
+fn lower_blocks(code: &[u8], class: &ClassFile) -> Result<Vec<BasicBlock>> {
     let leaders = find_leaders(code)?;
     let starts: Vec<usize> = leaders.iter().copied().filter(|&l| l < code.len()).collect();
 
@@ -55,7 +55,7 @@ fn lower_blocks(code: &[u8]) -> Result<Vec<BasicBlock>> {
     let mut blocks = Vec::with_capacity(starts.len());
     for (i, &start) in starts.iter().enumerate() {
         let end = starts.get(i + 1).copied().unwrap_or(code.len());
-        blocks.push(translate_block(code, start, end, &mut tmp)?);
+        blocks.push(translate_block(code, start, end, &mut tmp, class)?);
     }
     Ok(blocks)
 }
@@ -82,7 +82,13 @@ fn find_leaders(code: &[u8]) -> Result<BTreeSet<usize>> {
     Ok(leaders)
 }
 
-fn translate_block(code: &[u8], start: usize, end: usize, tmp: &mut u32) -> Result<BasicBlock> {
+fn translate_block(
+    code: &[u8],
+    start: usize,
+    end: usize,
+    tmp: &mut u32,
+    class: &ClassFile,
+) -> Result<BasicBlock> {
     let mut instrs = Vec::new();
     let mut stack: Vec<Value> = Vec::new();
     let mut fresh = || {
@@ -199,6 +205,28 @@ fn translate_block(code: &[u8], start: usize, end: usize, tmp: &mut u32) -> Resu
                 push_branch(&mut instrs, cond, code, pc, len)?;
                 terminated = true;
             }
+            0xb8 => {
+                // invokestatic <methodref index> — direct call, no receiver
+                let (cls, name, desc) = class.method_ref(read_u16(code, pc + 1)?)?;
+                let argc = parse_arg_types(&desc)?.len();
+                let mut args = vec![Value(String::new()); argc];
+                for slot in args.iter_mut().rev() {
+                    *slot = pop(&mut stack)?;
+                }
+                let ret = if matches!(parse_return_type(&desc)?, RirType::Void) {
+                    None
+                } else {
+                    Some(fresh())
+                };
+                instrs.push(RirInstr::Call {
+                    func: FuncId(crate::lowerer_hash::encode_builtin(&format!("{cls}.{name}"))),
+                    args,
+                    ret: ret.clone(),
+                });
+                if let Some(r) = ret {
+                    stack.push(r);
+                }
+            }
             0xa7 => {
                 let target = (pc as i64 + read_i16(code, pc + 1)? as i64) as usize;
                 instrs.push(RirInstr::Jump(BlockId(target as u32)));
@@ -314,7 +342,7 @@ fn is_return(op: u8) -> bool {
 fn instr_len(op: u8) -> Option<usize> {
     Some(match op {
         0x10 | 0x15 | 0x36 => 2,                      // bipush, iload, istore (1 operand)
-        0x11 | 0x84 | 0xa7 => 3,                      // sipush, iinc, goto
+        0x11 | 0x84 | 0xa7 | 0xb8 => 3,               // sipush, iinc, goto, invokestatic
         0x99..=0xa4 => 3,                             // if<cond> / if_icmp<cond>
         0x00 => 1,                                    // nop
         0x02..=0x08 => 1,                             // iconst_m1..5
@@ -332,6 +360,10 @@ fn unsupported(op: u8) -> RavaError {
         "unsupported JVM bytecode opcode 0x{op:02x} (bytecode→RIR covers the integer subset \
          with control flow so far)"
     ))
+}
+
+fn read_u16(code: &[u8], at: usize) -> Result<u16> {
+    Ok(read_i16(code, at)? as u16)
 }
 
 fn read_i16(code: &[u8], at: usize) -> Result<i16> {
@@ -417,8 +449,27 @@ mod tests {
         r.to_display().parse().unwrap()
     }
 
+    /// Lower every (lowerable) method of a class into one module, then invoke `method`.
+    fn run_class(fixture: &[u8], method: &str, args: Vec<RVal>) -> i64 {
+        let cf = classfile::parse(fixture).unwrap();
+        let mut module = RirModule::new("M");
+        for (i, m) in cf.methods.iter().enumerate() {
+            if let Ok(func) = lower_method(&cf, m, i as u32) {
+                module.functions.push(func);
+            }
+        }
+        let target = format!("{}.{}", cf.name, method);
+        RirInterpreter::new(module)
+            .call(&target, args)
+            .unwrap()
+            .to_display()
+            .parse()
+            .unwrap()
+    }
+
     const ADD: &[u8] = include_bytes!("fixtures/Add.class");
     const CALC: &[u8] = include_bytes!("fixtures/Calc.class");
+    const CALLER: &[u8] = include_bytes!("fixtures/Caller.class");
 
     #[test]
     fn arithmetic() {
@@ -440,5 +491,13 @@ mod tests {
         assert_eq!(run(CALC, "sumTo", vec![RVal::Int(5)]), 15);
         assert_eq!(run(CALC, "sumTo", vec![RVal::Int(10)]), 55);
         assert_eq!(run(CALC, "sumTo", vec![RVal::Int(0)]), 0);
+    }
+
+    #[test]
+    fn static_method_calls() {
+        // invokestatic: methods calling other static methods, plus recursion
+        assert_eq!(run_class(CALLER, "square", vec![RVal::Int(6)]), 36);
+        assert_eq!(run_class(CALLER, "sumSquares", vec![RVal::Int(3), RVal::Int(4)]), 25);
+        assert_eq!(run_class(CALLER, "fib", vec![RVal::Int(10)]), 55);
     }
 }

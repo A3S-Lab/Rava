@@ -11,11 +11,20 @@
 use rava_common::error::{RavaError, Result};
 
 /// A parsed `.class` file (only the parts needed to run a method).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ClassFile {
     pub name: String,
     pub super_name: Option<String>,
     pub methods: Vec<Method>,
+    pool: ConstantPool,
+}
+
+impl ClassFile {
+    /// Resolve a `Methodref` constant-pool index (an `invoke*` operand) to its
+    /// (class name, method name, descriptor).
+    pub fn method_ref(&self, index: u16) -> Result<(String, String, String)> {
+        self.pool.method_ref(index)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +72,7 @@ pub fn parse(bytes: &[u8]) -> Result<ClassFile> {
         name,
         super_name,
         methods,
+        pool: cp,
     })
 }
 
@@ -117,11 +127,14 @@ fn skip_member(r: &mut Reader) -> Result<()> {
 #[derive(Clone)]
 enum CpEntry {
     Utf8(String),
-    Class(u16), // name_index → Utf8
+    Class(u16),            // name_index → Utf8
+    Methodref(u16, u16),   // class_index, name_and_type_index
+    NameAndType(u16, u16), // name_index, descriptor_index
     Other,
     Placeholder, // unused slot 0, and the slot following Long/Double
 }
 
+#[derive(Clone)]
 struct ConstantPool {
     entries: Vec<CpEntry>,
 }
@@ -143,6 +156,28 @@ impl ConstantPool {
                 "constant pool index {idx} is not a Class entry"
             ))),
         }
+    }
+
+    /// Resolve a `Methodref` index → (class name, method name, descriptor).
+    fn method_ref(&self, idx: u16) -> Result<(String, String, String)> {
+        let (class_idx, nat_idx) = match self.entries.get(idx as usize) {
+            Some(CpEntry::Methodref(c, n)) => (*c, *n),
+            _ => {
+                return Err(RavaError::Other(format!(
+                    "constant pool index {idx} is not a Methodref"
+                )))
+            }
+        };
+        let class = self.class_name(class_idx)?;
+        let (name_idx, desc_idx) = match self.entries.get(nat_idx as usize) {
+            Some(CpEntry::NameAndType(n, d)) => (*n, *d),
+            _ => {
+                return Err(RavaError::Other(format!(
+                    "constant pool index {nat_idx} is not a NameAndType"
+                )))
+            }
+        };
+        Ok((class, self.utf8(name_idx)?, self.utf8(desc_idx)?))
     }
 }
 
@@ -167,9 +202,21 @@ fn parse_constant_pool(r: &mut Reader) -> Result<ConstantPool> {
                 r.u32()?; // Integer / Float
                 entries[i] = CpEntry::Other;
             }
-            9 | 10 | 11 | 12 | 17 | 18 => {
+            10 | 11 => {
+                // Methodref / InterfaceMethodref: class_index, name_and_type_index
+                let class = r.u16()?;
+                let nat = r.u16()?;
+                entries[i] = CpEntry::Methodref(class, nat);
+            }
+            12 => {
+                // NameAndType: name_index, descriptor_index
+                let name = r.u16()?;
+                let desc = r.u16()?;
+                entries[i] = CpEntry::NameAndType(name, desc);
+            }
+            9 | 17 | 18 => {
                 r.u16()?;
-                r.u16()?; // {Field,Method,InterfaceMethod}ref / NameAndType / (Invoke)Dynamic
+                r.u16()?; // Fieldref / (Invoke)Dynamic — not needed yet
                 entries[i] = CpEntry::Other;
             }
             15 => {
