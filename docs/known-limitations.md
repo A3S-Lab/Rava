@@ -8,7 +8,7 @@ It reflects the **verified** state of the code, not aspirational goals.
 Rava has two execution paths that share one IR (RIR):
 
 - **`rava run` / `rava test` → RIR interpreter** (`crates/micrort`). This is the **mature,
-  supported path**: 410/410 end-to-end Java tests pass. Treat this as the product today.
+  supported path**: 411/411 end-to-end Java tests pass. Treat this as the product today.
 - **`rava build` → Cranelift AOT** (`crates/codegen-cranelift`). This is **experimental** —
   it compiles only a subset of programs and miscompiles several basics (see below).
 
@@ -104,6 +104,12 @@ fix is invasive and risks regressing the e2e suite:
   `min()`/`max()` directly, which work.
 - Explicit reference casts do not throw `ClassCastException` on a bad cast (the cast is a no-op
   in the interpreter).
+- **Regex** is backed by the Rust `regex` crate: capture groups (`Matcher.group(n)`), `$1`
+  backreferences in `replaceAll`, character classes, alternation, quantifiers, and regex `split`
+  all work and match OpenJDK. Rust's engine has no **lookaround** (`(?=)`, `(?<=)`) or
+  **in-pattern backreferences** (`\1`); patterns using those fail to compile and degrade to a
+  no-match / no-op rather than throwing. Java named groups `(?<n>…)` are translated to Rust's
+  `(?P<n>…)`.
 
 ## Toolchain
 

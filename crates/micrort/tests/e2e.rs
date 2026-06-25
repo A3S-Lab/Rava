@@ -10189,3 +10189,21 @@ class Main {
 "#);
     assert_eq!(out.trim(), "f\n1\ninner\nouter\nin\n1\n2");
 }
+
+#[test]
+fn regex_capture_groups_and_split() {
+    // Backed by the `regex` crate: capture groups, $1 backreferences, and char-class split.
+    let out = run(r#"
+import java.util.regex.*;
+class Main {
+    public static void main(String[] args) {
+        Matcher m = Pattern.compile("(\\d+)-(\\d+)").matcher("12-34 and 56-78");
+        while (m.find()) System.out.println(m.group(1) + "|" + m.group(2));
+        System.out.println("a1b2c3".replaceAll("(\\d)", "[$1]"));
+        System.out.println("one,two;three four".split("[,; ]").length);
+        System.out.println(Pattern.matches("\\w+@\\w+\\.\\w+", "test@example.com"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "12|34\n56|78\na[1]b[2]c[3]\n4\ntrue");
+}

@@ -153,35 +153,25 @@ pub fn dispatch_named(s: &str, method: &str, args: &[RVal]) -> Option<Result<RVa
         "split" => {
             let pat = args.first().map(|v| v.to_display()).unwrap_or_default();
             let limit = args.get(1).map(|v| v.as_int()).unwrap_or(0);
-            // Handle common Java regex patterns
-            let parts: Vec<RVal> = {
-                let split_fn = |text: &str| -> Vec<String> {
-                    match pat.as_str() {
-                        "\\s+" | "\\s" => text.split_whitespace().map(|s| s.to_string()).collect(),
-                        "\\d+" => text
-                            .split(|c: char| c.is_ascii_digit())
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                            .collect(),
-                        "\\w+" => text
-                            .split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                            .collect(),
-                        _ => {
-                            // Strip anchors and treat as literal for simple patterns
-                            let p = pat.replace("\\.", ".").replace("\\,", ",");
-                            if limit > 0 {
-                                text.splitn(limit as usize, p.as_str())
-                                    .map(|s| s.to_string())
-                                    .collect()
-                            } else {
-                                text.split(p.as_str()).map(|s| s.to_string()).collect()
+            let parts: Vec<RVal> = match super::format::compile_java_regex(&pat) {
+                Some(re) => {
+                    if limit > 0 {
+                        // At most `limit` parts (trailing empties kept).
+                        re.splitn(s, limit as usize)
+                            .map(|x| RVal::Str(x.to_string()))
+                            .collect()
+                    } else {
+                        let mut v: Vec<String> = re.split(s).map(|x| x.to_string()).collect();
+                        // limit == 0 drops trailing empty strings (Java semantics).
+                        if limit == 0 {
+                            while v.len() > 1 && v.last().is_some_and(|x| x.is_empty()) {
+                                v.pop();
                             }
                         }
+                        v.into_iter().map(RVal::Str).collect()
                     }
-                };
-                split_fn(s).into_iter().map(RVal::Str).collect()
+                }
+                None => vec![RVal::Str(s.to_string())],
             };
             Some(Ok(RVal::Array(Rc::new(RefCell::new(parts)))))
         }

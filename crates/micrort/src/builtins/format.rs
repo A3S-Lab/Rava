@@ -231,589 +231,64 @@ pub fn rand_f64() -> f64 {
 /// NFA-based regex engine supporting Java regex subset.
 /// Supports: `.`, `*`, `+`, `?`, `^`, `$`, `[]`, `[^]`, `\d`, `\w`, `\s`,
 ///           `\D`, `\W`, `\S`, `{n}`, `{n,}`, `{n,m}`, `|`, `()`, `(?:)`.
+/// Compile a Java regex into a Rust `regex::Regex` (cached). Java and Rust regex syntax mostly
+/// agree (`\d \w \s [...] (...) * + ? | ^ $ {n,m}` all match); the main fixup is named groups
+/// `(?<n>..)` → `(?P<n>..)`. Returns `None` for patterns using engine features Rust lacks
+/// (lookaround, backreferences) so callers degrade gracefully instead of failing hard.
+pub fn compile_java_regex(pattern: &str) -> Option<regex::Regex> {
+    thread_local! {
+        static CACHE: std::cell::RefCell<std::collections::HashMap<String, Option<regex::Regex>>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    CACHE.with(|c| {
+        c.borrow_mut()
+            .entry(pattern.to_string())
+            .or_insert_with(|| regex::Regex::new(&pattern.replace("(?<", "(?P<")).ok())
+            .clone()
+    })
+}
+
 pub fn regex_lite_match(pattern: &str, text: &str) -> bool {
-    // Java String.matches() anchors the entire string
-    let pat = if pattern.starts_with('^') && pattern.ends_with('$') {
-        pattern[1..pattern.len() - 1].to_string()
-    } else if let Some(stripped) = pattern.strip_prefix('^') {
-        stripped.to_string()
-    } else {
-        pattern.to_string()
-    };
-    let anchored = !pattern.starts_with(".*");
-    if anchored {
-        regex_match_full(&pat, text)
-    } else {
-        regex_match_anywhere(&pat, text)
+    // Java String.matches() / Matcher.matches() require the whole input to match.
+    match compile_java_regex(&format!("^(?:{pattern})$")) {
+        Some(re) => re.is_match(text),
+        None => false,
     }
-}
-
-fn regex_match_full(pattern: &str, text: &str) -> bool {
-    let chars: Vec<char> = text.chars().collect();
-    let pat_chars: Vec<char> = pattern.chars().collect();
-    matches_here(&pat_chars, 0, &chars, 0, true)
-}
-
-fn regex_match_anywhere(pattern: &str, text: &str) -> bool {
-    let chars: Vec<char> = text.chars().collect();
-    let pat_chars: Vec<char> = pattern.chars().collect();
-    for start in 0..=chars.len() {
-        if matches_here(&pat_chars, 0, &chars, start, false) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Returns true if pattern[pi..] matches text[ti..] (optionally requiring full consumption).
-fn matches_here(pat: &[char], pi: usize, text: &[char], ti: usize, full: bool) -> bool {
-    if pi >= pat.len() {
-        return if full { ti == text.len() } else { true };
-    }
-
-    // End anchor
-    if pat[pi] == '$' && pi + 1 == pat.len() {
-        return ti == text.len();
-    }
-
-    // Alternation: split on top-level `|`
-    if let Some(alt_pos) = find_top_level_alt(pat, pi) {
-        let left = &pat[pi..alt_pos];
-        let right = &pat[alt_pos + 1..];
-        return matches_here(left, 0, text, ti, full) || matches_here(right, 0, text, ti, full);
-    }
-
-    // Group: `(...)` or `(?:...)`
-    if pat[pi] == '(' {
-        let (group_end, inner_start) = find_group_end(pat, pi);
-        let inner = &pat[inner_start..group_end];
-        let after_group = group_end + 1;
-        // Check for quantifier after group
-        let (min, max, skip) = quantifier(pat, after_group);
-        let tail = MatchTail {
-            rest_pat: pat,
-            rest_pi: after_group + skip,
-            text,
-            full,
-        };
-        return match_repeat(inner, true, min, max, &tail, ti);
-    }
-
-    // Character class `[...]`
-    if pat[pi] == '[' {
-        if let Some(class_end) = find_class_end(pat, pi) {
-            let class_pat = &pat[pi..=class_end];
-            let after = class_end + 1;
-            let (min, max, skip) = quantifier(pat, after);
-            let tail = MatchTail {
-                rest_pat: pat,
-                rest_pi: after + skip,
-                text,
-                full,
-            };
-            return match_char_repeat(class_pat, min, max, &tail, ti);
-        }
-    }
-
-    // Escape sequences or literal with quantifier
-    let (atom_len, _atom_end) = atom_length(pat, pi);
-    let atom = &pat[pi..pi + atom_len];
-    let after = pi + atom_len;
-    let (min, max, skip) = quantifier(pat, after);
-    let tail = MatchTail {
-        rest_pat: pat,
-        rest_pi: after + skip,
-        text,
-        full,
-    };
-    match_char_repeat(atom, min, max, &tail, ti)
-}
-
-struct MatchTail<'a> {
-    rest_pat: &'a [char],
-    rest_pi: usize,
-    text: &'a [char],
-    full: bool,
-}
-
-fn match_repeat(
-    inner: &[char],
-    is_group: bool,
-    min: usize,
-    max: Option<usize>,
-    tail: &MatchTail,
-    ti: usize,
-) -> bool {
-    // Greedy: try max first, then back off
-    let mut positions = vec![ti];
-    let mut count = 0usize;
-    let mut cur = ti;
-    loop {
-        if let Some(m) = max {
-            if count >= m {
-                break;
-            }
-        }
-        // Try to match inner once at cur
-        if is_group {
-            // Find how far inner matches
-            if let Some(next) = try_match_group(inner, tail.text, cur) {
-                cur = next;
-                count += 1;
-                positions.push(cur);
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-    // Try from longest match down to min
-    for i in (min..=positions.len().saturating_sub(1)).rev() {
-        let pos = positions[i];
-        if matches_here(tail.rest_pat, tail.rest_pi, tail.text, pos, tail.full) {
-            return true;
-        }
-    }
-    false
-}
-
-fn try_match_group(inner: &[char], text: &[char], ti: usize) -> Option<usize> {
-    // Try to match inner at ti, return new position if successful
-    for end in (ti..=text.len()).rev() {
-        let slice = &text[ti..end];
-        let slice_str: String = slice.iter().collect();
-        if regex_match_full(&inner.iter().collect::<String>(), &slice_str) {
-            return Some(end);
-        }
-    }
-    None
-}
-
-fn match_char_repeat(
-    atom: &[char],
-    min: usize,
-    max: Option<usize>,
-    tail: &MatchTail,
-    ti: usize,
-) -> bool {
-    // Greedy: collect all positions where atom matches consecutively
-    let mut positions = vec![ti];
-    let mut cur = ti;
-    let mut count = 0usize;
-    loop {
-        if let Some(m) = max {
-            if count >= m {
-                break;
-            }
-        }
-        if cur >= tail.text.len() {
-            break;
-        }
-        if char_matches(atom, tail.text[cur]) {
-            cur += 1;
-            count += 1;
-            positions.push(cur);
-        } else {
-            break;
-        }
-    }
-    // Try from longest down to min
-    for i in (min..=positions.len().saturating_sub(1)).rev() {
-        let pos = positions[i];
-        if matches_here(tail.rest_pat, tail.rest_pi, tail.text, pos, tail.full) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Try to match `pattern` starting at `text[start]`; return end char-index on success.
-fn find_match_at(pattern: &str, text: &[char], start: usize) -> Option<usize> {
-    let pat: Vec<char> = pattern.chars().collect();
-    match_end_here(&pat, 0, text, start)
-}
-
-fn match_end_here(pat: &[char], pi: usize, text: &[char], ti: usize) -> Option<usize> {
-    if pi >= pat.len() {
-        return Some(ti);
-    }
-    if pat[pi] == '$' && pi + 1 == pat.len() {
-        return if ti == text.len() { Some(ti) } else { None };
-    }
-    if let Some(alt_pos) = find_top_level_alt(pat, pi) {
-        let left = &pat[pi..alt_pos];
-        let right = &pat[alt_pos + 1..];
-        return match_end_here(left, 0, text, ti).or_else(|| match_end_here(right, 0, text, ti));
-    }
-    if pat[pi] == '(' {
-        let (group_end, inner_start) = find_group_end(pat, pi);
-        let inner = &pat[inner_start..group_end];
-        let after_group = group_end + 1;
-        let (min, max, skip) = quantifier(pat, after_group);
-        return match_end_repeat_group(inner, min, max, pat, after_group + skip, text, ti);
-    }
-    if pat[pi] == '[' {
-        if let Some(class_end) = find_class_end(pat, pi) {
-            let class_pat = &pat[pi..=class_end];
-            let after = class_end + 1;
-            let (min, max, skip) = quantifier(pat, after);
-            return match_end_char_repeat(class_pat, min, max, pat, after + skip, text, ti);
-        }
-    }
-    let (atom_len, _) = atom_length(pat, pi);
-    let atom = &pat[pi..pi + atom_len];
-    let after = pi + atom_len;
-    let (min, max, skip) = quantifier(pat, after);
-    match_end_char_repeat(atom, min, max, pat, after + skip, text, ti)
-}
-
-fn match_end_char_repeat(
-    atom: &[char],
-    min: usize,
-    max: Option<usize>,
-    rest_pat: &[char],
-    rest_pi: usize,
-    text: &[char],
-    ti: usize,
-) -> Option<usize> {
-    let mut positions = vec![ti];
-    let mut cur = ti;
-    let mut count = 0usize;
-    loop {
-        if let Some(m) = max {
-            if count >= m {
-                break;
-            }
-        }
-        if cur >= text.len() {
-            break;
-        }
-        if char_matches(atom, text[cur]) {
-            cur += 1;
-            count += 1;
-            positions.push(cur);
-        } else {
-            break;
-        }
-    }
-    for i in (min..=positions.len().saturating_sub(1)).rev() {
-        if let Some(end) = match_end_here(rest_pat, rest_pi, text, positions[i]) {
-            return Some(end);
-        }
-    }
-    None
-}
-
-fn match_end_repeat_group(
-    inner: &[char],
-    min: usize,
-    max: Option<usize>,
-    rest_pat: &[char],
-    rest_pi: usize,
-    text: &[char],
-    ti: usize,
-) -> Option<usize> {
-    let mut positions = vec![ti];
-    let mut count = 0usize;
-    let mut cur = ti;
-    loop {
-        if let Some(m) = max {
-            if count >= m {
-                break;
-            }
-        }
-        if let Some(next) = try_match_group(inner, text, cur) {
-            cur = next;
-            count += 1;
-            positions.push(cur);
-        } else {
-            break;
-        }
-    }
-    for i in (min..=positions.len().saturating_sub(1)).rev() {
-        if let Some(end) = match_end_here(rest_pat, rest_pi, text, positions[i]) {
-            return Some(end);
-        }
-    }
-    None
-}
-
-/// Returns (min, max, chars_consumed) for a quantifier at pat[pi].
-fn quantifier(pat: &[char], pi: usize) -> (usize, Option<usize>, usize) {
-    if pi >= pat.len() {
-        return (1, Some(1), 0);
-    }
-    match pat[pi] {
-        '*' => (0, None, 1),
-        '+' => (1, None, 1),
-        '?' => (0, Some(1), 1),
-        '{' => {
-            // {n}, {n,}, {n,m}
-            let mut i = pi + 1;
-            let mut n_str = String::new();
-            while i < pat.len() && pat[i].is_ascii_digit() {
-                n_str.push(pat[i]);
-                i += 1;
-            }
-            let n: usize = n_str.parse().unwrap_or(1);
-            if i < pat.len() && pat[i] == '}' {
-                return (n, Some(n), i - pi + 1);
-            }
-            if i < pat.len() && pat[i] == ',' {
-                i += 1;
-                let mut m_str = String::new();
-                while i < pat.len() && pat[i].is_ascii_digit() {
-                    m_str.push(pat[i]);
-                    i += 1;
-                }
-                if i < pat.len() && pat[i] == '}' {
-                    let max = if m_str.is_empty() {
-                        None
-                    } else {
-                        m_str.parse().ok()
-                    };
-                    return (n, max, i - pi + 1);
-                }
-            }
-            (1, Some(1), 0)
-        }
-        _ => (1, Some(1), 0),
-    }
-}
-
-/// Returns (atom_len, atom_end) — how many pattern chars form one atom.
-fn atom_length(pat: &[char], pi: usize) -> (usize, usize) {
-    if pi >= pat.len() {
-        return (0, pi);
-    }
-    if pat[pi] == '\\' && pi + 1 < pat.len() {
-        return (2, pi + 2);
-    }
-    (1, pi + 1)
-}
-
-/// Check if a single text char matches an atom (literal, `.`, `\d`, etc.) or char class `[...]`.
-fn char_matches(atom: &[char], c: char) -> bool {
-    if atom.is_empty() {
-        return false;
-    }
-    if atom[0] == '.' {
-        return c != '\n';
-    }
-    if atom[0] == '\\' && atom.len() >= 2 {
-        return match atom[1] {
-            'd' => c.is_ascii_digit(),
-            'D' => !c.is_ascii_digit(),
-            'w' => c.is_alphanumeric() || c == '_',
-            'W' => !(c.is_alphanumeric() || c == '_'),
-            's' => c.is_whitespace(),
-            'S' => !c.is_whitespace(),
-            'n' => c == '\n',
-            'r' => c == '\r',
-            't' => c == '\t',
-            other => c == other,
-        };
-    }
-    if atom[0] == '[' {
-        return char_class_matches(atom, c);
-    }
-    atom[0] == c
-}
-
-/// Match a char against a `[...]` or `[^...]` class.
-fn char_class_matches(class: &[char], c: char) -> bool {
-    if class.len() < 2 {
-        return false;
-    }
-    let (negate, start) = if class[1] == '^' {
-        (true, 2)
-    } else {
-        (false, 1)
-    };
-    let end = class.len() - 1; // skip closing ]
-    let mut i = start;
-    let mut matched = false;
-    while i < end {
-        if i + 2 < end && class[i + 1] == '-' {
-            // range a-z
-            if c >= class[i] && c <= class[i + 2] {
-                matched = true;
-            }
-            i += 3;
-        } else if class[i] == '\\' && i + 1 < end {
-            let atom = &class[i..i + 2];
-            if char_matches(atom, c) {
-                matched = true;
-            }
-            i += 2;
-        } else {
-            if class[i] == c {
-                matched = true;
-            }
-            i += 1;
-        }
-    }
-    if negate {
-        !matched
-    } else {
-        matched
-    }
-}
-
-/// Find the end index of a `[...]` class starting at pi.
-fn find_class_end(pat: &[char], pi: usize) -> Option<usize> {
-    let mut i = pi + 1;
-    if i < pat.len() && pat[i] == '^' {
-        i += 1;
-    }
-    if i < pat.len() && pat[i] == ']' {
-        i += 1;
-    } // ] at start is literal
-    while i < pat.len() {
-        if pat[i] == ']' {
-            return Some(i);
-        }
-        if pat[i] == '\\' {
-            i += 1;
-        } // skip escaped char
-        i += 1;
-    }
-    None
-}
-
-/// Find the closing `)` of a group starting at pi, return (close_idx, inner_start).
-fn find_group_end(pat: &[char], pi: usize) -> (usize, usize) {
-    let inner_start = if pat.len() > pi + 2 && pat[pi + 1] == '?' && pat[pi + 2] == ':' {
-        pi + 3
-    } else {
-        pi + 1
-    };
-    let mut depth = 1i32;
-    let mut i = inner_start;
-    while i < pat.len() {
-        match pat[i] {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return (i, inner_start);
-                }
-            }
-            '\\' => {
-                i += 1;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    (pat.len(), inner_start)
-}
-
-/// Find top-level `|` in pat[pi..], ignoring those inside groups/classes.
-fn find_top_level_alt(pat: &[char], pi: usize) -> Option<usize> {
-    let mut depth = 0i32;
-    let mut i = pi;
-    while i < pat.len() {
-        match pat[i] {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            '[' => {
-                // skip class
-                i += 1;
-                while i < pat.len() && pat[i] != ']' {
-                    i += 1;
-                }
-            }
-            '\\' => {
-                i += 1;
-            }
-            '|' if depth == 0 => return Some(i),
-            _ => {}
-        }
-        i += 1;
-    }
-    None
 }
 
 /// Find the first match of `pattern` in `text`, returning (start, end) char indices.
 pub fn regex_find_span(pattern: &str, text: &str) -> Option<(usize, usize)> {
-    let chars: Vec<char> = text.chars().collect();
-    for start in 0..chars.len() {
-        if let Some(end) = find_match_at(pattern, &chars, start) {
-            if end > start {
-                return Some((start, end));
-            }
-        }
-    }
-    None
+    compile_java_regex(pattern)?
+        .find(text)
+        .map(|m| (m.start(), m.end()))
 }
 
-/// Apply regex to find all non-overlapping matches, return split parts.
+/// Split on the regex. Java's default `split` drops trailing empty strings.
 pub fn regex_split(pattern: &str, text: &str) -> Vec<String> {
-    let special = |c: char| ".+*?[](){}\\|^$".contains(c);
-    if !pattern.chars().any(special) {
-        return text.split(pattern).map(|s| s.to_string()).collect();
-    }
-    let chars: Vec<char> = text.chars().collect();
-    let mut result = Vec::new();
-    let mut last = 0usize;
-    let mut i = 0usize;
-    while i < chars.len() {
-        if let Some(end) = find_match_at(pattern, &chars, i) {
-            if end > i {
-                result.push(chars[last..i].iter().collect());
-                last = end;
-                i = end;
-                continue;
+    match compile_java_regex(pattern) {
+        Some(re) => {
+            let mut parts: Vec<String> = re.split(text).map(|s| s.to_string()).collect();
+            while parts.len() > 1 && parts.last().is_some_and(|s| s.is_empty()) {
+                parts.pop();
             }
+            parts
         }
-        i += 1;
+        None => vec![text.to_string()],
     }
-    result.push(chars[last..].iter().collect());
-    result
 }
 
-/// Replace first/all regex matches.
+/// Replace first/all regex matches. `$1`-style group references in `replacement` are honored.
 pub fn regex_replace(pattern: &str, text: &str, replacement: &str, all: bool) -> String {
-    let special = |c: char| ".+*?[](){}\\|^$".contains(c);
-    if !pattern.chars().any(special) {
-        if all {
-            return text.replace(pattern, replacement);
-        } else {
-            return if let Some(pos) = text.find(pattern) {
-                format!(
-                    "{}{}{}",
-                    &text[..pos],
-                    replacement,
-                    &text[pos + pattern.len()..]
-                )
+    match compile_java_regex(pattern) {
+        Some(re) => {
+            if all {
+                re.replace_all(text, replacement).into_owned()
             } else {
-                text.to_string()
-            };
-        }
-    }
-    let chars: Vec<char> = text.chars().collect();
-    let mut result = String::new();
-    let mut i = 0usize;
-    let mut replaced = false;
-    while i < chars.len() {
-        if !all && replaced {
-            result.extend(&chars[i..]);
-            break;
-        }
-        if let Some(end) = find_match_at(pattern, &chars, i) {
-            if end > i {
-                result.push_str(replacement);
-                i = end;
-                replaced = true;
-                continue;
+                re.replace(text, replacement).into_owned()
             }
         }
-        result.push(chars[i]);
-        i += 1;
+        None => text.to_string(),
     }
-    result
 }
 
 #[cfg(test)]

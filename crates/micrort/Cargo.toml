@@ -14,3 +14,4 @@ rava-heap      = { workspace = true }
 rava-frontend  = { workspace = true }
 thiserror      = { workspace = true }
 zip            = { version = "2", default-features = false, features = ["deflate"] }
+regex          = "1"

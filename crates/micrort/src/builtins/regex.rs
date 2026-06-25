@@ -216,40 +216,19 @@ fn regex_find_from(regex: &str, text: &str, from: usize) -> Option<(usize, usize
     regex_find_span(regex, slice).map(|(s, e)| (from + s, from + e))
 }
 
-/// Count capturing groups `(` that are not `(?:`.
+/// Count capturing groups in the pattern (`captures_len` includes group 0).
 fn count_groups(regex: &str) -> usize {
-    let chars: Vec<char> = regex.chars().collect();
-    let mut count = 0;
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == '\\' {
-            i += 2;
-            continue;
-        }
-        if chars[i] == '[' {
-            while i < chars.len() && chars[i] != ']' {
-                i += 1;
-            }
-        }
-        if chars[i] == '('
-            && !(i + 1 < chars.len()
-                && chars[i + 1] == '?'
-                && i + 2 < chars.len()
-                && chars[i + 2] == ':')
-        {
-            count += 1;
-        }
-        i += 1;
-    }
-    count
+    super::format::compile_java_regex(regex)
+        .map(|re| re.captures_len().saturating_sub(1))
+        .unwrap_or(0)
 }
 
-/// Extract the nth capturing group from a matched string.
+/// Extract the nth capturing group from a matched string (group 0 is the whole match).
 fn extract_group(regex: &str, matched: &str, group: usize) -> Option<String> {
-    // Simplified: find the nth `(...)` group in the pattern and match it
-    // This is a best-effort implementation for common cases
-    let _ = (regex, matched, group);
-    None
+    let re = super::format::compile_java_regex(regex)?;
+    re.captures(matched)?
+        .get(group)
+        .map(|m| m.as_str().to_string())
 }
 
 /// Escape a string for use as a literal regex pattern.
