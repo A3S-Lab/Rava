@@ -186,6 +186,33 @@ impl<'a> Lexer<'a> {
         Some(ch)
     }
 
+    /// Decode one character from `lead` plus any UTF-8 continuation bytes. The source is valid
+    /// UTF-8, so a byte >= 0x80 starts a multi-byte sequence — without this each byte would
+    /// become its own Latin-1 char ("résumé" → "rÃ©sumÃ©"). ASCII bytes pass through unchanged.
+    fn decode_utf8(&mut self, lead: u8) -> char {
+        if lead < 0x80 {
+            return lead as char;
+        }
+        let extra = if lead >= 0xF0 {
+            3
+        } else if lead >= 0xE0 {
+            2
+        } else {
+            1
+        };
+        let mut buf = vec![lead];
+        for _ in 0..extra {
+            match self.advance() {
+                Some(b) => buf.push(b),
+                None => break,
+            }
+        }
+        std::str::from_utf8(&buf)
+            .ok()
+            .and_then(|s| s.chars().next())
+            .unwrap_or(lead as char)
+    }
+
     fn skip_whitespace_and_comments(&mut self) {
         loop {
             // whitespace
@@ -231,7 +258,7 @@ impl<'a> Lexer<'a> {
                 }
                 Some(b'"') => break,
                 Some(b'\\') => s.push(self.read_escape()?),
-                Some(c) => s.push(c as char),
+                Some(c) => s.push(self.decode_utf8(c)),
             }
         }
         Ok(Token::StrLit(s))
@@ -275,7 +302,7 @@ impl<'a> Lexer<'a> {
                 }
                 _ => {
                     let c = self.advance().unwrap();
-                    raw.push(c as char);
+                    raw.push(self.decode_utf8(c));
                 }
             }
         }
@@ -367,7 +394,7 @@ impl<'a> Lexer<'a> {
     fn read_char_literal(&mut self) -> Result<Token> {
         let c = match self.advance() {
             Some(b'\\') => self.read_escape()?,
-            Some(c) => c as char,
+            Some(c) => self.decode_utf8(c),
             None => {
                 return Err(RavaError::Parse {
                     location: format!("{}:{}", self.line, self.col),

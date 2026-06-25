@@ -34,7 +34,8 @@ pub fn dispatch_static(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
 /// Instance String methods dispatched by method name.
 pub fn dispatch_named(s: &str, method: &str, args: &[RVal]) -> Option<Result<RVal>> {
     match method {
-        "length" => Some(Ok(RVal::Int(s.len() as i64))),
+        // Java's length() counts UTF-16 code units, not UTF-8 bytes (so "résumé" is 6, not 12).
+        "length" => Some(Ok(RVal::Int(s.encode_utf16().count() as i64))),
         "isEmpty" => Some(Ok(RVal::Bool(s.is_empty()))),
         "isBlank" => Some(Ok(RVal::Bool(s.trim().is_empty()))),
         "toUpperCase" => Some(Ok(RVal::Str(s.to_uppercase()))),

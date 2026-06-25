@@ -9942,3 +9942,20 @@ class Main {
 "#);
     assert_eq!(out.trim(), "{a=1, b=2}\n{b=2, c=3}");
 }
+
+#[test]
+fn non_ascii_string_literal() {
+    // The lexer must UTF-8-decode string literals (not treat each byte as a Latin-1 char),
+    // and String.length() counts UTF-16 code units. "résumé" is 6 chars, not 8/12.
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        String s = "résumé";
+        System.out.println(s);
+        System.out.println(s.length());
+        System.out.println("café — naïve".length());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "résumé\n6\n12");
+}
