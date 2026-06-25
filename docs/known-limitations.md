@@ -86,6 +86,10 @@ fix is invasive and risks regressing the 393-test suite):
 - **Records** generate the canonical `toString()` (`Name[f0=v0, …]`) and accessors, but **not the
   canonical `equals`/`hashCode`** — so `r1.equals(r2)` and using a record as a `HashMap` key compare
   by identity, not by component values.
+- **Enums**: `name()`/`ordinal()`/`values()`, `switch` on enums, custom methods, constructor
+  fields, and display via `println`/concat/`printf %s` all work. Still missing: `Enum.valueOf(name)`
+  (returns nothing) and `Arrays.toString(EnumType.values())` (shows `Type@id` — array-of-objects
+  stringification doesn't reach the per-element `toString`; use `printf`/a manual loop instead).
 - `IntStream.summaryStatistics()` is not implemented (the accessor calls — `getSum`/`getAverage`/…
   — are lowered down a path that can't read the result object's fields). Use `sum()`/`average()`/
   `min()`/`max()` directly, which work.

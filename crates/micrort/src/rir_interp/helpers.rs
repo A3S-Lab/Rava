@@ -1590,6 +1590,27 @@ impl RirInterpreter {
             }
         }
 
+        // printf/format format objects with %s via the heap-less display (→ `Foo@id`). Pre-convert
+        // any object arg through obj_to_string (enum → name, record → toString) so %s is correct.
+        {
+            use crate::lowerer_hash::encode_builtin;
+            if func_id == encode_builtin("System.out.printf")
+                || func_id == encode_builtin("System.out.format")
+                || func_id == encode_builtin("String.format")
+            {
+                let converted: Vec<RVal> = args
+                    .iter()
+                    .map(|a| match a {
+                        RVal::Object(_) => RVal::Str(self.obj_to_string(a)),
+                        _ => a.clone(),
+                    })
+                    .collect();
+                if let Some(result) = builtins::dispatch(func_id, &converted) {
+                    return result;
+                }
+            }
+        }
+
         if let Some(result) = builtins::dispatch(func_id, &args) {
             return result;
         }

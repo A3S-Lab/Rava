@@ -10049,3 +10049,20 @@ class Main {
         "[1, 2, 3]\n[4, 5, 1]\n[1, 2, 4, 8, 16, 32, 64]\n15"
     );
 }
+
+#[test]
+fn printf_format_stringifies_objects() {
+    // printf/String.format %s must use the object's toString (enum name, record toString),
+    // not the heap-less Foo@id display.
+    let out = run(r#"
+class Main {
+    enum Color { RED, GREEN, BLUE }
+    record P(int x, int y) {}
+    public static void main(String[] args) {
+        System.out.printf("%s-%s%n", Color.RED, Color.BLUE);
+        System.out.println(String.format("p=%s", new P(1, 2)));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "RED-BLUE\np=P[x=1, y=2]");
+}
