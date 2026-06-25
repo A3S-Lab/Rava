@@ -200,8 +200,38 @@ impl<'a> FuncCtx<'a> {
                 self.lower_expr(e)?;
             }
             Stmt::Return(e) => {
-                let val = e.as_ref().map(|e| self.lower_expr(e)).transpose()?;
-                self.emit(RirInstr::Return(val));
+                // Evaluate the return value BEFORE running finallys (Java: the value is fixed at
+                // the `return`; a finally that mutates the variable doesn't change it).
+                let mut val = e.as_ref().map(|e| self.lower_expr(e)).transpose()?;
+                // Inline each enclosing finally (innermost first) before returning.
+                if !self.finally_stack.is_empty() {
+                    // Snapshot the value into a fresh temp so a finally that mutates the returned
+                    // variable can't change it (e.g. `try { return x; } finally { x = 99; }` → x).
+                    if let Some(v) = &val {
+                        let snap = self.fresh_value();
+                        self.emit(RirInstr::ConstStr {
+                            ret: snap.clone(),
+                            value: format!("__copy__{}", v.0),
+                        });
+                        val = Some(snap);
+                    }
+                    // When inlining finally[i], only the finallys OUTSIDE it are active — so a
+                    // `return` inside a finally runs the outer finallys but not itself (else infinite
+                    // recursion). A finally's own `return`/throw becomes the block terminator and
+                    // overrides this return (Java semantics).
+                    let saved = std::mem::take(&mut self.finally_stack);
+                    for i in (0..saved.len()).rev() {
+                        if self.current_block_ends_with_terminator() {
+                            break; // an inlined finally already returned/threw — it wins
+                        }
+                        self.finally_stack = saved[..i].to_vec();
+                        self.lower_block(&saved[i])?;
+                    }
+                    self.finally_stack = saved;
+                }
+                if !self.current_block_ends_with_terminator() {
+                    self.emit(RirInstr::Return(val));
+                }
             }
             Stmt::LocalVar { name, init, .. } => {
                 if let Some(init) = init {
@@ -497,6 +527,11 @@ impl<'a> FuncCtx<'a> {
                     });
                 }
 
+                // Enclose try + catch bodies so a `return` inside them inlines this finally.
+                if let Some(ref fb) = finally_body {
+                    self.finally_stack.push(fb.clone());
+                }
+
                 self.lower_block(try_body)?;
 
                 for _ in &catch_blocks {
@@ -530,6 +565,11 @@ impl<'a> FuncCtx<'a> {
                     if !self.current_block_ends_with_terminator() {
                         self.emit(RirInstr::Jump(finally_bb.unwrap_or(exit_bb)));
                     }
+                }
+
+                // Pop before lowering the finally block itself (its body shouldn't re-inline it).
+                if finally_body.is_some() {
+                    self.finally_stack.pop();
                 }
 
                 if let Some(fbb) = finally_bb {

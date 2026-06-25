@@ -836,6 +836,10 @@ pub(super) struct FuncCtx<'a> {
     pub(super) vars: std::collections::HashMap<String, Value>,
     pub(super) loop_stack: Vec<(BlockId, BlockId)>,
     pub(super) yield_stack: Vec<(BlockId, Value)>,
+    /// Finally bodies of enclosing try-finally blocks (innermost last). A `return` inside a
+    /// try-with-finally inlines these (innermost first) before returning — javac's approach —
+    /// so `finally` runs on the return path, not just on fall-through/exception.
+    pub(super) finally_stack: Vec<crate::ast::Block>,
     pub(super) varargs_methods: &'a std::collections::HashMap<String, usize>,
     pub(super) label_map: std::collections::HashMap<String, (BlockId, BlockId)>,
     pub(super) pending_label: Option<String>,
@@ -878,6 +882,7 @@ impl<'a> FuncCtx<'a> {
             vars: std::collections::HashMap::new(),
             loop_stack: Vec::new(),
             yield_stack: Vec::new(),
+            finally_stack: Vec::new(),
             varargs_methods,
             label_map: std::collections::HashMap::new(),
             pending_label: None,

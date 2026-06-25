@@ -3130,7 +3130,8 @@ class Main {
     }
 }
 "#);
-    assert_eq!(out.trim(), "1\ncaught: oops\n2");
+    // finally runs before each return (matches OpenJDK), not just on fall-through.
+    assert_eq!(out.trim(), "finally\n1\ncaught: oops\nfinally\n2");
 }
 
 #[test]
@@ -10162,4 +10163,29 @@ class Main {
 }
 "#);
     assert_eq!(out.trim(), "Carol 25\nAlice 30\nBob 30");
+}
+
+#[test]
+fn finally_runs_on_return() {
+    // finally runs on the return path (not just fall-through): simple, nested (no double-run),
+    // value snapshot (finally mutating the returned var doesn't change it), and finally-return
+    // override.
+    let out = run(r#"
+class Main {
+    static int simple() { try { return 1; } finally { System.out.println("f"); } }
+    static String nested() {
+        try { try { return "in"; } finally { System.out.println("inner"); } }
+        finally { System.out.println("outer"); }
+    }
+    static int snapshot() { int x = 1; try { return x; } finally { x = 99; } }
+    static int override() { try { return 1; } finally { return 2; } }
+    public static void main(String[] args) {
+        System.out.println(simple());
+        System.out.println(nested());
+        System.out.println(snapshot());
+        System.out.println(override());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "f\n1\ninner\nouter\nin\n1\n2");
 }

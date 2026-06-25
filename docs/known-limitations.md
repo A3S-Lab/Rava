@@ -79,8 +79,10 @@ fix is invasive and risks regressing the e2e suite:
 - **`char` in arithmetic context concatenates instead of promoting.** `char` is represented as
   a 1-char string, so `int sum = 0; sum += someChar;` concatenates rather than adding the code
   point. Use an explicit `(int)` cast as a workaround. A proper fix needs a distinct char type.
-- **`finally` blocks do not run when the `try`/`catch` body `return`s** (they run on normal
-  fall-through). High-priority correctness bug.
+- **`finally` runs on `return`** (the lowerer inlines enclosing finallys at each return site, like
+  javac — including nested try-finally without double-running, the value-snapshot rule, and a
+  finally's own `return` overriding). Still **not** run when a `break`/`continue` exits the
+  try-finally (rarer); those run finally only on fall-through/exception/return.
 - **Mixed-type ternary / numeric widening on assignment**: `double d = cond ? 1 : 2.5;` keeps
   the `int` branch as `1` rather than widening to `1.0`. Assigning an int literal to a declared
   `double` is not coerced.
