@@ -48,13 +48,15 @@ Rava has two execution paths that share one IR (RIR):
 bytecode to RIR and running it on the existing interpreter
 (`crates/micrort/src/{classfile,bytecode}.rs`); output matches the JVM. A JAR's `.class` entries
 are loaded into one module so cross-class calls link (`bytecode::load_jar`/`load_classes_module`).
-**Supported subset:** int arithmetic, control flow + loops, static/virtual/special calls +
-recursion, objects/fields/constructors (incl. cross-class), `String` + library method calls
-(routed to builtins), and `System.out.println`. **Not yet:** `long`/`double`/`float` arithmetic,
-arrays in bytecode, `invokedynamic` (so string `+` concatenation and lambdas in compiled code),
-exceptions, `tableswitch`/`lookupswitch`. So a *self-contained* compiled JAR runs end-to-end, but
-typical *Maven* JARs (which use those features) only partially load. The separate JVM-bytecode VM
-in `interpreter.rs` remains an unused stub — the bytecode→RIR path supersedes it.
+**Supported subset:** int/long/float/double arithmetic + conversions + bitwise/shifts, control
+flow + loops, static/virtual/special calls + recursion, objects/fields/constructors (incl.
+cross-class), arrays, `String` + library method calls (routed to builtins), `System.out.println`,
+stack ops (`dup`/`swap`/…), `throw`, and `try`/`catch`. **Not yet:** `invokedynamic` (so string
+`+` concatenation and lambdas in compiled code), `tableswitch`/`lookupswitch`, and catching
+*library* exceptions (catch matches by class name — user exception types work; built-in types like
+`ArithmeticException` need name normalization). So a *self-contained* compiled JAR runs end-to-end,
+but typical *Maven* JARs (which use `invokedynamic`) only partially load. The separate JVM-bytecode
+VM in `interpreter.rs` remains an unused stub — the bytecode→RIR path supersedes it.
 
 The README's MicroRT "dynamic Java" escape hatch (dynamic reflection / proxy / class loading, JNI)
 is still **aspirational — not implemented**.
