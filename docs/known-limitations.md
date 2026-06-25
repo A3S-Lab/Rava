@@ -44,14 +44,17 @@ Rava has two execution paths that share one IR (RIR):
 
 ## Compiled `.class` execution (bytecode → RIR)
 
-`rava run File.class` executes a pre-compiled `.class` file by lowering its JVM bytecode to RIR
-and running it on the existing interpreter (`crates/micrort/src/{classfile,bytecode}.rs`); output
-matches the JVM. **Supported subset:** int arithmetic, control flow + loops, static/virtual/special
-calls + recursion, objects/fields/constructors, `String` + library method calls (routed to
-builtins), and `System.out.println`. **Not yet:** `long`/`double`/`float` arithmetic, arrays in
-bytecode, `invokedynamic` (so string `+` concatenation and lambdas in compiled code), exceptions,
-`tableswitch`/`lookupswitch`, and loading classes from JAR dependencies. The separate JVM-bytecode
-VM in `interpreter.rs` remains an unused stub — the bytecode→RIR path supersedes it.
+`rava run File.class` and **`rava run File.jar`** execute pre-compiled Java by lowering its JVM
+bytecode to RIR and running it on the existing interpreter
+(`crates/micrort/src/{classfile,bytecode}.rs`); output matches the JVM. A JAR's `.class` entries
+are loaded into one module so cross-class calls link (`bytecode::load_jar`/`load_classes_module`).
+**Supported subset:** int arithmetic, control flow + loops, static/virtual/special calls +
+recursion, objects/fields/constructors (incl. cross-class), `String` + library method calls
+(routed to builtins), and `System.out.println`. **Not yet:** `long`/`double`/`float` arithmetic,
+arrays in bytecode, `invokedynamic` (so string `+` concatenation and lambdas in compiled code),
+exceptions, `tableswitch`/`lookupswitch`. So a *self-contained* compiled JAR runs end-to-end, but
+typical *Maven* JARs (which use those features) only partially load. The separate JVM-bytecode VM
+in `interpreter.rs` remains an unused stub — the bytecode→RIR path supersedes it.
 
 The README's MicroRT "dynamic Java" escape hatch (dynamic reflection / proxy / class loading, JNI)
 is still **aspirational — not implemented**.
