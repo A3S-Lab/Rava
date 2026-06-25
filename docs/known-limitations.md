@@ -69,8 +69,9 @@ is still **aspirational — not implemented**.
 
 ## Interpreter semantics (verified via differential testing vs OpenJDK 17)
 
-Two known correctness gaps remain (both stem from value representation; deferred because a
-fix is invasive and risks regressing the 393-test suite):
+The interpreter matches OpenJDK 17 across a large differential-tested corpus. The remaining
+gaps below are tracked; the first two stem from value representation and are deferred because a
+fix is invasive and risks regressing the e2e suite:
 
 - **`int` arithmetic does not wrap at 32 bits.** Integers are held as 64-bit, so
   `Integer.MAX_VALUE + 1` yields `2147483648` instead of Java's `-2147483648`. Programs that
