@@ -9,15 +9,22 @@ pub fn dispatch(func_id: u32, args: &[RVal]) -> Option<Result<RVal>> {
     let i1 = || args.first().map(|v| v.as_int()).unwrap_or(0);
 
     match func_id {
+        // max/min preserve floats: Math.max(3.5, 2.1) is 3.5, not 3 (truncated).
         id if id == fnv("Math.max") => {
-            let a = i1();
-            let b = args.get(1).map(|v| v.as_int()).unwrap_or(0);
-            Some(Ok(RVal::Int(a.max(b))))
+            let any_float = args.iter().take(2).any(|v| matches!(v, RVal::Float(_)));
+            Some(Ok(if any_float {
+                RVal::Float(f1().max(args.get(1).map(|v| v.as_float()).unwrap_or(0.0)))
+            } else {
+                RVal::Int(i1().max(args.get(1).map(|v| v.as_int()).unwrap_or(0)))
+            }))
         }
         id if id == fnv("Math.min") => {
-            let a = i1();
-            let b = args.get(1).map(|v| v.as_int()).unwrap_or(0);
-            Some(Ok(RVal::Int(a.min(b))))
+            let any_float = args.iter().take(2).any(|v| matches!(v, RVal::Float(_)));
+            Some(Ok(if any_float {
+                RVal::Float(f1().min(args.get(1).map(|v| v.as_float()).unwrap_or(0.0)))
+            } else {
+                RVal::Int(i1().min(args.get(1).map(|v| v.as_int()).unwrap_or(0)))
+            }))
         }
         id if id == fnv("Math.abs") => Some(Ok(if matches!(args.first(), Some(RVal::Float(_))) {
             RVal::Float(f1().abs())

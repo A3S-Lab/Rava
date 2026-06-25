@@ -9993,3 +9993,19 @@ class Main {
 "#);
     assert_eq!(out.trim(), "Point[x=3, y=4]\na:7");
 }
+
+#[test]
+fn math_max_min_preserve_double() {
+    // Math.max/min must not truncate doubles to int (Math.max(3.5, 2.1) is 3.5, not 3).
+    let out = run(r#"
+class Main {
+    public static void main(String[] args) {
+        System.out.println(Math.max(3.5, 2.1));
+        System.out.println(Math.min(3.5, 2.1));
+        System.out.println(Math.max(3, 8));
+        System.out.println(Math.min(3, 8));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "3.5\n2.1\n8\n3");
+}
