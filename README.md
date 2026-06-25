@@ -234,40 +234,50 @@ Dependencies:
 
 ### Language Features
 
-| Feature | AOT Support | Notes |
-|---------|-------------|-------|
-| Records | ✅ | Java 16+; compact constructors, component accessors |
-| Sealed Classes | ✅ | Java 17+ |
-| Pattern Matching (instanceof) | ✅ | Java 16+; binding variables, guarded patterns |
-| Pattern Matching (switch) | ✅ | Java 21+; type patterns, `case null`, guarded patterns |
-| Switch Expressions | ✅ | Java 14+; arrow syntax, `yield` |
-| Virtual Threads | ✅ | Java 21+, native AOT support |
-| Text Blocks | ✅ | Java 15+ |
-| var local variables | ✅ | Java 10+; including `var` lambda parameters |
-| Lambda / Stream | ✅ | Java 8+; full Stream API, Collectors |
-| Method References | ✅ | Static, instance, unbound, constructor refs |
-| Anonymous Classes | ✅ | Including anonymous Comparator |
-| Try-with-resources | ✅ | Single and multiple resources |
-| Module System | ✅ | `module-info.java` parsing |
-| Reflection (statically resolvable) | ✅ | AOT metadata table, faster than JVM reflection |
-| Reflection (dynamic) | ✅ | MicroRT metadata engine, automatic fallback |
-| Dynamic Proxy (compile-time interfaces) | ✅ | AOT pre-generated proxy classes |
-| Dynamic Proxy (runtime interfaces) | ✅ | MicroRT runtime generation |
-| Dynamic Class Loading | ✅ | Embedded MicroRT bytecode runtime |
-| JNI Outbound (Java → C) | ✅ | AOT native method stubs + dlopen, Phase 1 |
-| JNI Inbound (C → JNIEnv*) | ✅ | Full JNI function table (~230 functions), Phase 3 |
+> **Two execution paths.** `rava run` / `rava test` execute via the **RIR interpreter**
+> — the mature, supported path (393/393 e2e tests passing). `rava build` uses the
+> **Cranelift AOT** backend, which is **experimental**: it covers only basic programs and
+> currently miscompiles loops and segfaults on generic classes (see *Known Limitations*).
+> The table below reflects each path honestly. ✅ works · ⚠️ partial · ❌ broken · ⬜ not yet.
+
+| Feature | `rava run` (interpreter) | `rava build` (AOT) |
+|---------|:---:|:---:|
+| Classes, inheritance, virtual dispatch | ✅ | ✅ basic |
+| Records | ✅ | ✅ |
+| Sealed Classes | ✅ parse | ⚠️ parse only |
+| Pattern Matching (instanceof / switch, `case null`, guards) | ✅ | ⚠️ partial |
+| Switch Expressions (`yield`, arrow) | ✅ | ⚠️ partial |
+| Text Blocks | ✅ | ✅ |
+| `var` local variables (incl. `var` lambda params) | ✅ | ✅ |
+| Loops (`for` / `while` / `do-while`, `break`/`continue`) | ✅ | ❌ miscompiled → infinite loop |
+| Generics (classes & methods) | ✅ | ❌ field-slot bug → segfault |
+| Lambdas / Stream API / Collectors | ✅ | ⬜ not yet |
+| Method References | ✅ | ⬜ not yet |
+| Anonymous & nested classes | ✅ | ⚠️ partial |
+| Collections (List/Map/Set/Deque/PriorityQueue) | ✅ | ⬜ not yet |
+| StringBuilder | ✅ | ⬜ not yet |
+| Exceptions (try/catch/finally, custom hierarchies) | ✅ | ❌ `throw` aborts (no unwind) |
+| Enums (with fields, constructors, methods) | ✅ | ⚠️ basic |
+| Try-with-resources | ✅ | ⚠️ partial |
+| Module System (`module-info.java`) | ✅ parse | ✅ parse |
+| Reflection (statically resolvable) | ⚠️ partial | ⬜ not yet |
+| Reflection (dynamic), Dynamic Proxy, Dynamic Class Loading | ⬜ not yet (MicroRT — Phase 3+) | ⬜ not yet |
+| JNI (inbound / outbound) | ⬜ not yet | ⬜ not yet |
+| Virtual Threads | ⬜ not yet | ⬜ not yet |
 
 ### Framework Compatibility
 
-| Framework | Level | Notes |
-|-----------|-------|-------|
-| Spring Boot 3.x | Tier 1 | Zero config, reflection/dynamic proxy auto-handled |
-| Quarkus | Tier 1 | AOT-friendly by design |
-| Micronaut | Tier 1 | Compile-time DI, naturally compatible |
-| Vert.x | Tier 1 | No reflection dependency |
-| Hibernate / JPA | Tier 2 | Reflection + dynamic proxy auto-handled via MicroRT |
-| MyBatis | Tier 2 | Mapper dynamic proxy auto-handled via MicroRT |
-| Lombok | Tier 1 | Compile-time annotation processing |
+> ⚠️ **Aspirational — not yet validated.** The repo has no framework integration tests or
+> example projects, the dynamic-Java machinery these frameworks depend on (dynamic
+> reflection, dynamic proxies, runtime class loading) is **not implemented yet** (MicroRT,
+> Phase 3+), and `rava build` does not yet resolve/download dependency JARs — so none of
+> these can currently be built. The table is a design target, not a present capability.
+
+| Framework | Target tier (goal) | Status |
+|-----------|--------------------|--------|
+| Spring Boot 3.x / Quarkus / Micronaut / Vert.x | Tier 1 | ⬜ not yet — needs MicroRT + dependency resolution |
+| Hibernate / JPA / MyBatis | Tier 2 | ⬜ not yet — needs dynamic proxy (Phase 4) |
+| Lombok | Tier 1 | ⬜ not yet — needs annotation processing |
 
 ---
 
@@ -456,7 +466,7 @@ common    → (none)
 | Phase | Deliverable | Status |
 |-------|------------|--------|
 | Framework | Workspace skeleton: 10 crates, all traits defined, Cranelift wired up | ✅ |
-| Phase 1 (6-12mo) | Basic AOT: `rava run`, `rava build`, `rava add/remove/update`, `rava deps`, `rava init`, static Java | ✅ (lexer ✅, parser ✅, type checker ✅, lowerer ✅; RIR interpreter ✅; builtins ✅ (String, Math, Collections, Format, I/O, Concurrency, Reflection, Network, Time, Regex); CLI ✅ (`run`, `build`, `init`, `add`, `remove`, `update`, `deps`, `test`, `fmt`); CI/CD ✅; 393/393 e2e tests 100%) |
+| Phase 1 (6-12mo) | Toolchain + run static Java | 🚧 **Interpreter path ✅** (`rava run` / `rava test`: lexer, parser, type checker, lowerer, RIR interpreter, builtins — 393/393 e2e passing; CLI `run/build/init/add/remove/update/deps/test/fmt` ✅; CI/CD ✅). **AOT `rava build` experimental** — basic programs only; currently miscompiles loops and segfaults on generics. Dependency resolution is not yet wired into builds (`add`/`update` only edit `rava.hcl`). |
 | Phase 2 (3-6mo) | Reflection: AOT metadata table + dual-path dispatch | 🚧 (RIR metadata structures ✅; MetadataTableGenPass scaffolded ✅; function pointer resolution and field offsets pending) |
 | Phase 3 (6-12mo) | MicroRT v1: bytecode interpreter + class loader + unified object model | ⬜ |
 | Phase 4 (2-3mo) | Dynamic proxy AOT: pre-generated proxy classes | ⬜ |
@@ -464,7 +474,7 @@ common    → (none)
 
 ### Near-Term Development Plan (Java Coverage)
 
-Current status: parser and type checker cover common Java syntax; generic inference and overload resolution significantly improved; 393/393 e2e tests passing. Full JLS-level parity is the next target.
+Current status: parser and type checker cover common Java syntax; the RIR interpreter passes 393/393 e2e tests. Note that full method overload resolution, generic type inference, and sealed-class inheritance enforcement are **not yet implemented** in the checker — full JLS-level parity is the next target.
 
 **P0 — Runtime Semantics Completion** *(do first)*
 
@@ -497,16 +507,16 @@ Current status: parser and type checker cover common Java syntax; generic infere
 
 ## Test Coverage
 
-559 tests passing (`cargo test --workspace`):
+545 tests passing, 14 AOT tests quarantined as experimental (`cargo test --workspace`, completes in seconds):
 
 | Crate | Tests |
 |-------|-------|
 | `rava-aot` | 2 — 7 passes registered in correct order |
-| `rava-codegen-cranelift` | 40 — AOT e2e (38: hello world, arithmetic, control flow, classes, fields, inheritance, arrays, strings, exceptions, generics, static methods), translator helpers (2) |
+| `rava-codegen-cranelift` | 26 — AOT e2e (24 passing: hello world, arithmetic, inheritance, fields, records, interfaces, static methods, string concat) + translator helpers (2). **14 ignored** — loops, generics, enums, varargs, ternary, casts (AOT backend experimental; tracked as known limitations) |
 | `rava-frontend` | 90 — checker (38: generic type params, overload resolution, bounds validation, duplicate detection), lexer (10: hex/binary literals, char, operators, keywords), parser (29: hello world, local var, do-while, for-each, break/continue, try/catch, lambda, enum, instanceof pattern, method ref, record, sealed class, text block, switch arrow, yield, module-info, guarded patterns, case null), lowerer (9: hello world, arithmetic, do-while, break/continue, ternary, for-each, record pattern), compiler/resolver (4) |
 | `rava-heap` | 6 — object header, GC strategy |
 | `rava-micrort` | 22 — builtin dispatch (math, string, collections, format, I/O, concurrency, reflection, network, time, regex) |
-| `rava-micrort` (e2e) | 393/393 (100%) — comprehensive Java language feature tests covering classes, inheritance, generics, lambdas, streams, collections, exceptions, pattern matching, switch expressions, records, sealed classes, text blocks, annotations, reflection, concurrency, I/O, networking, and more |
+| `rava-micrort` (e2e) | 393/393 (100%) via the **RIR interpreter** (`rava run`) — comprehensive Java language feature tests covering classes, inheritance, generics, lambdas, streams, collections (incl. ArrayDeque/PriorityQueue), exceptions & custom hierarchies, pattern matching, switch expressions, records, sealed classes, text blocks, enums with fields, builders/nested classes, StringBuilder, I/O, networking, and more |
 | `rava-pkg` | 4 — config parsing, lockfile, shortname registry |
 | `rava-rir` | 1 — module construction |
 | `rava` (cli) | 1 — PascalCase conversion |

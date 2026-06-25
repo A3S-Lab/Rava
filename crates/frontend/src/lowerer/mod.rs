@@ -218,18 +218,22 @@ impl Lowerer {
                     if let Some(parent) = self.module.class_hierarchy.get(&inner.name).cloned() {
                         self.module.class_hierarchy.insert(prefixed.clone(), parent);
                     }
-                    let ctor_name = format!("{}.<init>", inner.name);
-                    let prefixed_ctor = format!("{}.<init>", prefixed);
-                    if let Some(idx) = self
-                        .module
-                        .functions
-                        .iter()
-                        .position(|f| f.name == ctor_name)
-                    {
-                        let mut ctor_copy = self.module.functions[idx].clone();
-                        ctor_copy.name = prefixed_ctor;
-                        self.module.functions.push(ctor_copy);
+                    // Copy nested-class constructors under the qualified name, preserving
+                    // the arity suffix (e.g. Builder.<init>_0 → Person.Builder.<init>_0).
+                    // The old exact-match on the bare `Builder.<init>` found nothing, so
+                    // `new Outer.Inner()` called a missing ctor and silently skipped field
+                    // initializers — leaving every field null.
+                    let ctor_prefix = format!("{}.<init>", inner.name);
+                    let mut ctor_copies = Vec::new();
+                    for f in &self.module.functions {
+                        if f.flags.is_constructor && f.name.starts_with(&ctor_prefix) {
+                            let suffix = &f.name[inner.name.len()..]; // ".<init>_N"
+                            let mut copy = f.clone();
+                            copy.name = format!("{}{}", prefixed, suffix);
+                            ctor_copies.push(copy);
+                        }
                     }
+                    self.module.functions.extend(ctor_copies);
                     let method_prefix = format!("{}.", inner.name);
                     let mut extra_funcs = Vec::new();
                     for f in &self.module.functions {
@@ -415,7 +419,10 @@ impl Lowerer {
                         }
                         call_args.push(v);
                     }
-                    let ctor_name = format!("{}.<init>", class.name);
+                    // Constructors are lowered with an arity suffix (`Planet.<init>_2`);
+                    // the bare name didn't match, so enum-constant field initialization
+                    // (mass/radius) was silently skipped.
+                    let ctor_name = format!("{}.<init>_{}", class.name, ec.args.len());
                     ctx.emit(RirInstr::Call {
                         func: FuncId(encode_builtin(&ctor_name)),
                         args: call_args,

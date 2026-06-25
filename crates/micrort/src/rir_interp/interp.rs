@@ -326,7 +326,12 @@ impl RirInterpreter {
                     // Scanner is initialized via constructor call; store a placeholder
                     // that will be replaced when Scanner.<init> is called
                     env.insert(ret.0.clone(), RVal::Str("__scanner__0@@".to_string()));
-                } else if class_name == "ArrayList" || class_name == "LinkedList" {
+                } else if class_name == "ArrayList"
+                    || class_name == "LinkedList"
+                    || class_name == "ArrayDeque"
+                {
+                    // ArrayDeque is backed by the same RVal::Array store so that
+                    // addLast/pollFirst/push/pop mutate it (else isEmpty never flips → hang).
                     env.insert(
                         ret.0.clone(),
                         RVal::Array(Rc::new(RefCell::new(Vec::new()))),

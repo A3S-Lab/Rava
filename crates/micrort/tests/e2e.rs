@@ -4,17 +4,42 @@ use rava_frontend::Compiler;
 use rava_micrort::RirInterpreter;
 
 /// Compile and run a Java snippet, capturing stdout output.
+///
+/// Runs in a watchdog thread so a buggy interpreter (infinite loop) fails the test
+/// after 10s instead of wedging the whole `cargo test` process.
+// ponytail: thread-based timeout, no thread-kill (Rust can't kill a thread); the
+// runaway thread is reaped when the test binary exits. Use cargo-nextest
+// slow-timeout if many tests ever need bounding.
 fn run(src: &str) -> String {
-    let compiler = Compiler::new();
-    let module = compiler
-        .compile(src, std::path::Path::new("Test.java"))
-        .expect("compile failed");
-    let interp = RirInterpreter::new(module);
-    let mut output = Vec::new();
-    interp
-        .run_main_with_output(&mut output)
-        .expect("run failed");
-    String::from_utf8(output).unwrap()
+    let src = src.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        let compiler = Compiler::new();
+        let module = compiler
+            .compile(&src, std::path::Path::new("Test.java"))
+            .expect("compile failed");
+        let interp = RirInterpreter::new(module);
+        let mut output = Vec::new();
+        interp
+            .run_main_with_output(&mut output)
+            .expect("run failed");
+        let _ = tx.send(String::from_utf8(output).unwrap());
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(out) => {
+            let _ = handle.join();
+            out
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!("interpreter run exceeded 10s timeout (likely infinite loop)")
+        }
+        // Thread ended without sending → it panicked (compile/run failed).
+        // Re-raise the original panic so its message surfaces.
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => match handle.join() {
+            Err(payload) => std::panic::resume_unwind(payload),
+            Ok(()) => panic!("interpreter thread ended without producing a result"),
+        },
+    }
 }
 
 #[test]

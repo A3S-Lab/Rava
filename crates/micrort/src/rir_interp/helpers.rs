@@ -89,6 +89,7 @@ impl RirInterpreter {
             "LinkedHashMap",
             "PriorityQueue",
             "LinkedList",
+            "ArrayDeque",
             "HashSet",
             "TreeSet",
             "Stack",
@@ -1158,8 +1159,17 @@ impl RirInterpreter {
         // this(...) constructor delegation
         {
             use crate::lowerer_hash::encode_builtin;
+            // Constructors are lowered with an arity suffix (`X.<init>_1`), so these
+            // builtin-constructor handlers must accept the suffixed forms too — matching
+            // only the bare name meant single-arg constructors (StringBuilder(String),
+            // copy constructors, PriorityQueue(comparator)) silently did nothing.
+            let ctor_match = |base: &str| {
+                func_id == encode_builtin(base)
+                    || func_id == encode_builtin(&format!("{base}_1"))
+                    || func_id == encode_builtin(&format!("{base}_2"))
+            };
             // StringBuilder.<init>(String) — initialize __buf__ with the string argument
-            if func_id == encode_builtin("StringBuilder.<init>") {
+            if ctor_match("StringBuilder.<init>") {
                 if let Some(RVal::Object(id)) = args.first() {
                     let init_str = args.get(1).map(|v| v.to_display()).unwrap_or_default();
                     let mut heap = self.heap.borrow_mut();
@@ -1175,7 +1185,7 @@ impl RirInterpreter {
             }
             // HashMap/TreeMap/LinkedHashMap copy constructor — copy entries from source map
             for map_type in &["HashMap", "TreeMap", "LinkedHashMap"] {
-                if func_id == encode_builtin(&format!("{}.<init>", map_type)) {
+                if ctor_match(&format!("{}.<init>", map_type)) {
                     if let (Some(RVal::Object(dst_id)), Some(RVal::Object(src_id))) =
                         (args.first(), args.get(1))
                     {
@@ -1203,7 +1213,7 @@ impl RirInterpreter {
             }
             // HashSet/TreeSet/LinkedHashSet copy constructor — copy items from source collection
             for set_type in &["HashSet", "TreeSet", "LinkedHashSet"] {
-                if func_id == encode_builtin(&format!("{}.<init>", set_type)) {
+                if ctor_match(&format!("{}.<init>", set_type)) {
                     if let (Some(RVal::Object(dst_id)), Some(src)) = (args.first(), args.get(1)) {
                         let src_items: Vec<RVal> = match src {
                             RVal::Array(arr) => arr.borrow().clone(),
@@ -1242,7 +1252,7 @@ impl RirInterpreter {
             }
             // ArrayList copy constructor — copy from source array/collection
             // PriorityQueue.<init> — store optional comparator lambda
-            if func_id == encode_builtin("PriorityQueue.<init>") {
+            if ctor_match("PriorityQueue.<init>") {
                 if let Some(RVal::Object(id)) = args.first() {
                     // args: [this] or [this, initialCapacity] or [this, comparator]
                     let comparator = args.get(1).or(args.get(2)).cloned();
@@ -1258,7 +1268,12 @@ impl RirInterpreter {
                 }
                 return Ok(RVal::Void);
             }
-            if func_id == encode_builtin("ArrayList.<init>") {
+            // Copy constructor `new ArrayList<>(src)`. The lowerer emits the
+            // arity-suffixed name `ArrayList.<init>_1`, so match that too (the bare
+            // name never fires for real calls).
+            if func_id == encode_builtin("ArrayList.<init>")
+                || func_id == encode_builtin("ArrayList.<init>_1")
+            {
                 if let (Some(RVal::Array(dst)), Some(RVal::Array(src_arr))) =
                     (args.first(), args.get(1))
                 {
@@ -1393,18 +1408,25 @@ impl RirInterpreter {
                     });
                     let parent = self.module.class_hierarchy.get(&class_name).cloned();
                     if let Some(parent_class) = parent {
-                        let ctor_name = format!("{}.<init>", parent_class);
+                        // Constructors are lowered with an arity suffix (`Animal.<init>_1`),
+                        // so match by prefix — the bare `Animal.<init>` never matched, which
+                        // meant the parent constructor never ran and its field assignments
+                        // (e.g. `this.name = name`) were silently skipped.
+                        let ctor_prefix = format!("{}.<init>", parent_class);
                         let arg_count = args.len();
                         let idx = self
                             .module
                             .functions
                             .iter()
-                            .position(|f| f.name == ctor_name && f.params.len() == arg_count)
+                            .position(|f| {
+                                f.flags.is_constructor
+                                    && f.name.starts_with(&ctor_prefix)
+                                    && f.params.len() == arg_count
+                            })
                             .or_else(|| {
-                                self.module
-                                    .functions
-                                    .iter()
-                                    .position(|f| f.name == ctor_name)
+                                self.module.functions.iter().position(|f| {
+                                    f.flags.is_constructor && f.name.starts_with(&ctor_prefix)
+                                })
                             });
                         if let Some(idx) = idx {
                             let func = &self.module.functions[idx];
