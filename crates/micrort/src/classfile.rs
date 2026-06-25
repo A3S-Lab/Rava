@@ -152,16 +152,19 @@ enum CpEntry {
     Class(u16),            // name_index → Utf8
     Str(u16),              // String constant → Utf8 index
     Integer(i64),          // Integer constant value
+    Long(i64),             // Long constant value
+    Double(f64),           // Double constant value
     Methodref(u16, u16),   // class_index, name_and_type_index
     NameAndType(u16, u16), // name_index, descriptor_index
     Other,
     Placeholder, // unused slot 0, and the slot following Long/Double
 }
 
-/// A loadable constant (the operand of `ldc`/`ldc_w`).
+/// A loadable constant (the operand of `ldc`/`ldc_w`/`ldc2_w`).
 pub enum Constant {
     Str(String),
     Int(i64),
+    Float(f64),
 }
 
 #[derive(Clone)]
@@ -214,9 +217,10 @@ impl ConstantPool {
     fn constant(&self, idx: u16) -> Result<Constant> {
         match self.entries.get(idx as usize) {
             Some(CpEntry::Str(utf8_idx)) => Ok(Constant::Str(self.utf8(*utf8_idx)?)),
-            Some(CpEntry::Integer(v)) => Ok(Constant::Int(*v)),
+            Some(CpEntry::Integer(v)) | Some(CpEntry::Long(v)) => Ok(Constant::Int(*v)),
+            Some(CpEntry::Double(v)) => Ok(Constant::Float(*v)),
             _ => Err(RavaError::Other(format!(
-                "constant pool index {idx} is not an ldc-able constant (string/int only)"
+                "constant pool index {idx} is not an ldc-able constant"
             ))),
         }
     }
@@ -267,11 +271,15 @@ fn parse_constant_pool(r: &mut Reader) -> Result<ConstantPool> {
                 r.u16()?; // MethodHandle
                 entries[i] = CpEntry::Other;
             }
-            5 | 6 => {
-                r.u32()?;
-                r.u32()?; // Long / Double occupy two pool slots
-                entries[i] = CpEntry::Other;
-                i += 1;
+            5 => {
+                let bits = ((r.u32()? as u64) << 32) | r.u32()? as u64;
+                entries[i] = CpEntry::Long(bits as i64);
+                i += 1; // Long occupies two pool slots
+            }
+            6 => {
+                let bits = ((r.u32()? as u64) << 32) | r.u32()? as u64;
+                entries[i] = CpEntry::Double(f64::from_bits(bits));
+                i += 1; // Double occupies two pool slots
             }
             _ => {
                 return Err(RavaError::Other(format!(

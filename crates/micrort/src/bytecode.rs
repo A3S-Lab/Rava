@@ -156,13 +156,38 @@ fn translate_block(
         let len = instr_len(op).ok_or_else(|| unsupported(op))?;
         match op {
             0x1a..=0x1d => stack.push(Value(format!("l{}", op - 0x1a))), // iload_0..3
+            0x1e..=0x29 => stack.push(Value(format!("l{}", (op - 0x1e) % 4))), // {l,f,d}load_0..3
             0x15 => stack.push(Value(format!("l{}", code[pc + 1]))),     // iload <idx>
+            0x16..=0x18 => stack.push(Value(format!("l{}", code[pc + 1]))), // {l,f,d}load <idx>
             0x02..=0x08 => {
                 // iconst_m1..iconst_5
                 let r = fresh();
                 instrs.push(RirInstr::ConstInt {
                     ret: r.clone(),
                     value: op as i64 - 0x03,
+                });
+                stack.push(r);
+            }
+            0x09 | 0x0a => {
+                // lconst_0/1
+                let r = fresh();
+                instrs.push(RirInstr::ConstInt {
+                    ret: r.clone(),
+                    value: (op - 0x09) as i64,
+                });
+                stack.push(r);
+            }
+            0x0b..=0x0f => {
+                // fconst_0/1/2 (0x0b–0x0d), dconst_0/1 (0x0e/0x0f)
+                let value = if op <= 0x0d {
+                    (op - 0x0b) as f64
+                } else {
+                    (op - 0x0e) as f64
+                };
+                let r = fresh();
+                instrs.push(RirInstr::ConstFloat {
+                    ret: r.clone(),
+                    value,
                 });
                 stack.push(r);
             }
@@ -183,7 +208,9 @@ fn translate_block(
                 stack.push(r);
             }
             0x3b..=0x3e => store_local(&mut instrs, &mut stack, (op - 0x3b) as u16)?, // istore_0..3
+            0x3f..=0x4a => store_local(&mut instrs, &mut stack, ((op - 0x3f) % 4) as u16)?, // {l,f,d}store_0..3
             0x36 => store_local(&mut instrs, &mut stack, code[pc + 1] as u16)?,       // istore <idx>
+            0x37..=0x39 => store_local(&mut instrs, &mut stack, code[pc + 1] as u16)?, // {l,f,d}store <idx>
             0x84 => {
                 // iinc <idx> <const>: local += const
                 let local = Value(format!("l{}", code[pc + 1]));
@@ -202,7 +229,9 @@ fn translate_block(
                 });
                 instrs.push(copy(t, local));
             }
-            0x60 | 0x64 | 0x68 | 0x6c | 0x70 => {
+            0x60..=0x73 => {
+                // {i,l,f,d}{add,sub,mul,div,rem} — the interpreter picks int vs float
+                // arithmetic from the operand values at runtime.
                 let rhs = pop(&mut stack)?;
                 let lhs = pop(&mut stack)?;
                 let r = fresh();
@@ -214,13 +243,25 @@ fn translate_block(
                 });
                 stack.push(r);
             }
-            0x74 => {
-                // ineg
+            0x74..=0x77 => {
+                // {i,l,f,d}neg
                 let v = pop(&mut stack)?;
                 let r = fresh();
                 instrs.push(RirInstr::UnaryOp {
                     op: UnaryOp::Neg,
                     operand: v,
+                    ret: r.clone(),
+                });
+                stack.push(r);
+            }
+            0x85..=0x93 => {
+                // numeric conversions (i2l, i2d, l2i, f2i, d2i, i2b, …)
+                let v = pop(&mut stack)?;
+                let r = fresh();
+                instrs.push(RirInstr::Convert {
+                    val: v,
+                    from: RirType::RawPtr,
+                    to: convert_target(op),
                     ret: r.clone(),
                 });
                 stack.push(r);
@@ -257,21 +298,20 @@ fn translate_block(
                 push_branch(&mut instrs, cond, code, pc, len)?;
                 terminated = true;
             }
-            0x12 => {
-                // ldc <u8 index>
+            0x12 | 0x13 | 0x14 => {
+                // ldc <u8> / ldc_w <u16> / ldc2_w <u16>  (string / int / long / float / double)
+                let idx = if op == 0x12 {
+                    code[pc + 1] as u16
+                } else {
+                    read_u16(code, pc + 1)?
+                };
                 let r = fresh();
-                match class.constant(code[pc + 1] as u16)? {
+                match class.constant(idx)? {
                     Constant::Str(s) => instrs.push(RirInstr::ConstStr { ret: r.clone(), value: s }),
                     Constant::Int(v) => instrs.push(RirInstr::ConstInt { ret: r.clone(), value: v }),
-                }
-                stack.push(r);
-            }
-            0x13 => {
-                // ldc_w <u16 index>
-                let r = fresh();
-                match class.constant(read_u16(code, pc + 1)?)? {
-                    Constant::Str(s) => instrs.push(RirInstr::ConstStr { ret: r.clone(), value: s }),
-                    Constant::Int(v) => instrs.push(RirInstr::ConstInt { ret: r.clone(), value: v }),
+                    Constant::Float(v) => {
+                        instrs.push(RirInstr::ConstFloat { ret: r.clone(), value: v })
+                    }
                 }
                 stack.push(r);
             }
@@ -460,8 +500,8 @@ fn translate_block(
                 instrs.push(RirInstr::Jump(BlockId(target as u32)));
                 terminated = true;
             }
-            0xac | 0xb0 => {
-                // ireturn / areturn
+            0xac..=0xb0 => {
+                // {i,l,f,d,a}return
                 let v = pop(&mut stack)?;
                 instrs.push(RirInstr::Return(Some(v)));
                 terminated = true;
@@ -529,12 +569,25 @@ fn pop(stack: &mut Vec<Value>) -> Result<Value> {
 }
 
 fn arith_op(op: u8) -> BinOp {
+    // {i,l,f,d}{add,sub,mul,div,rem} are laid out in groups of four from 0x60.
+    match (op - 0x60) / 4 {
+        0 => BinOp::Add,
+        1 => BinOp::Sub,
+        2 => BinOp::Mul,
+        3 => BinOp::Div,
+        _ => BinOp::Rem,
+    }
+}
+
+/// Target RIR type for a numeric conversion opcode (i2l, i2d, l2i, d2i, …).
+fn convert_target(op: u8) -> RirType {
     match op {
-        0x60 => BinOp::Add,
-        0x64 => BinOp::Sub,
-        0x68 => BinOp::Mul,
-        0x6c => BinOp::Div,
-        _ => BinOp::Rem, // 0x70
+        0x85 | 0x8c | 0x8f => RirType::I64, // i2l, f2l, d2l
+        0x86 | 0x89 | 0x90 => RirType::F32, // i2f, l2f, d2f
+        0x87 | 0x8a | 0x8d => RirType::F64, // i2d, l2d, f2d
+        0x88 | 0x8b | 0x8e => RirType::I32, // l2i, f2i, d2i
+        0x91 => RirType::I8,                // i2b
+        _ => RirType::I16,                  // i2c (0x92), i2s (0x93)
     }
 }
 
@@ -572,21 +625,21 @@ fn is_return(op: u8) -> bool {
 /// Total byte length of a supported instruction (incl. opcode); `None` if unsupported.
 fn instr_len(op: u8) -> Option<usize> {
     Some(match op {
-        0x10 | 0x12 | 0x15 | 0x19 | 0x36 | 0x3a | 0xbc => 2, // bipush, ldc, iload, aload, istore, astore, newarray
-        0x11 | 0x13 | 0x84 | 0xa7 | 0xb8 => 3,        // sipush, ldc_w, iinc, goto, invokestatic
-        0xb2 | 0xb4 | 0xb5 | 0xb6 | 0xb7 | 0xbb | 0xbd => 3, // getstatic, get/putfield, invoke{virtual,special}, new, anewarray
-        0xbe | 0x2e..=0x35 | 0x4f..=0x56 => 1,        // arraylength, *aload, *astore
-        0x99..=0xa4 => 3,                             // if<cond> / if_icmp<cond>
-        0x00 => 1,                                    // nop
-        0x02..=0x08 => 1,                             // iconst_m1..5
-        0x1a..=0x1d => 1,                             // iload_0..3
-        0x2a..=0x2d => 1,                             // aload_0..3
-        0x3b..=0x3e => 1,                             // istore_0..3
-        0x4b..=0x4e => 1,                             // astore_0..3
-        0x59 => 1,                                    // dup
-        0x60 | 0x64 | 0x68 | 0x6c | 0x70 => 1,        // iadd isub imul idiv irem
-        0x74 => 1,                                    // ineg
-        0xac | 0xb0 | 0xb1 => 1,                      // ireturn, areturn, return
+        // 2-byte (1 operand): bipush, ldc, *load <idx>, *store <idx>, newarray
+        0x10 | 0x12 | 0x15..=0x19 | 0x36..=0x3a | 0xbc => 2,
+        // 3-byte (2 operands): sipush, ldc_w, ldc2_w, iinc, if<cond>, goto, getstatic,
+        //   get/putfield, invoke{virtual,special,static}, new, anewarray
+        0x11 | 0x13 | 0x14 | 0x84 | 0x99..=0xa4 | 0xa7 | 0xb2 | 0xb4..=0xb8 | 0xbb | 0xbd => 3,
+        // 1-byte
+        0x00 => 1,        // nop
+        0x02..=0x0f => 1, // iconst/lconst/fconst/dconst
+        0x1a..=0x35 => 1, // {i,l,f,d,a}load_0..3 + *aload (array load)
+        0x3b..=0x56 => 1, // {i,l,f,d,a}store_0..3 + *astore (array store)
+        0x59 => 1,        // dup
+        0x60..=0x77 => 1, // arithmetic (int/long/float/double) + negate
+        0x85..=0x93 => 1, // numeric conversions
+        0xac..=0xb1 => 1, // *return
+        0xbe => 1,        // arraylength
         _ => return None,
     })
 }
@@ -715,6 +768,7 @@ mod tests {
     const STR: &[u8] = include_bytes!("fixtures/Str.class");
     const HELLO: &[u8] = include_bytes!("fixtures/Hello.class");
     const ARR: &[u8] = include_bytes!("fixtures/Arr.class");
+    const NUM: &[u8] = include_bytes!("fixtures/Num.class");
     const MATHLIB: &[u8] = include_bytes!("fixtures/MathLib.class");
     const APP: &[u8] = include_bytes!("fixtures/App.class");
 
@@ -784,6 +838,16 @@ mod tests {
         assert_eq!(run_class(STR, "subLen", vec![]), 5);
         // library invokestatic (Integer.parseInt) routed to the builtin
         assert_eq!(run_class(STR, "parsed", vec![]), 42);
+    }
+
+    #[test]
+    fn long_and_double() {
+        // long arithmetic (i64), ldc2_w long const, lneg
+        assert_eq!(run_class(NUM, "mul", vec![RVal::Int(1_000_000), RVal::Int(1_000_000)]), 1_000_000_000_000);
+        assert_eq!(run_class(NUM, "withConst", vec![RVal::Int(7)]), 7_000_005);
+        assert_eq!(run_class(NUM, "negate", vec![RVal::Int(5)]), -5);
+        // double machinery: i2d, ldc2_w double const, dmul, d2i → (int)(4 * 2.5) = 10
+        assert_eq!(run_class(NUM, "doubleStuff", vec![RVal::Int(4)]), 10);
     }
 
     #[test]
