@@ -10100,3 +10100,28 @@ class Main {
 "#);
     assert_eq!(out.trim(), "20 20\n30 10\n10 30");
 }
+
+#[test]
+fn record_equals_hashcode_map_key() {
+    // Records get canonical equals/hashCode and work by value as Map keys and in Sets.
+    let out = run(r#"
+import java.util.*;
+class Main {
+    record Person(String name, int age) {}
+    public static void main(String[] args) {
+        Person p = new Person("Alice", 30);
+        System.out.println(p.equals(new Person("Alice", 30)));
+        System.out.println(p.equals(new Person("Bob", 30)));
+        System.out.println(p.hashCode() == new Person("Alice", 30).hashCode());
+        Map<Person,String> m = new HashMap<>();
+        m.put(new Person("Alice", 30), "found");
+        System.out.println(m.get(new Person("Alice", 30)));
+        System.out.println(m.containsKey(new Person("Bob", 30)));
+        Set<Person> s = new HashSet<>();
+        s.add(new Person("X", 1)); s.add(new Person("X", 1));
+        System.out.println(s.size());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "true\nfalse\ntrue\nfound\nfalse\n1");
+}

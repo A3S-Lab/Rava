@@ -83,9 +83,10 @@ fix is invasive and risks regressing the 393-test suite):
 - **Mixed-type ternary / numeric widening on assignment**: `double d = cond ? 1 : 2.5;` keeps
   the `int` branch as `1` rather than widening to `1.0`. Assigning an int literal to a declared
   `double` is not coerced.
-- **Records** generate the canonical `toString()` (`Name[f0=v0, …]`) and accessors, but **not the
-  canonical `equals`/`hashCode`** — so `r1.equals(r2)` and using a record as a `HashMap` key compare
-  by identity, not by component values.
+- **Records** generate the canonical `toString()`, `equals()`, `hashCode()`, and accessors, so they
+  have value semantics: `r1.equals(r2)`, records as `HashMap`/`HashSet` keys, and set dedup all work
+  by component values. (Object map/set keys generally now compare by `toString` value, not identity —
+  so any class with a meaningful `toString` works as a key; classes without one stay identity-based.)
 - **Enums**: `name()`/`ordinal()`/`values()`, `switch` on enums, custom methods, constructor
   fields, and display via `println`/concat/`printf %s` all work. Still missing: `Enum.valueOf(name)`
   (returns nothing) and `Arrays.toString(EnumType.values())` (shows `Type@id` — array-of-objects

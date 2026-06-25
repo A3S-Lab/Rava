@@ -555,8 +555,8 @@ mod tests {
         let file = parse(src);
         assert_eq!(file.classes[0].kind, ClassKind::Record);
         assert_eq!(file.classes[0].name, "Point");
-        // Should have 2 fields + 1 constructor + 2 accessors + canonical toString() = 6 members
-        assert_eq!(file.classes[0].members.len(), 6);
+        // 2 fields + 1 constructor + 2 accessors + canonical toString/equals/hashCode = 8 members
+        assert_eq!(file.classes[0].members.len(), 8);
     }
 
     #[test]

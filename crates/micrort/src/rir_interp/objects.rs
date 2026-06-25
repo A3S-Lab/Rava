@@ -220,7 +220,7 @@ impl RirInterpreter {
         }
         match method {
             "put" => {
-                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let key = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
                 let val = args.get(1).cloned().unwrap_or(RVal::Null);
                 let mut heap = self.heap.borrow_mut();
                 let old = if let Some(obj) = heap.get_mut(&id) {
@@ -249,7 +249,7 @@ impl RirInterpreter {
                 Some(Ok(old))
             }
             "get" => {
-                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let key = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
                 let heap = self.heap.borrow();
                 let val = heap
                     .get(&id)
@@ -258,7 +258,7 @@ impl RirInterpreter {
                 Some(Ok(val))
             }
             "getOrDefault" => {
-                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let key = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
                 let default = args.get(1).cloned().unwrap_or(RVal::Null);
                 let heap = self.heap.borrow();
                 let val = heap
@@ -268,7 +268,7 @@ impl RirInterpreter {
                 Some(Ok(val))
             }
             "containsKey" => {
-                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let key = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
                 let heap = self.heap.borrow();
                 let found = heap
                     .get(&id)
@@ -286,7 +286,7 @@ impl RirInterpreter {
                 Some(Ok(RVal::Bool(found)))
             }
             "remove" => {
-                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let key = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
                 let mut heap = self.heap.borrow_mut();
                 let old = if let Some(obj) = heap.get_mut(&id) {
                     let old = obj.fields.remove(&key).unwrap_or(RVal::Null);
@@ -445,7 +445,7 @@ impl RirInterpreter {
             }
             "merge" => {
                 // merge(key, value, remappingFunction)
-                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let key = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
                 let new_val = args.get(1).cloned().unwrap_or(RVal::Null);
                 let func = args.get(2).cloned();
                 let old_val = {
@@ -469,7 +469,7 @@ impl RirInterpreter {
             }
             "computeIfAbsent" => {
                 // computeIfAbsent(key, mappingFunction)
-                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let key = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
                 let existing = {
                     let heap = self.heap.borrow();
                     heap.get(&id).and_then(|o| o.fields.get(&key).cloned())
@@ -490,7 +490,7 @@ impl RirInterpreter {
             }
             "compute" => {
                 // compute(key, remappingFunction(key, oldVal))
-                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let key = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
                 let old_val = {
                     let heap = self.heap.borrow();
                     heap.get(&id)
@@ -509,7 +509,7 @@ impl RirInterpreter {
                 Some(Ok(computed))
             }
             "putIfAbsent" => {
-                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let key = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
                 let val = args.get(1).cloned().unwrap_or(RVal::Null);
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
@@ -1408,13 +1408,13 @@ impl RirInterpreter {
         match method {
             "add" => {
                 let val = args.first().cloned().unwrap_or(RVal::Null);
-                let key = val.to_display();
+                let key = self.obj_to_string(&val); // value-based (record/object equality)
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
                     if let Some(RVal::Array(arr)) = obj.fields.get("__items__") {
                         let arr = arr.clone(); // clone Rc to release heap borrow
                         drop(heap);
-                        let already = arr.borrow().iter().any(|v| v.to_display() == key);
+                        let already = arr.borrow().iter().any(|v| self.obj_to_string(v) == key);
                         if !already {
                             arr.borrow_mut().push(val);
                             if sorted {
@@ -1427,7 +1427,7 @@ impl RirInterpreter {
                 Some(Ok(RVal::Bool(false)))
             }
             "remove" => {
-                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
+                let key = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
                 let mut heap = self.heap.borrow_mut();
                 if let Some(obj) = heap.get_mut(&id) {
                     if let Some(RVal::Array(arr)) = obj.fields.get("__items__") {
@@ -1441,19 +1441,15 @@ impl RirInterpreter {
                 Some(Ok(RVal::Bool(false)))
             }
             "contains" => {
-                let key = args.first().map(|v| v.to_display()).unwrap_or_default();
-                let heap = self.heap.borrow();
-                let found = heap
-                    .get(&id)
-                    .and_then(|o| o.fields.get("__items__"))
-                    .map(|v| {
-                        if let RVal::Array(a) = v {
-                            a.borrow().iter().any(|x| x.to_display() == key)
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false);
+                let key = args.first().map(|v| self.obj_to_string(v)).unwrap_or_default();
+                let items = {
+                    let heap = self.heap.borrow();
+                    match heap.get(&id).and_then(|o| o.fields.get("__items__")) {
+                        Some(RVal::Array(a)) => a.clone(),
+                        _ => return Some(Ok(RVal::Bool(false))),
+                    }
+                };
+                let found = items.borrow().iter().any(|x| self.obj_to_string(x) == key);
                 Some(Ok(RVal::Bool(found)))
             }
             "size" => {

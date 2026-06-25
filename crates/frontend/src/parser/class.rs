@@ -267,6 +267,94 @@ impl Parser {
                 }));
             }
 
+            // Canonical equals(Object o): component-wise, via a single short-circuit return
+            // `o instanceof Name && this.f0 == ((Name)o).f0 && …` (unless user-defined).
+            let user_equals = members
+                .iter()
+                .any(|m| matches!(m, Member::Method(md) if md.name == "equals"));
+            if !user_equals {
+                let mut expr = Expr::Instanceof {
+                    expr: Box::new(Expr::Ident("o".into())),
+                    ty: TypeExpr::simple(name.clone()),
+                };
+                for (_, fname) in &record_components {
+                    let cmp = Expr::BinOp {
+                        op: BinOp::Eq,
+                        lhs: Box::new(Expr::Field {
+                            obj: Box::new(Expr::This),
+                            name: fname.clone(),
+                        }),
+                        rhs: Box::new(Expr::Field {
+                            obj: Box::new(Expr::Cast {
+                                ty: TypeExpr::simple(name.clone()),
+                                expr: Box::new(Expr::Ident("o".into())),
+                            }),
+                            name: fname.clone(),
+                        }),
+                    };
+                    expr = Expr::BinOp {
+                        op: BinOp::And,
+                        lhs: Box::new(expr),
+                        rhs: Box::new(cmp),
+                    };
+                }
+                members.push(Member::Method(MethodDecl {
+                    name: "equals".into(),
+                    type_params_raw: None,
+                    modifiers: vec![Modifier::Public],
+                    annotations: vec![],
+                    return_ty: TypeExpr::simple("boolean"),
+                    params: vec![Param {
+                        name: "o".into(),
+                        ty: TypeExpr::simple("Object"),
+                        variadic: false,
+                        annotations: vec![],
+                    }],
+                    body: Some(Block(vec![Stmt::Return(Some(expr))])),
+                }));
+            }
+
+            // Canonical hashCode(): String.hashCode of the components joined — deterministic and
+            // consistent with equals (equal records → equal hash), though not Java's exact value.
+            let user_hash = members
+                .iter()
+                .any(|m| matches!(m, Member::Method(md) if md.name == "hashCode"));
+            if !user_hash {
+                let mut concat = Expr::StrLit(String::new());
+                for (_, fname) in &record_components {
+                    concat = Expr::BinOp {
+                        op: BinOp::Add,
+                        lhs: Box::new(concat),
+                        rhs: Box::new(Expr::StrLit(format!("{fname}="))),
+                    };
+                    concat = Expr::BinOp {
+                        op: BinOp::Add,
+                        lhs: Box::new(concat),
+                        rhs: Box::new(Expr::Field {
+                            obj: Box::new(Expr::This),
+                            name: fname.clone(),
+                        }),
+                    };
+                }
+                let hash_call = Expr::Call {
+                    callee: Box::new(Expr::Field {
+                        obj: Box::new(concat),
+                        name: "hashCode".into(),
+                    }),
+                    args: vec![],
+                    type_args_raw: None,
+                };
+                members.push(Member::Method(MethodDecl {
+                    name: "hashCode".into(),
+                    type_params_raw: None,
+                    modifiers: vec![Modifier::Public],
+                    annotations: vec![],
+                    return_ty: TypeExpr::simple("int"),
+                    params: vec![],
+                    body: Some(Block(vec![Stmt::Return(Some(hash_call))])),
+                }));
+            }
+
             return Ok(ClassDecl {
                 name,
                 kind,
