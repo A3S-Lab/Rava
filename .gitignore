@@ -56,3 +56,6 @@ desktop.ini
 *.log
 /tmp/
 .claude/
+
+# Test fixtures: real compiled .class files used by classfile parser tests
+!crates/micrort/src/fixtures/*.class
