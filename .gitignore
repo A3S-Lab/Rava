@@ -59,3 +59,4 @@ desktop.ini
 
 # Test fixtures: real compiled .class files used by classfile parser tests
 !crates/micrort/src/fixtures/*.class
+!crates/micrort/src/fixtures/*.jar

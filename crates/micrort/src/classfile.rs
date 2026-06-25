@@ -245,7 +245,7 @@ fn parse_constant_pool(r: &mut Reader) -> Result<ConstantPool> {
                 r.u32()?; // Float — value not needed yet
                 entries[i] = CpEntry::Other;
             }
-            9 | 10 | 11 => {
+            9..=11 => {
                 // Fieldref / Methodref / InterfaceMethodref: class_index, name_and_type_index
                 let class = r.u16()?;
                 let nat = r.u16()?;

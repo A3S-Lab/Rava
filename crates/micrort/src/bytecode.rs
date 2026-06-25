@@ -74,6 +74,29 @@ pub fn load_classes_module(classes: &[&[u8]]) -> Result<RirModule> {
     Ok(module)
 }
 
+/// Load every `.class` entry from a JAR (a ZIP archive) into one runnable module —
+/// the entry point for executing a compiled dependency.
+pub fn load_jar(jar_bytes: &[u8]) -> Result<RirModule> {
+    use std::io::Read;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(jar_bytes))
+        .map_err(|e| RavaError::Other(format!("not a valid JAR/ZIP archive: {e}")))?;
+    let mut classes: Vec<Vec<u8>> = Vec::new();
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| RavaError::Other(format!("reading JAR entry {i}: {e}")))?;
+        if entry.name().ends_with(".class") {
+            let mut buf = Vec::new();
+            entry
+                .read_to_end(&mut buf)
+                .map_err(|e| RavaError::Other(format!("reading JAR entry: {e}")))?;
+            classes.push(buf);
+        }
+    }
+    let refs: Vec<&[u8]> = classes.iter().map(|v| v.as_slice()).collect();
+    load_classes_module(&refs)
+}
+
 // ── Control-flow graph construction ───────────────────────────────────────────
 
 fn lower_blocks(code: &[u8], class: &ClassFile) -> Result<Vec<BasicBlock>> {
@@ -729,6 +752,18 @@ mod tests {
             interp.call("App.viaInstance", vec![RVal::Int(4)]).unwrap().to_display(),
             "40"
         );
+    }
+
+    #[test]
+    fn run_jar() {
+        // A real JAR (ZIP of App2.class + MathLib.class with a Main-Class manifest).
+        let module = load_jar(include_bytes!("fixtures/app.jar")).unwrap();
+        let mut buf = Vec::new();
+        RirInterpreter::new(module)
+            .run_main_with_output(&mut buf)
+            .unwrap();
+        // App2.main: println(MathLib.triple(7))=21; println(new MathLib(10).scaled(5))=50
+        assert_eq!(String::from_utf8(buf).unwrap().trim(), "21\n50");
     }
 
     #[test]

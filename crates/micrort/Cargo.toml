@@ -13,3 +13,4 @@ rava-rir       = { workspace = true }
 rava-heap      = { workspace = true }
 rava-frontend  = { workspace = true }
 thiserror      = { workspace = true }
+zip            = { version = "2", default-features = false, features = ["deflate"] }
