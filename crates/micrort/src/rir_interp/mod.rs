@@ -210,6 +210,8 @@ const KNOWN_METHODS: &[&str] = &[
     "distinct",
     "limit",
     "skip",
+    "takeWhile",
+    "dropWhile",
     "findFirst",
     "anyMatch",
     "allMatch",

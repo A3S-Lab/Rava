@@ -632,9 +632,30 @@ impl RirInterpreter {
                 }
                 return Ok(RVal::Array(Rc::new(RefCell::new(vec![]))));
             }
-            // Stream.iterate(seed, f) — produce 10 elements
-            if func_id == encode_builtin("Stream.iterate") {
+            // {Stream,IntStream,LongStream,DoubleStream}.iterate
+            if func_id == encode_builtin("Stream.iterate")
+                || func_id == encode_builtin("IntStream.iterate")
+                || func_id == encode_builtin("LongStream.iterate")
+                || func_id == encode_builtin("DoubleStream.iterate")
+            {
                 let seed = args.first().cloned().unwrap_or(RVal::Int(0));
+                // 3-arg: iterate(seed, hasNext, next) — bounded by the predicate.
+                if args.len() >= 3 {
+                    let pred = args[1].clone();
+                    let next = args[2].clone();
+                    let mut items = Vec::new();
+                    let mut cur = seed;
+                    // ponytail: 1M cap guards a predicate that never goes false.
+                    for _ in 0..1_000_000 {
+                        if !self.invoke_lambda(&pred, &[cur.clone()])?.is_truthy() {
+                            break;
+                        }
+                        items.push(cur.clone());
+                        cur = self.invoke_lambda(&next, &[cur.clone()])?;
+                    }
+                    return Ok(RVal::Array(Rc::new(RefCell::new(items))));
+                }
+                // 2-arg: infinite stream → produce 10 (callers usually .limit()).
                 if let Some(f) = args.get(1) {
                     let f = f.clone();
                     let mut items = vec![seed.clone()];

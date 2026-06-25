@@ -898,10 +898,8 @@ impl RirInterpreter {
             "reduce" => {
                 let arr = self.as_array(receiver)?;
                 let items = arr.borrow();
-                if items.is_empty() {
-                    return Some(Ok(RVal::Null));
-                }
                 if args.len() >= 2 {
+                    // reduce(identity, accumulator) → the reduced value directly.
                     let mut acc = args[0].clone();
                     let lambda = &args[1];
                     for item in items.iter() {
@@ -912,6 +910,10 @@ impl RirInterpreter {
                     }
                     Some(Ok(acc))
                 } else {
+                    // reduce(accumulator) → Optional<T> (a 1-element array, empty = [Null]).
+                    if items.is_empty() {
+                        return Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![RVal::Null])))));
+                    }
                     let lambda = &args[0];
                     let mut acc = items[0].clone();
                     for item in items.iter().skip(1) {
@@ -920,7 +922,7 @@ impl RirInterpreter {
                             Err(e) => return Some(Err(e)),
                         }
                     }
-                    Some(Ok(acc))
+                    Some(Ok(RVal::Array(Rc::new(RefCell::new(vec![acc])))))
                 }
             }
             "sorted" => {

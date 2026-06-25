@@ -10027,3 +10027,25 @@ class Main {
 "#);
     assert_eq!(out.trim(), "55\n5.5\n{0=18, 1=22, 2=15}");
 }
+
+#[test]
+fn stream_take_drop_iterate_reduce() {
+    // takeWhile/dropWhile (handlers existed but weren't dispatched), 3-arg IntStream.iterate
+    // (bounded by a predicate), and reduce(accumulator) returning an Optional.
+    let out = run(r#"
+import java.util.*;
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        System.out.println(Stream.of(1,2,3,4,5,1).takeWhile(n -> n < 4).collect(Collectors.toList()));
+        System.out.println(Stream.of(1,2,3,4,5,1).dropWhile(n -> n < 4).collect(Collectors.toList()));
+        System.out.println(IntStream.iterate(1, n -> n <= 100, n -> n * 2).boxed().collect(Collectors.toList()));
+        System.out.println(List.of(1,2,3,4,5).stream().reduce(Integer::sum).get());
+    }
+}
+"#);
+    assert_eq!(
+        out.trim(),
+        "[1, 2, 3]\n[4, 5, 1]\n[1, 2, 4, 8, 16, 32, 64]\n15"
+    );
+}
