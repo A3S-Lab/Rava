@@ -10144,3 +10144,22 @@ class Main {
 "#);
     assert_eq!(out.trim(), "[8, 5, 2, 1]\na,b,c len=5");
 }
+
+#[test]
+fn comparator_then_comparing_key_extractor() {
+    // Comparator.comparingInt(k1).thenComparing(k2) — the tiebreaker key extractor must be
+    // wrapped into a comparator (invoked with one element), not called with two.
+    let out = run(r#"
+import java.util.*;
+class Main {
+    record Person(String name, int age) {}
+    public static void main(String[] args) {
+        var people = new ArrayList<>(List.of(
+            new Person("Bob", 30), new Person("Alice", 30), new Person("Carol", 25)));
+        people.sort(Comparator.comparingInt(Person::age).thenComparing(Person::name));
+        for (var p : people) System.out.println(p.name() + " " + p.age());
+    }
+}
+"#);
+    assert_eq!(out.trim(), "Carol 25\nAlice 30\nBob 30");
+}

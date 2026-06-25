@@ -1315,7 +1315,23 @@ impl RirInterpreter {
             // Comparator.thenComparing(other) — chain two comparators
             "thenComparing" | "thenComparingInt" | "thenComparingLong" | "thenComparingDouble" => {
                 let primary = receiver.clone();
-                let secondary = args.first().cloned().unwrap_or(RVal::Null);
+                let raw = args.first().cloned().unwrap_or(RVal::Null);
+                // thenComparingInt/Long/Double always take a key extractor; thenComparing takes a
+                // Comparator OR a key extractor. Wrap a key extractor into comparing(keyExtractor)
+                // (a `__comparator__by__` sentinel) so it's invoked with one element, not two.
+                let already_comparator =
+                    matches!(&raw, RVal::Str(s) if s.starts_with("__comparator__"));
+                let secondary = if method == "thenComparing" && already_comparator {
+                    raw
+                } else {
+                    let by_name = format!("__comparator__by__{}", raw.to_display());
+                    super::LAMBDA_CAPTURES.with(|lc| {
+                        let mut map = lc.borrow_mut();
+                        let caps = map.entry(by_name.clone()).or_default();
+                        caps.insert("__keyfn__".into(), raw.clone());
+                    });
+                    RVal::Str(by_name)
+                };
                 let composed_name = format!(
                     "__comparator__then__{}__{}",
                     primary.to_display(),
