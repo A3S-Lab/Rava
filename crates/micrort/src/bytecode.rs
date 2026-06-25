@@ -10,7 +10,7 @@
 //! the RIR interpreter is a mutable-environment tree-walker, so loops work via block
 //! re-execution without needing phi / block parameters.
 
-use crate::classfile::{ClassFile, Method};
+use crate::classfile::{ClassFile, Constant, Method};
 use rava_common::error::{RavaError, Result};
 use rava_rir::module::{BasicBlock, FuncFlags, RirFunction};
 use rava_rir::{BinOp, BlockId, ClassId, FieldId, FuncId, RirInstr, RirType, UnaryOp, Value};
@@ -205,6 +205,24 @@ fn translate_block(
                 push_branch(&mut instrs, cond, code, pc, len)?;
                 terminated = true;
             }
+            0x12 => {
+                // ldc <u8 index>
+                let r = fresh();
+                match class.constant(code[pc + 1] as u16)? {
+                    Constant::Str(s) => instrs.push(RirInstr::ConstStr { ret: r.clone(), value: s }),
+                    Constant::Int(v) => instrs.push(RirInstr::ConstInt { ret: r.clone(), value: v }),
+                }
+                stack.push(r);
+            }
+            0x13 => {
+                // ldc_w <u16 index>
+                let r = fresh();
+                match class.constant(read_u16(code, pc + 1)?)? {
+                    Constant::Str(s) => instrs.push(RirInstr::ConstStr { ret: r.clone(), value: s }),
+                    Constant::Int(v) => instrs.push(RirInstr::ConstInt { ret: r.clone(), value: v }),
+                }
+                stack.push(r);
+            }
             0x2a..=0x2d => stack.push(Value(format!("l{}", op - 0x2a))), // aload_0..3
             0x19 => stack.push(Value(format!("l{}", code[pc + 1]))),     // aload <idx>
             0x4b..=0x4e => store_local(&mut instrs, &mut stack, (op - 0x4b) as u16)?, // astore_0..3
@@ -264,13 +282,20 @@ fn translate_block(
                 if op == 0xb7 && name == "<init>" && cls.contains('/') {
                     // discard
                 } else {
+                    // Library instance methods (String.length, …) dispatch by name on the
+                    // receiver via the interpreter's builtins; user methods call by Class.method.
+                    let func_name = if cls.contains('/') {
+                        format!("__method__{name}")
+                    } else {
+                        format!("{cls}.{name}")
+                    };
                     let ret = if matches!(parse_return_type(&desc)?, RirType::Void) {
                         None
                     } else {
                         Some(fresh())
                     };
                     instrs.push(RirInstr::Call {
-                        func: FuncId(crate::lowerer_hash::encode_builtin(&format!("{cls}.{name}"))),
+                        func: FuncId(crate::lowerer_hash::encode_builtin(&func_name)),
                         args,
                         ret: ret.clone(),
                     });
@@ -287,13 +312,20 @@ fn translate_block(
                 for slot in args.iter_mut().rev() {
                     *slot = pop(&mut stack)?;
                 }
+                // Library static methods use the simple class name (Math.max, Integer.parseInt)
+                // to match the interpreter's builtin keys; user methods use Class.method.
+                let target = if cls.contains('/') {
+                    format!("{}.{}", cls.rsplit('/').next().unwrap_or(&cls), name)
+                } else {
+                    format!("{cls}.{name}")
+                };
                 let ret = if matches!(parse_return_type(&desc)?, RirType::Void) {
                     None
                 } else {
                     Some(fresh())
                 };
                 instrs.push(RirInstr::Call {
-                    func: FuncId(crate::lowerer_hash::encode_builtin(&format!("{cls}.{name}"))),
+                    func: FuncId(crate::lowerer_hash::encode_builtin(&target)),
                     args,
                     ret: ret.clone(),
                 });
@@ -418,8 +450,8 @@ fn is_return(op: u8) -> bool {
 /// Total byte length of a supported instruction (incl. opcode); `None` if unsupported.
 fn instr_len(op: u8) -> Option<usize> {
     Some(match op {
-        0x10 | 0x15 | 0x19 | 0x36 | 0x3a => 2,        // bipush, iload, aload, istore, astore
-        0x11 | 0x84 | 0xa7 | 0xb8 => 3,               // sipush, iinc, goto, invokestatic
+        0x10 | 0x12 | 0x15 | 0x19 | 0x36 | 0x3a => 2, // bipush, ldc, iload, aload, istore, astore
+        0x11 | 0x13 | 0x84 | 0xa7 | 0xb8 => 3,        // sipush, ldc_w, iinc, goto, invokestatic
         0xb4 | 0xb5 | 0xb6 | 0xb7 | 0xbb => 3,        // getfield, putfield, invoke{virtual,special}, new
         0x99..=0xa4 => 3,                             // if<cond> / if_icmp<cond>
         0x00 => 1,                                    // nop
@@ -557,6 +589,7 @@ mod tests {
     const CALC: &[u8] = include_bytes!("fixtures/Calc.class");
     const CALLER: &[u8] = include_bytes!("fixtures/Caller.class");
     const OBJ: &[u8] = include_bytes!("fixtures/Obj.class");
+    const STR: &[u8] = include_bytes!("fixtures/Str.class");
 
     #[test]
     fn arithmetic() {
@@ -594,5 +627,14 @@ mod tests {
         assert_eq!(run_class(OBJ, "make", vec![RVal::Int(3), RVal::Int(4)]), 7);
         // new + putfield + invokevirtual (instance method reading fields)
         assert_eq!(run_class(OBJ, "useSum", vec![RVal::Int(10), RVal::Int(20)]), 30);
+    }
+
+    #[test]
+    fn strings_and_library_calls() {
+        // ldc string constant + library invokevirtual (String.length / substring)
+        assert_eq!(run_class(STR, "helloLen", vec![]), 11);
+        assert_eq!(run_class(STR, "subLen", vec![]), 5);
+        // library invokestatic (Integer.parseInt) routed to the builtin
+        assert_eq!(run_class(STR, "parsed", vec![]), 42);
     }
 }

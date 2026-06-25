@@ -39,6 +39,11 @@ impl ClassFile {
     pub fn class_name_at(&self, index: u16) -> Result<String> {
         self.pool.class_name(index)
     }
+
+    /// Resolve an `ldc`/`ldc_w` constant-pool index → a String or Integer constant.
+    pub fn constant(&self, index: u16) -> Result<Constant> {
+        self.pool.constant(index)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -145,10 +150,18 @@ fn parse_field_name(r: &mut Reader, cp: &ConstantPool) -> Result<String> {
 enum CpEntry {
     Utf8(String),
     Class(u16),            // name_index → Utf8
+    Str(u16),              // String constant → Utf8 index
+    Integer(i64),          // Integer constant value
     Methodref(u16, u16),   // class_index, name_and_type_index
     NameAndType(u16, u16), // name_index, descriptor_index
     Other,
     Placeholder, // unused slot 0, and the slot following Long/Double
+}
+
+/// A loadable constant (the operand of `ldc`/`ldc_w`).
+pub enum Constant {
+    Str(String),
+    Int(i64),
 }
 
 #[derive(Clone)]
@@ -196,6 +209,17 @@ impl ConstantPool {
         };
         Ok((class, self.utf8(name_idx)?, self.utf8(desc_idx)?))
     }
+
+    /// Resolve an `ldc` constant index → a String or Integer constant.
+    fn constant(&self, idx: u16) -> Result<Constant> {
+        match self.entries.get(idx as usize) {
+            Some(CpEntry::Str(utf8_idx)) => Ok(Constant::Str(self.utf8(*utf8_idx)?)),
+            Some(CpEntry::Integer(v)) => Ok(Constant::Int(*v)),
+            _ => Err(RavaError::Other(format!(
+                "constant pool index {idx} is not an ldc-able constant (string/int only)"
+            ))),
+        }
+    }
 }
 
 fn parse_constant_pool(r: &mut Reader) -> Result<ConstantPool> {
@@ -211,12 +235,14 @@ fn parse_constant_pool(r: &mut Reader) -> Result<ConstantPool> {
                 entries[i] = CpEntry::Utf8(String::from_utf8_lossy(bytes).into_owned());
             }
             7 => entries[i] = CpEntry::Class(r.u16()?), // Class
-            8 | 16 | 19 | 20 => {
-                r.u16()?; // String / MethodType / Module / Package
+            8 => entries[i] = CpEntry::Str(r.u16()?), // String constant → Utf8 index
+            16 | 19 | 20 => {
+                r.u16()?; // MethodType / Module / Package
                 entries[i] = CpEntry::Other;
             }
-            3 | 4 => {
-                r.u32()?; // Integer / Float
+            3 => entries[i] = CpEntry::Integer(r.u32()? as i32 as i64), // Integer
+            4 => {
+                r.u32()?; // Float — value not needed yet
                 entries[i] = CpEntry::Other;
             }
             9 | 10 | 11 => {
