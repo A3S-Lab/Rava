@@ -124,6 +124,8 @@ const KNOWN_METHODS: &[&str] = &[
     "forEach",
     "firstKey",
     "lastKey",
+    "headMap",
+    "tailMap",
     "firstEntry",
     "lastEntry",
     // PriorityQueue / Queue / Deque
@@ -214,6 +216,7 @@ const KNOWN_METHODS: &[&str] = &[
     "noneMatch",
     "mapToInt",
     "mapToLong",
+    "mapToObj",
     "mapToDouble",
     "sum",
     "average",

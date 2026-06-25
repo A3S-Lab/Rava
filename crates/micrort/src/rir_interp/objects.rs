@@ -547,7 +547,7 @@ impl RirInterpreter {
                 Some(Ok(receiver.clone()))
             }
             "of" => Some(Ok(RVal::Array(Rc::new(RefCell::new(args.to_vec()))))),
-            "mapToInt" | "mapToLong" | "mapToDouble" | "map" => {
+            "mapToInt" | "mapToLong" | "mapToDouble" | "mapToObj" | "map" => {
                 let arr = self.as_array(receiver)?;
                 let lambda = args.first()?;
                 let items = arr.borrow();

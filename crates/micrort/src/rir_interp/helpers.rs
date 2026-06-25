@@ -884,6 +884,49 @@ impl RirInterpreter {
                                 })
                                 .unwrap_or(RVal::Null));
                         }
+                        // TreeMap headMap(toKey) / tailMap(fromKey) — sorted sub-map view.
+                        if class_name == "TreeMap"
+                            && (method_name == "headMap" || method_name == "tailMap")
+                        {
+                            let bound = method_args
+                                .first()
+                                .map(|v| v.to_display())
+                                .unwrap_or_default();
+                            let entries: Vec<(String, RVal)> = {
+                                let heap = self.heap.borrow();
+                                heap.get(id)
+                                    .map(|o| {
+                                        o.fields
+                                            .iter()
+                                            .filter(|(k, _)| !k.starts_with("__"))
+                                            .map(|(k, v)| (k.clone(), v.clone()))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default()
+                            };
+                            // Same numeric-aware key ordering TreeMap uses for display.
+                            let cmp = |a: &str| match (a.parse::<i64>(), bound.parse::<i64>()) {
+                                (Ok(x), Ok(y)) => x.cmp(&y),
+                                _ => a.cmp(bound.as_str()),
+                            };
+                            let new_id = self.alloc_object("TreeMap");
+                            {
+                                let mut heap = self.heap.borrow_mut();
+                                if let Some(o) = heap.get_mut(&new_id) {
+                                    for (k, v) in entries {
+                                        let keep = if method_name == "headMap" {
+                                            cmp(&k) == std::cmp::Ordering::Less // < toKey (exclusive)
+                                        } else {
+                                            cmp(&k) != std::cmp::Ordering::Less // >= fromKey (inclusive)
+                                        };
+                                        if keep {
+                                            o.fields.insert(k, v);
+                                        }
+                                    }
+                                }
+                            }
+                            return Ok(RVal::Object(new_id));
+                        }
                         // TreeMap forEach must iterate in sorted key order
                         if class_name == "TreeMap" && method_name == "forEach" {
                             let mut pairs: Vec<(String, RVal)> = {

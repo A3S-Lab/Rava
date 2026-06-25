@@ -235,7 +235,7 @@ Dependencies:
 ### Language Features
 
 > **Two execution paths.** `rava run` / `rava test` execute via the **RIR interpreter**
-> — the mature, supported path (395/395 e2e tests passing). `rava build` uses the
+> — the mature, supported path (397/397 e2e tests passing). `rava build` uses the
 > **Cranelift AOT** backend, which is **experimental**: it covers only basic programs and
 > currently miscompiles loops and segfaults on generic classes (see *Known Limitations*).
 > The table below reflects each path honestly. ✅ works · ⚠️ partial · ❌ broken · ⬜ not yet.
@@ -466,7 +466,7 @@ common    → (none)
 | Phase | Deliverable | Status |
 |-------|------------|--------|
 | Framework | Workspace skeleton: 10 crates, all traits defined, Cranelift wired up | ✅ |
-| Phase 1 (6-12mo) | Toolchain + run static Java | 🚧 **Interpreter path ✅** (`rava run` / `rava test`: lexer, parser, type checker, lowerer, RIR interpreter, builtins — 395/395 e2e passing; CLI `run/build/init/add/remove/update/deps/test/fmt` ✅; CI/CD ✅). **AOT `rava build` experimental** — basic programs only; currently miscompiles loops and segfaults on generics. `rava run <jar>` auto-loads dependency JARs from `rava.lock` (or explicit `-c lib.jar`); AOT `rava build` does not yet link JARs. |
+| Phase 1 (6-12mo) | Toolchain + run static Java | 🚧 **Interpreter path ✅** (`rava run` / `rava test`: lexer, parser, type checker, lowerer, RIR interpreter, builtins — 397/397 e2e passing; CLI `run/build/init/add/remove/update/deps/test/fmt` ✅; CI/CD ✅). **AOT `rava build` experimental** — basic programs only; currently miscompiles loops and segfaults on generics. `rava run <jar>` auto-loads dependency JARs from `rava.lock` (or explicit `-c lib.jar`); AOT `rava build` does not yet link JARs. |
 | Phase 2 (3-6mo) | Reflection: AOT metadata table + dual-path dispatch | 🚧 (RIR metadata structures ✅; MetadataTableGenPass scaffolded ✅; function pointer resolution and field offsets pending) |
 | Phase 3 (6-12mo) | MicroRT v1: bytecode interpreter + class loader + unified object model | ⬜ |
 | Phase 4 (2-3mo) | Dynamic proxy AOT: pre-generated proxy classes | ⬜ |
@@ -474,7 +474,7 @@ common    → (none)
 
 ### Near-Term Development Plan (Java Coverage)
 
-Current status: parser and type checker cover common Java syntax; the RIR interpreter passes 395/395 e2e tests. Note that full method overload resolution, generic type inference, and sealed-class inheritance enforcement are **not yet implemented** in the checker — full JLS-level parity is the next target.
+Current status: parser and type checker cover common Java syntax; the RIR interpreter passes 397/397 e2e tests. Note that full method overload resolution, generic type inference, and sealed-class inheritance enforcement are **not yet implemented** in the checker — full JLS-level parity is the next target.
 
 **P0 — Runtime Semantics Completion** *(do first)*
 
@@ -516,7 +516,7 @@ Current status: parser and type checker cover common Java syntax; the RIR interp
 | `rava-frontend` | 90 — checker (38: generic type params, overload resolution, bounds validation, duplicate detection), lexer (10: hex/binary literals, char, operators, keywords), parser (29: hello world, local var, do-while, for-each, break/continue, try/catch, lambda, enum, instanceof pattern, method ref, record, sealed class, text block, switch arrow, yield, module-info, guarded patterns, case null), lowerer (9: hello world, arithmetic, do-while, break/continue, ternary, for-each, record pattern), compiler/resolver (4) |
 | `rava-heap` | 6 — object header, GC strategy |
 | `rava-micrort` | 22 — builtin dispatch (math, string, collections, format, I/O, concurrency, reflection, network, time, regex) |
-| `rava-micrort` (e2e) | 395/395 (100%) via the **RIR interpreter** (`rava run`) — comprehensive Java language feature tests covering classes, inheritance, generics, lambdas, streams, collections (incl. ArrayDeque/PriorityQueue), exceptions & custom hierarchies, pattern matching, switch expressions, records, sealed classes, text blocks, enums with fields, builders/nested classes, StringBuilder, I/O, networking, and more |
+| `rava-micrort` (e2e) | 397/397 (100%) via the **RIR interpreter** (`rava run`) — comprehensive Java language feature tests covering classes, inheritance, generics, lambdas, streams, collections (incl. ArrayDeque/PriorityQueue), exceptions & custom hierarchies, pattern matching, switch expressions, records, sealed classes, text blocks, enums with fields, builders/nested classes, StringBuilder, I/O, networking, and more |
 | `rava-pkg` | 4 — config parsing, lockfile, shortname registry |
 | `rava-rir` | 1 — module construction |
 | `rava` (cli) | 1 — PascalCase conversion |

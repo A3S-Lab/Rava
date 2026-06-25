@@ -9911,3 +9911,34 @@ class Main {
 "#);
     assert_eq!(out.trim(), "2");
 }
+
+#[test]
+fn stream_map_to_obj() {
+    // IntStream.mapToObj — was silently returning an empty stream (missing builtin alias).
+    let out = run(r#"
+import java.util.stream.*;
+class Main {
+    public static void main(String[] args) {
+        System.out.println(IntStream.rangeClosed(1, 5).mapToObj(i -> i * i).collect(Collectors.toList()));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "[1, 4, 9, 16, 25]");
+}
+
+#[test]
+fn treemap_head_tail_map() {
+    // TreeMap.headMap (exclusive) / tailMap (inclusive) — sorted sub-map views.
+    let out = run(r#"
+import java.util.*;
+class Main {
+    public static void main(String[] args) {
+        TreeMap<String,Integer> m = new TreeMap<>();
+        m.put("b", 2); m.put("a", 1); m.put("c", 3);
+        System.out.println(m.headMap("c"));
+        System.out.println(m.tailMap("b"));
+    }
+}
+"#);
+    assert_eq!(out.trim(), "{a=1, b=2}\n{b=2, c=3}");
+}
